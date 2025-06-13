@@ -33,4 +33,30 @@ impl Renderer {
     pub fn update(&self) {
         self.ctx.update();
     }
+
+    pub fn render_text(&self) {
+        // TODO!
+        // Read the font data.
+        let font = include_bytes!("/System/Library/Fonts/SFNSMono.ttf") as &[u8];
+        // Parse it into the font type.
+        let font = fontdue::Font::from_bytes(font, fontdue::FontSettings::default()).unwrap();
+        // Rasterize and get the layout metrics for the letter 'g' at 17px.
+        let (metrics, bitmap) = font.rasterize('g', 17.0);
+        println!("Bitmap length... {}", bitmap.len());
+        println!("Metrics: {}x{}", metrics.width, metrics.height);
+
+        for (i, v) in bitmap.iter().enumerate() {
+            if i % metrics.width == 0 {
+                println!();
+            }
+            // print!("{v:02x}");
+            let c = match v {
+                0..100 => '.',
+                100..200 => '*',
+                200..=255 => '#',
+                _ => ' ',
+            };
+            print!("{c}");
+        }
+    }
 }

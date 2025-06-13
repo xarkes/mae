@@ -9,6 +9,7 @@ default = ["opengl"]
 opengl = ["dep:gl"]
 
 [dependencies]
+fontdue = "0.9.3"
 gl = { version = "*", optional = true }
 
 [target.'cfg(target_os="linux")'.dependencies]

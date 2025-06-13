@@ -53,6 +53,8 @@ enum NSOpenGLProfile {
     // Version4_1Core = 0x4100,
 }
 
+type GLContextHandle = *mut AnyObject;
+
 pub fn ogl_os_create_context(win: &Window) -> *mut AnyObject {
     let class_name = CStr::from_bytes_with_nul(b"NSOpenGLPixelFormat\0").unwrap();
     let class_name_ctx = CStr::from_bytes_with_nul(b"NSOpenGLContext\0").unwrap();
@@ -78,6 +80,7 @@ pub fn ogl_os_create_context(win: &Window) -> *mut AnyObject {
     ];
 
     let ctx: *mut AnyObject;
+    // SAFETY: This is just basic Objective C calls, if there is any problem, the Objective C layer will handle it.
     unsafe {
         let pixel_format_class = AnyClass::get(&class_name).unwrap();
         let pixel_format: *mut AnyObject = msg_send![pixel_format_class, alloc];
@@ -89,15 +92,15 @@ pub fn ogl_os_create_context(win: &Window) -> *mut AnyObject {
         let context: *mut AnyObject = msg_send![context, initWithFormat: pixel_format, shareContext: std::ptr::null_mut() as *mut AnyObject];
         println!("Context: {:?}", context);
 
-        //- xarkes: Attach OpenGL to the window's NSView, and make it current context
+        // xarkes: Attach OpenGL to the window's NSView, and make it current context
         let view = win.view.get().unwrap().clone();
         let _: () = msg_send![context, setView: Retained::into_raw(view)];
         let _: () = msg_send![context, makeCurrentContext];
         ctx = context;
     }
 
-    // This is very hacky, but objc2 doesn't expose the NSOpenGL stuff, hence the code above
-    // and overall OpenGL is deprecated on MacOS
+    // xarkes: This is a bit hacky, but objc2 doesn't expose the NSOpenGL stuff, hence the code above.
+    // OpenGL is deprecated on MacOS, so we should probably not support it, but using it eases the cross platform development.
     unsafe extern "C" {
         fn dlsym(handle: *mut std::ffi::c_void, symbol: *const i8) -> *mut std::ffi::c_void;
         fn dlopen(path: *const i8, mode: u32) -> *mut std::ffi::c_void;
@@ -112,7 +115,11 @@ pub fn ogl_os_create_context(win: &Window) -> *mut AnyObject {
             2,
         )
     };
+    if lib_ptr == std::ptr::null_mut() {
+        panic!("Could not laod libGL, renderer cannot be used.");
+    }
 
+    // SAFETY: xarkes: We trust the OS to give us a valid pointer for the library handle with dlopen and we also trust it to give us valid function pointers with dlsym
     gl::load_with(|symbol| unsafe {
         let symbol = std::ffi::CString::new(symbol).unwrap();
         let addr = dlsym(lib_ptr, symbol.as_ptr());
@@ -120,18 +127,25 @@ pub fn ogl_os_create_context(win: &Window) -> *mut AnyObject {
         addr as *const std::ffi::c_void
     });
 
+    // SAFETY: xarkes: The pointers come back from OpenGL itself and we decide to trust them.
+    // We also assume the GetString function was resolved earlier, if not it will simply result in a null deref.
     unsafe {
         let vendor = gl::GetString(gl::VENDOR) as *mut i8;
         let version = gl::GetString(gl::VERSION) as *mut i8;
-        let vendorstr = std::ffi::CStr::from_ptr(vendor).to_str().expect("<err>");
-        let versionstr = std::ffi::CStr::from_ptr(version).to_str().expect("<err>");
-        println!("OpenGL vendor: {} - version: {}", vendorstr, versionstr);
+        if vendor != std::ptr::null_mut() && version != std::ptr::null_mut() {
+            let vendorstr = std::ffi::CStr::from_ptr(vendor).to_str().expect("<err>");
+            let versionstr = std::ffi::CStr::from_ptr(version).to_str().expect("<err>");
+            println!("OpenGL vendor: {} - version: {}", vendorstr, versionstr);
+        } else {
+            println!("Could not retrieve OpenGL vendor and version!");
+        }
     }
 
     ctx
 }
 
 pub fn ogl_os_swapbuffers(ctx: *mut AnyObject) {
+    // SAFETY: flushBuffer signature is correct, no problem ahead
     unsafe {
         let _: () = msg_send![ctx, flushBuffer];
     }

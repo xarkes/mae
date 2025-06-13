@@ -9,16 +9,16 @@ use gl::types::*;
 
 use crate::os::Window;
 
-static VS_SRC: &'static str = "
-#version 410 core
-layout (location = 0) in vec3 aPos;
+static RECT_VERTEX_SHADER: &'static str = "
+#version 330 core
+in vec3 aPos;
 void main() {
     gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);
 }
 ";
 
-static FS_SRC: &'static str = "
-#version 410 core
+static RECT_FRAGMENT_SHADER: &'static str = "
+#version 330 core
 out vec4 FragColor;
 void main()
 {
@@ -27,7 +27,7 @@ void main()
 ";
 
 pub struct GLContext {
-    ctx: *mut AnyObject, // XXX: This is wrong and not platform independant, refactor this
+    ctx: GLContextHandle,
     program: u32,
     vao: u32,
 }
@@ -36,8 +36,8 @@ impl GLContext {
     pub fn new(win: &Window) -> Self {
         let ctx = ogl_os_create_context(win);
 
-        let vs = compile_shader(VS_SRC, gl::VERTEX_SHADER);
-        let fs = compile_shader(FS_SRC, gl::FRAGMENT_SHADER);
+        let vs = compile_shader(RECT_VERTEX_SHADER, gl::VERTEX_SHADER);
+        let fs = compile_shader(RECT_FRAGMENT_SHADER, gl::FRAGMENT_SHADER);
         let program = link_program(vs, fs);
 
         let mut vao = 0;
@@ -76,8 +76,11 @@ impl GLContext {
 
         // enable gl debugging
         // XXX: Not available on macos
-        // gl::Enable(gl::DEBUG_OUTPUT);
-        // gl::DebugMessageCallback(Some(gl_debug_func), std::ptr::null());
+        #[cfg(not(target_os = "macos"))]
+        unsafe {
+            gl::Enable(gl::DEBUG_OUTPUT);
+            gl::DebugMessageCallback(Some(gl_debug_func), std::ptr::null());
+        }
 
         GLContext { ctx, program, vao }
     }
@@ -163,21 +166,21 @@ fn link_program(vs: GLuint, fs: GLuint) -> GLuint {
     }
 }
 
-// XXX: Disabled because unavailable on macos
-// extern "system" fn gl_debug_func(
-//     src: GLenum,
-//     _type: GLenum,
-//     _id: GLuint,
-//     _severity: GLenum,
-//     _length: GLsizei,
-//     message: *const GLchar,
-//     _userparam: *mut std::ffi::c_void,
-// ) {
-//     let decoded;
-//     unsafe {
-//         decoded = std::ffi::CStr::from_ptr(message as *mut i8)
-//             .to_str()
-//             .expect("<decode error>");
-//     }
-//     println!("Opengl error: {} {}", src, decoded)
-// }
+#[cfg(not(target_os = "macos"))]
+extern "system" fn gl_debug_func(
+    src: GLenum,
+    _type: GLenum,
+    _id: GLuint,
+    _severity: GLenum,
+    _length: GLsizei,
+    message: *const GLchar,
+    _userparam: *mut std::ffi::c_void,
+) {
+    let decoded;
+    unsafe {
+        decoded = std::ffi::CStr::from_ptr(message as *mut i8)
+            .to_str()
+            .expect("<decode error>");
+    }
+    println!("Opengl error: {} {}", src, decoded)
+}

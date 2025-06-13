@@ -88,7 +88,7 @@ define_class!(
             #[allow(deprecated)]
             app.activateIgnoringOtherApps(true);
 
-            //- xarkes: stop the application such that run() is not blocking, and we can handle events on our own
+            // xarkes: stop the application such that run() is not blocking, and we can handle events on our own
             app.stop(None);
         }
     }
@@ -113,12 +113,12 @@ impl Delegate {
 
 impl Window {
     pub fn new() -> Self {
-        //- xarkes: open the window OS side
+        // xarkes: open the window OS side
         let mtm = MainThreadMarker::new().unwrap();
         let app = NSApplication::sharedApplication(mtm);
         let delegate = Delegate::new(mtm);
         app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
-        //- xarkes: call run once - due to our code in "applicationDidFinishLaunching", this won't be blocking
+        // xarkes: call run once - due to our code in "applicationDidFinishLaunching", this won't be blocking
         app.run();
 
         Window {
