@@ -11,18 +11,26 @@ use crate::os::Window;
 
 static RECT_VERTEX_SHADER: &'static str = "
 #version 330 core
-in vec3 aPos;
+in vec4 vertex; // <vec2 pos, vec2 tex>
+out vec2 tex_coords;
+
 void main() {
-    gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);
+  gl_Position = vec4(vertex.xy, 0.0, 1.0);
+  tex_coords = vertex.zw;
 }
 ";
 
 static RECT_FRAGMENT_SHADER: &'static str = "
 #version 330 core
-out vec4 FragColor;
+in vec2 tex_coords;
+out vec4 color;
+
+uniform sampler2D text;
+
 void main()
 {
- FragColor = vec4(1.0f, 0.5f, 0.2f, 1.0f);
+  vec4 sampled = vec4(1.0, 1.0, 1.0, texture(text, tex_coords).r);
+  color = vec4(1.0f, 0.5f, 0.2f, 1.0f) * sampled;
 }
 ";
 
@@ -30,6 +38,8 @@ pub struct GLContext {
     ctx: GLContextHandle,
     program: u32,
     vao: u32,
+    vbo: u32,
+    font_texture: u32,
 }
 
 impl GLContext {
@@ -43,34 +53,46 @@ impl GLContext {
         let mut vao = 0;
         let mut vbo = 0;
 
-        let vertex_data: [GLfloat; 9] = [-0.5, -0.5, 0., 0.5, 0.5, 0., 0., 0.5, 0.];
-        // let vertex_data: [GLfloat; 9] = [-1.0, -1.0, 0.0, 1.0, 1.0, 0.0, -1.0, 1.0, 0.0];
-
         unsafe {
+            // Enable functions
+            gl::Enable(gl::BLEND);
+            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+
             // Create Vertex Array Object
             gl::GenVertexArrays(1, &mut vao);
             gl::BindVertexArray(vao);
 
             // Create a Vertex Buffer Object and copy the vertex data to it
             gl::GenBuffers(1, &mut vbo);
+            let vertex_data: [GLfloat; 12] =
+                [-0.5, -0.5, 0., 0., 0.5, 0.5, 0., 0., 0., 0.5, 0., 0.];
             gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+            // gl::BufferData(
+            //     gl::ARRAY_BUFFER,
+            //     (vertex_data.len() * std::mem::size_of::<GLfloat>()) as GLsizeiptr,
+            //     std::mem::transmute(&vertex_data[0]),
+            //     gl::STATIC_DRAW,
+            // );
             gl::BufferData(
                 gl::ARRAY_BUFFER,
-                (vertex_data.len() * std::mem::size_of::<GLfloat>()) as GLsizeiptr,
-                std::mem::transmute(&vertex_data[0]),
-                gl::STATIC_DRAW,
+                (size_of::<GLfloat>() * 3 * 4) as GLsizeiptr,
+                std::ptr::null(),
+                gl::DYNAMIC_DRAW,
             );
 
-            gl::UseProgram(program);
+            gl::EnableVertexAttribArray(0);
             gl::VertexAttribPointer(
                 0,
-                3,
+                4,
                 gl::FLOAT,
                 gl::FALSE,
-                (3 as usize * std::mem::size_of::<GLfloat>()) as i32,
-                std::ptr::null_mut(),
+                (4 as usize * size_of::<GLfloat>()) as i32,
+                std::ptr::null(),
             );
-            gl::EnableVertexAttribArray(0);
+
+            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
+            gl::BindVertexArray(0);
+
             gl::ClearColor(0.17, 0.71, 0.56, 0.);
         }
 
@@ -82,26 +104,148 @@ impl GLContext {
             gl::DebugMessageCallback(Some(gl_debug_func), std::ptr::null());
         }
 
-        GLContext { ctx, program, vao }
+        GLContext {
+            ctx,
+            program,
+            vao,
+            vbo,
+            font_texture: u32::MAX,
+        }
     }
 
-    pub fn update(&self) {
+    pub fn update(&self, font_cache: &mut crate::render::font_cache::FontCache) {
         unsafe {
-            // TODO: It seems it could be window size x2 on MacOS default settings.
-            // I think this could be related to the way it handles DPI or similar.
-            let mut width = 300;
-            let mut height = 300;
+            // TODO: Handle resize and not hardcoded size
+            let mut width = 600;
+            let mut height = 600;
             if false {
+                // TODO: It seems it could be window size x2 on MacOS default settings.
+                // I think this could be related to the way it handles DPI or similar.
                 width *= 2;
                 height *= 2;
             }
             gl::Viewport(0, 0, width, height);
             gl::Clear(gl::COLOR_BUFFER_BIT);
+
             gl::UseProgram(self.program);
             gl::BindVertexArray(self.vao);
-            gl::DrawArrays(gl::TRIANGLES, 0, 3);
+
+            if false {
+                let vertex_data: [GLfloat; 12] =
+                    [-0.5, -0.5, 0., 0., 0.5, 0.5, 0., 0., 0., 0.5, 0., 0.];
+                gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
+                gl::BufferSubData(
+                    gl::ARRAY_BUFFER,
+                    0,
+                    (vertex_data.len() * std::mem::size_of::<GLfloat>()) as GLsizeiptr,
+                    std::mem::transmute(&vertex_data[0]),
+                );
+                gl::DrawArrays(gl::TRIANGLES, 0, 3);
+                let vertex_data: [GLfloat; 12] =
+                    [-0.8, -0.8, 0., 0., -0.4, -0.7, 0., 0., 0.3, -0.3, 0., 0.];
+                gl::BufferSubData(
+                    gl::ARRAY_BUFFER,
+                    0,
+                    (vertex_data.len() * std::mem::size_of::<GLfloat>()) as GLsizeiptr,
+                    std::mem::transmute(&vertex_data[0]),
+                );
+                gl::DrawArrays(gl::TRIANGLES, 0, 3);
+                gl::BindBuffer(gl::ARRAY_BUFFER, 0);
+            }
+
+            // Draw some text
+            if true {
+                let text = String::from("salut");
+                gl::ActiveTexture(gl::TEXTURE0);
+                gl::BindVertexArray(self.vao);
+
+                let mut x: f32 = 0.1;
+                let y: f32 = 0.1;
+
+                for c in text.chars() {
+                    let glyph = font_cache.get(c);
+                    if glyph.is_none() {
+                        continue;
+                    }
+                    let glyph = glyph.unwrap();
+
+                    // Update VBO for each character
+                    let xpos = x;
+                    let ypos = y;
+
+                    // let vbo_data = vec![glyph.atlas_idx, glyph.atlas_idx + glyph.size];
+                    let h = 0.1;
+                    let w = 0.1;
+                    let vbo_data: [GLfloat; 24] = [
+                        xpos,
+                        ypos + h,
+                        0.0,
+                        0.0,
+                        xpos,
+                        ypos,
+                        0.0,
+                        1.0,
+                        xpos + w,
+                        ypos,
+                        1.0,
+                        1.0,
+                        xpos,
+                        ypos + h,
+                        0.0,
+                        0.0,
+                        xpos + w,
+                        ypos,
+                        1.0,
+                        1.0,
+                        xpos + w,
+                        ypos + h,
+                        1.0,
+                        0.0,
+                    ];
+                    gl::BindTexture(gl::TEXTURE_2D, self.font_texture);
+                    gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
+                    gl::BufferSubData(
+                        gl::ARRAY_BUFFER,
+                        0,
+                        (vbo_data.len() * std::mem::size_of::<GLfloat>()) as GLsizeiptr,
+                        vbo_data.as_ptr() as *const _,
+                    );
+                    gl::BindBuffer(gl::ARRAY_BUFFER, 0);
+                    gl::DrawArrays(gl::TRIANGLES, 0, 6);
+
+                    x += 0.1;
+                }
+                gl::BindVertexArray(0);
+                gl::BindTexture(gl::TEXTURE_2D, 0);
+            }
+
             ogl_os_swapbuffers(self.ctx);
         }
+    }
+
+    pub fn update_font_texture(&mut self, data: Vec<u8>) {
+        if self.font_texture != u32::MAX {
+            panic!("FIXME: Not handled atm");
+        }
+
+        // Create texture for font
+        let mut font_texture = u32::MAX;
+        unsafe {
+            gl::GenTextures(1, &mut font_texture);
+            gl::BindTexture(gl::TEXTURE_2D, font_texture);
+            gl::TexImage2D(
+                gl::TEXTURE_2D,
+                0,
+                gl::RED as i32,
+                128,
+                128,
+                0,
+                gl::RED,
+                gl::UNSIGNED_BYTE,
+                data.as_ptr() as *const _,
+            );
+        }
+        self.font_texture = font_texture;
     }
 }
 

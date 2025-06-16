@@ -1,12 +1,14 @@
+mod font_cache;
 #[cfg(feature = "opengl")]
 mod opengl;
 
 use crate::os::Window;
-use opengl::GLContext;
+use font_cache::FontCache;
 
 pub struct Renderer {
     pub win: Window,
-    pub ctx: Box<GLContext>,
+    pub ctx: Box<opengl::GLContext>,
+    font_cache: FontCache,
 }
 
 impl Renderer {
@@ -21,40 +23,22 @@ impl Renderer {
         }
 
         let renderer = available_renderers[0];
-        let ctx = match renderer {
-            "opengl" => Box::new(GLContext::new(&win)),
+        let mut ctx = match renderer {
+            "opengl" => Box::new(opengl::GLContext::new(&win)),
             _ => {
                 panic!("Renderer not implemented!");
             }
         };
-        Renderer { win, ctx }
-    }
-
-    pub fn update(&self) {
-        self.ctx.update();
-    }
-
-    pub fn render_text(&self) {
-        // TODO!
-        // Read the font data.
-        let font = include_bytes!("/System/Library/Fonts/SFNSMono.ttf") as &[u8];
-        // Parse it into the font type.
-        let font = fontdue::Font::from_bytes(font, fontdue::FontSettings::default()).unwrap();
-        // Rasterize and get the layout metrics for the letter 'g' at 17px.
-        let (metrics, bitmap) = font.rasterize('g', 17.0);
-        println!("Bitmap length... {}", bitmap.len());
-        println!("Metrics: {}x{}", metrics.width, metrics.height);
-        for (i, v) in bitmap.iter().enumerate() {
-            if i % metrics.width == 0 {
-                println!();
-            }
-            // print!("{v:02x}");
-            let c = match v {
-                0..100 => '.',
-                100..200 => '*',
-                200..=255 => '#',
-            };
-            print!("{c}");
+        let font_cache = FontCache::new();
+        ctx.update_font_texture(font_cache.texture());
+        Renderer {
+            win,
+            ctx,
+            font_cache,
         }
+    }
+
+    pub fn update(&mut self) {
+        self.ctx.update(&mut self.font_cache);
     }
 }

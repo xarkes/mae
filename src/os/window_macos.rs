@@ -20,6 +20,8 @@ use objc2_foundation::{
 struct AppDelegateIvars {
     window: OnceCell<Retained<NSWindow>>,
     view: OnceCell<Retained<NSView>>,
+    width: u16,
+    height: u16,
 }
 
 define_class!(
@@ -47,7 +49,10 @@ define_class!(
                 .unwrap();
 
             // SAFETY: We disable releasing when closed below.
-            let frame_rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(300.0, 300.0));
+            let frame_rect = NSRect::new(
+                NSPoint::new(0.0, 0.0),
+                NSSize::new(self.ivars().width as f64, self.ivars().height as f64),
+            );
             let window = unsafe {
                 NSWindow::initWithContentRect_styleMask_backing_defer(
                     NSWindow::alloc(mtm),
@@ -68,7 +73,7 @@ define_class!(
             // set various window properties
             window.setTitle(ns_string!("A window"));
             window.center();
-            unsafe { window.setContentMinSize(NSSize::new(300.0, 300.0)) };
+            unsafe { window.setContentMinSize(NSSize::new(100.0, 100.0)) };
             window.setDelegate(Some(ProtocolObject::from_ref(self)));
 
             // create menu bar and add shortcuts
@@ -123,21 +128,24 @@ define_class!(
 );
 
 impl Delegate {
-    fn new(mtm: MainThreadMarker) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(AppDelegateIvars::default());
+    fn new(mtm: MainThreadMarker, width: u16, height: u16) -> Retained<Self> {
+        let mut vars = AppDelegateIvars::default();
+        vars.width = width;
+        vars.height = height;
+        let this = Self::alloc(mtm).set_ivars(vars);
         // SAFETY: The signature of `NSObject`'s `init` method is correct.
         unsafe { msg_send![super(this), init] }
     }
 }
 
 impl Window {
-    pub fn new() -> Self {
+    pub fn new(width: u16, height: u16) -> Self {
         // xarkes: open the window OS side
         let mtm = MainThreadMarker::new().unwrap();
         let app = NSApplication::sharedApplication(mtm);
-        let delegate = Delegate::new(mtm);
+        let delegate = Delegate::new(mtm, width, height);
         app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
-        // xarkes: call run once - due to our code in "applicationDidFinishLaunching", this won't be blocking
+        // NOTE(xarkes): due to our code in "applicationDidFinishLaunching", run won't be blocking
         app.run();
 
         Window {
