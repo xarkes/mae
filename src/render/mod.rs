@@ -44,7 +44,6 @@ impl Renderer {
         let (metrics, bitmap) = font.rasterize('g', 17.0);
         println!("Bitmap length... {}", bitmap.len());
         println!("Metrics: {}x{}", metrics.width, metrics.height);
-
         for (i, v) in bitmap.iter().enumerate() {
             if i % metrics.width == 0 {
                 println!();
@@ -54,7 +53,6 @@ impl Renderer {
                 0..100 => '.',
                 100..200 => '*',
                 200..=255 => '#',
-                _ => ' ',
             };
             print!("{c}");
         }

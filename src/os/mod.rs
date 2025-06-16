@@ -1,5 +1,5 @@
 #[cfg(target_os = "macos")]
-include!("macos/window.rs");
+include!("window_macos.rs");
 
 #[cfg(all(not(target_os = "macos")))]
 compile_error!("Support for target OS is not implemented!");

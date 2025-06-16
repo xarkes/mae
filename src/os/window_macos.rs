@@ -5,10 +5,11 @@ use std::cell::OnceCell;
 
 use objc2::{
     DefinedClass, MainThreadOnly, define_class, msg_send, rc::Retained, runtime::ProtocolObject,
+    sel,
 };
 use objc2_app_kit::{
     NSAnyEventMask, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
-    NSBackingStoreType, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
+    NSBackingStoreType, NSMenu, NSMenuItem, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
 };
 use objc2_foundation::{
     MainThreadMarker, NSDate, NSDefaultRunLoopMode, NSNotification, NSObject, NSObjectProtocol,
@@ -69,6 +70,24 @@ define_class!(
             window.center();
             unsafe { window.setContentMinSize(NSSize::new(300.0, 300.0)) };
             window.setDelegate(Some(ProtocolObject::from_ref(self)));
+
+            // create menu bar and add shortcuts
+            let menubar = NSMenu::new(mtm);
+            let app_menu_item = NSMenuItem::new(mtm);
+            menubar.addItem(&app_menu_item);
+            app.setMainMenu(Some(&menubar));
+            let app_menu = NSMenu::new(mtm);
+            let quit_title = ns_string!("Quit application");
+            let quit_menu_item = unsafe {
+                NSMenuItem::initWithTitle_action_keyEquivalent(
+                    NSMenuItem::alloc(mtm),
+                    quit_title,
+                    Some(sel!(terminate:)),
+                    ns_string!("q"),
+                )
+            };
+            app_menu.addItem(&quit_menu_item);
+            app_menu_item.setSubmenu(Some(&app_menu));
 
             // create NSView and apply it to window
             let view = unsafe { NSView::initWithFrame(NSView::alloc(mtm), frame_rect) };

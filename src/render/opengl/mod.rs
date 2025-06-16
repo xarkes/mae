@@ -87,8 +87,15 @@ impl GLContext {
 
     pub fn update(&self) {
         unsafe {
-            // XXX: It seems to be window size x2 on current setup on MacOS, why?
-            gl::Viewport(0, 0, 600, 600);
+            // TODO: It seems it could be window size x2 on MacOS default settings.
+            // I think this could be related to the way it handles DPI or similar.
+            let mut width = 300;
+            let mut height = 300;
+            if false {
+                width *= 2;
+                height *= 2;
+            }
+            gl::Viewport(0, 0, width, height);
             gl::Clear(gl::COLOR_BUFFER_BIT);
             gl::UseProgram(self.program);
             gl::BindVertexArray(self.vao);
