@@ -9,7 +9,8 @@ use objc2::{
 };
 use objc2_app_kit::{
     NSAnyEventMask, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
-    NSBackingStoreType, NSMenu, NSMenuItem, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
+    NSAutoresizingMaskOptions, NSBackingStoreType, NSMenu, NSMenuItem, NSView, NSWindow,
+    NSWindowDelegate, NSWindowStyleMask,
 };
 use objc2_foundation::{
     MainThreadMarker, NSDate, NSDefaultRunLoopMode, NSNotification, NSObject, NSObjectProtocol,
@@ -96,6 +97,12 @@ define_class!(
 
             // create NSView and apply it to window
             let view = unsafe { NSView::initWithFrame(NSView::alloc(mtm), frame_rect) };
+            unsafe {
+                view.setAutoresizingMask(
+                    NSAutoresizingMaskOptions::ViewWidthSizable
+                        | NSAutoresizingMaskOptions::ViewHeightSizable,
+                );
+            }
             window.setContentView(Some(&view));
 
             // show the window
@@ -114,6 +121,11 @@ define_class!(
 
             // xarkes: stop the application such that run() is not blocking, and we can handle events on our own
             app.stop(None);
+        }
+
+        #[unsafe(method(windowDidResize:))]
+        fn did_resize(&self, _notification: &NSNotification) {
+            // TODO(xarkes): Should we send an event to notify the renderer of some update?
         }
     }
 
@@ -153,6 +165,11 @@ impl Window {
             window: delegate.ivars().window.clone(),
             view: delegate.ivars().view.clone(),
         }
+    }
+
+    pub fn get_size(&self) -> (u32, u32) {
+        let rect = self.view.get().unwrap().frame();
+        (rect.size.width as u32, rect.size.height as u32)
     }
 
     pub fn get_events(&self) {

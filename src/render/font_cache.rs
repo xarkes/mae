@@ -72,7 +72,8 @@ where
 }
 
 const CACHE_GLYPH_COUNT: usize = 512;
-const FONT_SIZE_RASTER: usize = 128;
+const FONT_SIZE_RASTER: usize = 64;
+const ATLAS_WIDTH: usize = 2048;
 
 #[derive(Clone, Debug)]
 pub struct Glyph {
@@ -80,6 +81,8 @@ pub struct Glyph {
     pub tl_y: f32,
     pub br_x: f32,
     pub br_y: f32,
+    pub yoff: f32,
+    pub xoff: f32,
 }
 
 pub struct Atlas {
@@ -93,9 +96,9 @@ pub struct Atlas {
 impl Atlas {
     pub fn new() -> Self {
         Atlas {
-            data: vec![0; 2048 * 2048],
-            width: 2048,
-            height: 2048,
+            data: vec![0; ATLAS_WIDTH * ATLAS_WIDTH],
+            width: ATLAS_WIDTH,
+            height: ATLAS_WIDTH,
             next_x: 0,
             next_y: 0,
         }
@@ -107,7 +110,7 @@ impl Atlas {
             panic!("Full atlas is not handled yet");
         }
         assert!(metrics.width <= FONT_SIZE_RASTER);
-        assert!(metrics.height <= FONT_SIZE_RASTER);
+        assert!(metrics.bounds.height <= FONT_SIZE_RASTER as f32);
 
         // Copy the square rasterized glyph in our atlas (non contiguous)
         for y in 0..metrics.height {
@@ -117,11 +120,16 @@ impl Atlas {
             dst.copy_from_slice(data);
         }
 
+        // TODO(xarkes): There are artifacts on font rendering which makes me think this dirty
+        // code must have some precision issues. As well as many other problems.
         let glyph = Glyph {
-            tl_x: self.next_x as f32 / self.width as f32,
-            tl_y: self.next_y as f32 / self.height as f32,
-            br_x: (self.next_x as f32 + metrics.advance_width) / self.width as f32,
-            br_y: (self.next_y as f32 + metrics.bounds.height) / self.height as f32,
+            tl_x: (self.next_x as f32) / self.width as f32,
+            tl_y: (self.next_y as f32) / self.height as f32,
+            br_x: (self.next_x as f32 + FONT_SIZE_RASTER as f32) / self.width as f32,
+            br_y: (self.next_y as f32 + FONT_SIZE_RASTER as f32) / self.height as f32,
+            yoff: (-metrics.bounds.height - metrics.bounds.ymin + FONT_SIZE_RASTER as f32)
+                / FONT_SIZE_RASTER as f32,
+            xoff: metrics.advance_width as f32 / FONT_SIZE_RASTER as f32,
         };
         self.next_x += FONT_SIZE_RASTER;
         if self.next_x >= self.width {
@@ -142,6 +150,9 @@ impl FontCache {
         // XXX(xarkes): It seems that fontdue is not able to handle emojis rasterization.
         // In addition, we may want in the future to have a way to handle font "fallback"
         // i.e. looking up for a glyph in a separate font when the current one does not provide it.
+        // NOTE(xarkes): A quick search shows that apparently no font bundles all languages, so most likely we should
+        // have multiple fonts (e.g. Google Noto) and load them depending on the language?
+        // Not sure what's the best way to proceed here.
         let font = include_bytes!("/System/Library/Fonts/SFNSMono.ttf") as &[u8];
         // let font = include_bytes!("/System/Library/Fonts/SFNS.ttf") as &[u8];
         // let font =
@@ -166,6 +177,7 @@ impl FontCache {
     /// Add a glyph to the cache
     /// Must be called only if you are sure the glyph is not in the cache already
     fn add(&mut self, glyph: char) -> Option<&Glyph> {
+        assert!(self.table.get(&glyph).is_none());
         if !self.font.has_glyph(glyph) {
             println!(
                 "glyph '{:?}' not found, switch font?",
@@ -181,13 +193,16 @@ impl FontCache {
 
     /// Retrieve rasterized glyph
     /// If not in cache, add it
-    pub fn get(&mut self, glyph: char) -> Option<&Glyph> {
+    pub fn get(&mut self, glyph: char) -> (Option<&Glyph>, bool) {
+        let mut added = false;
         if self.table.get(&glyph).is_none() {
             self.add(glyph);
+            added = true;
         }
-        self.table.get(&glyph)
+        (self.table.get(&glyph), added)
     }
 
+    /// Retrieve the current atlas
     pub fn atlas(&self) -> &Atlas {
         &self.atlas
     }

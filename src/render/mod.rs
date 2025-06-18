@@ -38,6 +38,10 @@ impl Renderer {
         }
     }
 
+    pub fn resize(&mut self, w: u32, h: u32) {
+        self.ctx.resize(w, h);
+    }
+
     pub fn update(&mut self) {
         self.ctx.update(&mut self.font_cache);
     }
