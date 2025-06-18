@@ -71,18 +71,72 @@ where
     }
 }
 
-#[derive(Clone)]
+const CACHE_GLYPH_COUNT: usize = 512;
+const FONT_SIZE_RASTER: usize = 128;
+
+#[derive(Clone, Debug)]
 pub struct Glyph {
-    pub atlas_idx: usize,
-    pub size: usize,
+    pub tl_x: f32,
+    pub tl_y: f32,
+    pub br_x: f32,
+    pub br_y: f32,
+}
+
+pub struct Atlas {
+    pub data: Vec<u8>,
+    pub width: usize,
+    pub height: usize,
+    next_x: usize,
+    next_y: usize,
+}
+
+impl Atlas {
+    pub fn new() -> Self {
+        Atlas {
+            data: vec![0; 2048 * 2048],
+            width: 2048,
+            height: 2048,
+            next_x: 0,
+            next_y: 0,
+        }
+    }
+
+    /// Add a glyph to the current atlas
+    pub fn add_glyph(&mut self, metrics: fontdue::Metrics, bitmap: Vec<u8>) -> Glyph {
+        if self.next_y >= self.height {
+            panic!("Full atlas is not handled yet");
+        }
+        assert!(metrics.width <= FONT_SIZE_RASTER);
+        assert!(metrics.height <= FONT_SIZE_RASTER);
+
+        // Copy the square rasterized glyph in our atlas (non contiguous)
+        for y in 0..metrics.height {
+            let dst = &mut self.data[self.next_x + y * self.width + self.next_y * self.width
+                ..self.next_x + y * self.width + self.next_y * self.width + metrics.width];
+            let data = &bitmap[y * metrics.width..y * metrics.width + metrics.width];
+            dst.copy_from_slice(data);
+        }
+
+        let glyph = Glyph {
+            tl_x: self.next_x as f32 / self.width as f32,
+            tl_y: self.next_y as f32 / self.height as f32,
+            br_x: (self.next_x as f32 + metrics.advance_width) / self.width as f32,
+            br_y: (self.next_y as f32 + metrics.bounds.height) / self.height as f32,
+        };
+        self.next_x += FONT_SIZE_RASTER;
+        if self.next_x >= self.width {
+            self.next_x = 0;
+            self.next_y += FONT_SIZE_RASTER;
+        }
+        glyph
+    }
 }
 
 pub struct FontCache {
     font: fontdue::Font,
     table: LRUCache<char, Glyph>,
-    atlas: Vec<u8>,
+    atlas: Atlas,
 }
-
 impl FontCache {
     pub fn new() -> Self {
         // XXX(xarkes): It seems that fontdue is not able to handle emojis rasterization.
@@ -95,25 +149,23 @@ impl FontCache {
         //         as &[u8];
         // let font = include_bytes!("/System/Library/Fonts/Apple Symbols.ttf") as &[u8];
         let font = fontdue::Font::from_bytes(font, fontdue::FontSettings::default()).unwrap();
-        const CACHE_GLYPH_COUNT: usize = 512;
         // let w = 128;
         // let h = 128;
         let mut fc = FontCache {
             font,
             table: LRUCache::new(CACHE_GLYPH_COUNT),
-            // atlas: Vec::with_capacity(CACHE_GLYPH_COUNT * w * h),
-            atlas: Vec::new(),
+            atlas: Atlas::new(),
         };
 
-        // for ccode in 33..127u8 {
-        //     fc.add(ccode as char);
-        // }
-        fc.add('A');
+        for ccode in 33..127u8 {
+            fc.add(ccode as char);
+        }
         fc
     }
 
     /// Add a glyph to the cache
-    fn add(&mut self, glyph: char) -> Option<Glyph> {
+    /// Must be called only if you are sure the glyph is not in the cache already
+    fn add(&mut self, glyph: char) -> Option<&Glyph> {
         if !self.font.has_glyph(glyph) {
             println!(
                 "glyph '{:?}' not found, switch font?",
@@ -121,33 +173,22 @@ impl FontCache {
             );
             return None;
         }
-        let (metrics, bitmap) = self.font.rasterize(glyph, 128.0);
-        println!("Metrics: {:?} ({})", metrics, glyph);
-        let idx = self.atlas.len();
-        // TODO(xarkes): Support eviction on the atlas itself as well as the table
-        self.atlas.extend(bitmap);
-        let glyph_data = Glyph {
-            atlas_idx: idx,
-            size: metrics.width * metrics.height,
-        };
-
-        self.table.set(glyph, glyph_data.clone());
-
-        Some(glyph_data)
+        let (metrics, bitmap) = self.font.rasterize(glyph, FONT_SIZE_RASTER as f32);
+        let glyph_data = self.atlas.add_glyph(metrics, bitmap);
+        self.table.set(glyph, glyph_data);
+        self.table.get(&glyph)
     }
 
     /// Retrieve rasterized glyph
     /// If not in cache, add it
-    pub fn get(&mut self, glyph: char) -> Option<Glyph> {
-        let maybe_glyph = &mut self.table.get(&glyph);
-        if !maybe_glyph.is_some() {
-            self.add(glyph)
-        } else {
-            maybe_glyph.cloned()
+    pub fn get(&mut self, glyph: char) -> Option<&Glyph> {
+        if self.table.get(&glyph).is_none() {
+            self.add(glyph);
         }
+        self.table.get(&glyph)
     }
 
-    pub fn texture(&self) -> Vec<u8> {
-        self.atlas.clone()
+    pub fn atlas(&self) -> &Atlas {
+        &self.atlas
     }
 }

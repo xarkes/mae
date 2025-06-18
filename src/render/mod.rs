@@ -30,7 +30,7 @@ impl Renderer {
             }
         };
         let font_cache = FontCache::new();
-        ctx.update_font_texture(font_cache.texture());
+        ctx.update_font_texture(font_cache.atlas());
         Renderer {
             win,
             ctx,

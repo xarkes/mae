@@ -155,12 +155,12 @@ impl GLContext {
 
             // Draw some text
             if true {
-                let text = String::from("AAA BBB");
+                let text = String::from("Bonjour, ca va ?");
                 gl::ActiveTexture(gl::TEXTURE0);
                 gl::BindVertexArray(self.vao);
 
-                let mut x: f32 = -0.7;
-                let y: f32 = 0.3;
+                let mut x: f32 = -0.9;
+                let y: f32 = 0.8;
 
                 for c in text.chars() {
                     let glyph = font_cache.get(c);
@@ -179,28 +179,28 @@ impl GLContext {
                     let vbo_data: [GLfloat; 24] = [
                         xpos,
                         ypos + h,
-                        0.0,
-                        0.0,
+                        glyph.tl_x,
+                        glyph.tl_y,
                         xpos,
                         ypos,
-                        0.0,
-                        1.0,
+                        glyph.tl_x,
+                        glyph.br_y,
                         xpos + w,
                         ypos,
-                        1.0,
-                        1.0,
+                        glyph.br_x,
+                        glyph.br_y,
                         xpos,
                         ypos + h,
-                        0.0,
-                        0.0,
+                        glyph.tl_x,
+                        glyph.tl_y,
                         xpos + w,
                         ypos,
-                        1.0,
-                        1.0,
+                        glyph.br_x,
+                        glyph.br_y,
                         xpos + w,
                         ypos + h,
-                        1.0,
-                        0.0,
+                        glyph.br_x,
+                        glyph.tl_y,
                     ];
                     gl::BindTexture(gl::TEXTURE_2D, self.font_texture);
                     gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
@@ -223,7 +223,7 @@ impl GLContext {
         }
     }
 
-    pub fn update_font_texture(&mut self, data: Vec<u8>) {
+    pub fn update_font_texture(&mut self, atlas: &crate::render::font_cache::Atlas) {
         if self.font_texture != u32::MAX {
             panic!("FIXME: Not handled atm");
         }
@@ -231,7 +231,7 @@ impl GLContext {
         unsafe { gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1) };
 
         // Create texture for font
-        println!("TEXTURE CREATION======");
+        println!("TEXTURE CREATION ======");
         let mut font_texture = u32::MAX;
         unsafe {
             gl::GenTextures(1, &mut font_texture);
@@ -240,12 +240,12 @@ impl GLContext {
                 gl::TEXTURE_2D,
                 0,
                 gl::RED as i32,
-                69,
-                91,
+                atlas.width as i32,
+                atlas.height as i32,
                 0,
                 gl::RED,
                 gl::UNSIGNED_BYTE,
-                data.as_ptr() as *const _,
+                atlas.data.as_ptr() as *const _,
             );
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
