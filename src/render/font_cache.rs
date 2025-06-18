@@ -96,17 +96,19 @@ impl FontCache {
         // let font = include_bytes!("/System/Library/Fonts/Apple Symbols.ttf") as &[u8];
         let font = fontdue::Font::from_bytes(font, fontdue::FontSettings::default()).unwrap();
         const CACHE_GLYPH_COUNT: usize = 512;
-        let w = 128;
-        let h = 128;
+        // let w = 128;
+        // let h = 128;
         let mut fc = FontCache {
             font,
             table: LRUCache::new(CACHE_GLYPH_COUNT),
-            atlas: Vec::with_capacity(CACHE_GLYPH_COUNT * w * h),
+            // atlas: Vec::with_capacity(CACHE_GLYPH_COUNT * w * h),
+            atlas: Vec::new(),
         };
 
-        for ccode in 33..127u8 {
-            fc.add(ccode as char);
-        }
+        // for ccode in 33..127u8 {
+        //     fc.add(ccode as char);
+        // }
+        fc.add('A');
         fc
     }
 
@@ -120,6 +122,7 @@ impl FontCache {
             return None;
         }
         let (metrics, bitmap) = self.font.rasterize(glyph, 128.0);
+        println!("Metrics: {:?} ({})", metrics, glyph);
         let idx = self.atlas.len();
         // TODO(xarkes): Support eviction on the atlas itself as well as the table
         self.atlas.extend(bitmap);

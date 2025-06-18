@@ -75,7 +75,7 @@ impl GLContext {
             // );
             gl::BufferData(
                 gl::ARRAY_BUFFER,
-                (size_of::<GLfloat>() * 3 * 4) as GLsizeiptr,
+                (size_of::<GLfloat>() * 6 * 4) as GLsizeiptr,
                 std::ptr::null(),
                 gl::DYNAMIC_DRAW,
             );
@@ -155,12 +155,12 @@ impl GLContext {
 
             // Draw some text
             if true {
-                let text = String::from("salut");
+                let text = String::from("AAA BBB");
                 gl::ActiveTexture(gl::TEXTURE0);
                 gl::BindVertexArray(self.vao);
 
-                let mut x: f32 = 0.1;
-                let y: f32 = 0.1;
+                let mut x: f32 = -0.7;
+                let y: f32 = 0.3;
 
                 for c in text.chars() {
                     let glyph = font_cache.get(c);
@@ -228,7 +228,10 @@ impl GLContext {
             panic!("FIXME: Not handled atm");
         }
 
+        unsafe { gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1) };
+
         // Create texture for font
+        println!("TEXTURE CREATION======");
         let mut font_texture = u32::MAX;
         unsafe {
             gl::GenTextures(1, &mut font_texture);
@@ -237,13 +240,17 @@ impl GLContext {
                 gl::TEXTURE_2D,
                 0,
                 gl::RED as i32,
-                128,
-                128,
+                69,
+                91,
                 0,
                 gl::RED,
                 gl::UNSIGNED_BYTE,
                 data.as_ptr() as *const _,
             );
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
         }
         self.font_texture = font_texture;
     }
