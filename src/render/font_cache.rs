@@ -72,7 +72,7 @@ where
 }
 
 const CACHE_GLYPH_COUNT: usize = 512;
-const FONT_SIZE_RASTER: usize = 64;
+const FONT_SIZE_RASTER: usize = 128;
 const ATLAS_WIDTH: usize = 2048;
 
 #[derive(Clone, Debug)]
@@ -120,13 +120,12 @@ impl Atlas {
             dst.copy_from_slice(data);
         }
 
-        // TODO(xarkes): There are artifacts on font rendering which makes me think this dirty
-        // code must have some precision issues. As well as many other problems.
         let glyph = Glyph {
             tl_x: (self.next_x as f32) / self.width as f32,
             tl_y: (self.next_y as f32) / self.height as f32,
-            br_x: (self.next_x as f32 + FONT_SIZE_RASTER as f32) / self.width as f32,
-            br_y: (self.next_y as f32 + FONT_SIZE_RASTER as f32) / self.height as f32,
+            // NOTE(xarkes): -1 because there are FONT_SIZE_RASTER lines/cols, starting at 0. Without -1, we would include the next glyph pixels.
+            br_x: (self.next_x as f32 + FONT_SIZE_RASTER as f32 - 1.0) / self.width as f32,
+            br_y: (self.next_y as f32 + FONT_SIZE_RASTER as f32 - 1.0) / self.height as f32,
             yoff: (-metrics.bounds.height - metrics.bounds.ymin + FONT_SIZE_RASTER as f32)
                 / FONT_SIZE_RASTER as f32,
             xoff: metrics.advance_width as f32 / FONT_SIZE_RASTER as f32,
@@ -153,8 +152,8 @@ impl FontCache {
         // NOTE(xarkes): A quick search shows that apparently no font bundles all languages, so most likely we should
         // have multiple fonts (e.g. Google Noto) and load them depending on the language?
         // Not sure what's the best way to proceed here.
-        let font = include_bytes!("/System/Library/Fonts/SFNSMono.ttf") as &[u8];
-        // let font = include_bytes!("/System/Library/Fonts/SFNS.ttf") as &[u8];
+        // let font = include_bytes!("/System/Library/Fonts/SFNSMono.ttf") as &[u8];
+        let font = include_bytes!("/System/Library/Fonts/SFNS.ttf") as &[u8];
         // let font =
         //     include_bytes!("/Users/user/Downloads/Noto_Color_Emoji/NotoColorEmoji-Regular.ttf")
         //         as &[u8];

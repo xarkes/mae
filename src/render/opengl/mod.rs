@@ -33,13 +33,14 @@ static RECT_FRAGMENT_SHADER: &'static str = "
 in vec2 tex_coords;
 
 uniform sampler2D text;
+uniform vec3 u_color;
 
 out vec4 color;
 
 void main()
 {
   vec4 sampled = vec4(1.0, 1.0, 1.0, texture(text, tex_coords).r);
-  color = vec4(1.0f, 1.0f, 1.0f, 1.0f) * sampled;
+  color = vec4(u_color.xyz, 1.0f) * sampled;
 }
 ";
 
@@ -122,6 +123,12 @@ impl GLContext {
 
     fn render_triangles(&self) {
         unsafe {
+            gl::Uniform3f(
+                gl::GetUniformLocation(self.program, CString::new("u_color").unwrap().as_ptr()),
+                1.0,
+                1.0,
+                1.0,
+            );
             gl::Disable(gl::BLEND);
             gl::BindVertexArray(self.vao);
             let vertex_data: [GLfloat; 12] = [
@@ -151,7 +158,6 @@ impl GLContext {
 
     fn render_text(&mut self, font_cache: &mut crate::render::font_cache::FontCache) {
         unsafe {
-            gl::Enable(gl::BLEND);
             let text = String::from("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
             let text = String::from("abcdefghijklmnopqrstuvwxyz");
             gl::ActiveTexture(gl::TEXTURE0);
@@ -159,11 +165,17 @@ impl GLContext {
 
             let mut x = 0.0;
             let y = 0.0;
+            let font_size = 12.0;
+            let h = font_size;
+            let w = font_size;
 
             // XXX: This is dumb, but I'm lazy atm. Rewrite this :)
             {
                 let mut should_update = false;
                 for c in text.chars() {
+                    if c == '\t' {
+                        continue;
+                    }
                     let (_, added) = font_cache.get(c);
                     should_update |= added;
                 }
@@ -173,19 +185,17 @@ impl GLContext {
             }
 
             for c in text.chars() {
+                if c == '\t' {
+                    x += font_size;
+                    continue;
+                }
                 let (glyph, _) = font_cache.get(c);
                 if glyph.is_none() {
                     continue;
                 }
                 let glyph = glyph.unwrap();
 
-                // TODO(xarkes): It would probably be more readable to have the shader
-                // normalize to the window size rather than doing it here
-
                 // Update VBO for each character
-                let font_size = 32.0;
-                let h = font_size;
-                let w = font_size;
                 let xpos = x;
                 let ypos = y + (glyph.yoff * font_size);
                 let vbo_data: [GLfloat; 24] = [
@@ -223,6 +233,29 @@ impl GLContext {
                     vbo_data.as_ptr() as *const _,
                 );
                 gl::BindBuffer(gl::ARRAY_BUFFER, 0);
+                if false {
+                    // Display triangles bounds
+                    gl::Uniform3f(
+                        gl::GetUniformLocation(
+                            self.program,
+                            CString::new("u_color").unwrap().as_ptr(),
+                        ),
+                        1.0,
+                        0.4,
+                        0.4,
+                    );
+                    gl::Disable(gl::BLEND);
+                    gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE);
+                    gl::DrawArrays(gl::TRIANGLES, 0, 6);
+                }
+                gl::Uniform3f(
+                    gl::GetUniformLocation(self.program, CString::new("u_color").unwrap().as_ptr()),
+                    1.0,
+                    0.2,
+                    0.2,
+                );
+                gl::Enable(gl::BLEND);
+                gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
                 gl::DrawArrays(gl::TRIANGLES, 0, 6);
 
                 x += glyph.xoff * font_size;
