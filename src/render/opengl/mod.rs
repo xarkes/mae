@@ -5,27 +5,36 @@ include!("opengl_macos.rs");
 compile_error!("OpenGL not implemented for target OS!");
 
 extern crate gl;
+use std::ffi::CString;
+
 use gl::types::*;
 
 use crate::os::Window;
 
 static RECT_VERTEX_SHADER: &'static str = "
 #version 330 core
+
 in vec4 vertex; // <vec2 pos, vec2 tex>
+
+uniform vec2 u_viewport_size_px;
+
 out vec2 tex_coords;
 
 void main() {
-  gl_Position = vec4(vertex.xy, 0.0, 1.0);
+  // xarkes: convert position from pixels coords (with top left 0,0) to gl viewport
+  gl_Position = vec4(2 * vertex.x / u_viewport_size_px.x - 1, 2 * (1 - vertex.y / u_viewport_size_px.y) - 1, 0.0, 1.0);
   tex_coords = vertex.zw;
 }
 ";
 
 static RECT_FRAGMENT_SHADER: &'static str = "
 #version 330 core
+
 in vec2 tex_coords;
-out vec4 color;
 
 uniform sampler2D text;
+
+out vec4 color;
 
 void main()
 {
@@ -35,8 +44,8 @@ void main()
 ";
 
 pub struct GLContext {
-    width: u32,
-    height: u32,
+    width: f32,
+    height: f32,
     ctx: GLContextHandle,
     program: u32,
     vao: u32,
@@ -87,7 +96,7 @@ impl GLContext {
             gl::BindBuffer(gl::ARRAY_BUFFER, 0);
             gl::BindVertexArray(0);
 
-            gl::ClearColor(0.17, 0.71, 0.56, 0.);
+            gl::ClearColor(0.07, 0.31, 0.26, 0.);
         }
 
         // enable gl debugging
@@ -115,8 +124,9 @@ impl GLContext {
         unsafe {
             gl::Disable(gl::BLEND);
             gl::BindVertexArray(self.vao);
-            let vertex_data: [GLfloat; 12] =
-                [-0.5, -0.5, 0., 0., 0.5, 0.5, 0., 0., 0., 0.5, 0., 0.];
+            let vertex_data: [GLfloat; 12] = [
+                150.0, 150.0, 0.0, 0.0, 600.0, 300.0, 0.0, 0.0, 100.0, 300.0, 0.0, 0.0,
+            ];
             gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
             gl::BufferSubData(
                 gl::ARRAY_BUFFER,
@@ -125,8 +135,9 @@ impl GLContext {
                 std::mem::transmute(&vertex_data[0]),
             );
             gl::DrawArrays(gl::TRIANGLES, 0, 3);
-            let vertex_data: [GLfloat; 12] =
-                [-0.8, -0.8, 0., 0., -0.4, -0.7, 0., 0., 0.3, -0.3, 0., 0.];
+            let vertex_data: [GLfloat; 12] = [
+                600.0, 600.0, 0.0, 0.0, 100.0, 550.0, 0.0, 0.0, 250.0, 300.0, 0.0, 0.0,
+            ];
             gl::BufferSubData(
                 gl::ARRAY_BUFFER,
                 0,
@@ -146,8 +157,8 @@ impl GLContext {
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindVertexArray(self.vao);
 
-            let mut x: f32 = -1.0;
-            let y: f32 = 1.0;
+            let mut x = 0.0;
+            let y = 0.0;
 
             // XXX: This is dumb, but I'm lazy atm. Rewrite this :)
             {
@@ -172,36 +183,36 @@ impl GLContext {
                 // normalize to the window size rather than doing it here
 
                 // Update VBO for each character
-                let font_size = 75.0;
-                let h = font_size / self.width as f32;
-                let w = font_size / self.height as f32;
+                let font_size = 32.0;
+                let h = font_size;
+                let w = font_size;
                 let xpos = x;
-                let ypos = y - h - (glyph.yoff * font_size / self.height as f32);
+                let ypos = y + (glyph.yoff * font_size);
                 let vbo_data: [GLfloat; 24] = [
                     xpos,
                     ypos + h,
                     glyph.tl_x,
-                    glyph.tl_y,
-                    xpos,
-                    ypos,
-                    glyph.tl_x,
-                    glyph.br_y,
-                    xpos + w,
-                    ypos,
-                    glyph.br_x,
                     glyph.br_y,
                     xpos,
-                    ypos + h,
+                    ypos,
                     glyph.tl_x,
                     glyph.tl_y,
                     xpos + w,
                     ypos,
                     glyph.br_x,
+                    glyph.tl_y,
+                    xpos,
+                    ypos + h,
+                    glyph.tl_x,
                     glyph.br_y,
+                    xpos + w,
+                    ypos,
+                    glyph.br_x,
+                    glyph.tl_y,
                     xpos + w,
                     ypos + h,
                     glyph.br_x,
-                    glyph.tl_y,
+                    glyph.br_y,
                 ];
                 gl::BindTexture(gl::TEXTURE_2D, self.font_texture);
                 gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
@@ -214,14 +225,14 @@ impl GLContext {
                 gl::BindBuffer(gl::ARRAY_BUFFER, 0);
                 gl::DrawArrays(gl::TRIANGLES, 0, 6);
 
-                x += glyph.xoff * font_size / self.width as f32;
+                x += glyph.xoff * font_size;
             }
             gl::BindVertexArray(0);
             gl::BindTexture(gl::TEXTURE_2D, 0);
         }
     }
 
-    pub fn resize(&mut self, w: u32, h: u32) {
+    pub fn resize(&mut self, w: f32, h: f32) {
         self.width = w;
         self.height = h;
         unsafe {
@@ -231,23 +242,30 @@ impl GLContext {
 
     pub fn update(&mut self, font_cache: &mut crate::render::font_cache::FontCache) {
         unsafe {
+            // Begin frame
             let mut width = self.width;
             let mut height = self.height;
             if false {
                 // TODO: It seems it could be window size x2 on MacOS default settings.
                 // I think this could be related to the way it handles DPI or similar.
-                width *= 2;
-                height *= 2;
+                width *= 2.0;
+                height *= 2.0;
             }
             gl::Clear(gl::COLOR_BUFFER_BIT);
+            gl::Uniform2f(
+                gl::GetUniformLocation(
+                    self.program,
+                    CString::new("u_viewport_size_px").unwrap().as_ptr(),
+                ),
+                width,
+                height,
+            );
             gl::Viewport(0, 0, width as i32, height as i32);
+
+            // Draw frame
             gl::UseProgram(self.program);
-
-            // Draw some triangles
             self.render_triangles();
-            // Draw some text
             self.render_text(font_cache);
-
             ogl_os_swapbuffers(self.ctx);
         }
     }

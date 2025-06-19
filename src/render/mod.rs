@@ -38,7 +38,7 @@ impl Renderer {
         }
     }
 
-    pub fn resize(&mut self, w: u32, h: u32) {
+    pub fn resize(&mut self, w: f32, h: f32) {
         self.ctx.resize(w, h);
     }
 

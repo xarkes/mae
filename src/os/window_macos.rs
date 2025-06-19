@@ -167,9 +167,9 @@ impl Window {
         }
     }
 
-    pub fn get_size(&self) -> (u32, u32) {
+    pub fn get_size(&self) -> (f32, f32) {
         let rect = self.view.get().unwrap().frame();
-        (rect.size.width as u32, rect.size.height as u32)
+        (rect.size.width as f32, rect.size.height as f32)
     }
 
     pub fn get_events(&self) {
