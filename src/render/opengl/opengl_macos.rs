@@ -116,7 +116,7 @@ pub fn ogl_os_create_context(win: &Window) -> *mut AnyObject {
         )
     };
     if lib_ptr == std::ptr::null_mut() {
-        panic!("Could not laod libGL, renderer cannot be used.");
+        panic!("Could not load libGL, renderer cannot be used.");
     }
 
     // SAFETY: xarkes: We trust the OS to give us a valid pointer for the library handle with dlopen and we also trust it to give us valid function pointers with dlsym
@@ -142,6 +142,12 @@ pub fn ogl_os_create_context(win: &Window) -> *mut AnyObject {
     }
 
     ctx
+}
+
+pub fn ogl_os_resize(ctx: *mut AnyObject) {
+    unsafe {
+        let _: () = msg_send![ctx, update];
+    }
 }
 
 pub fn ogl_os_swapbuffers(ctx: *mut AnyObject) {

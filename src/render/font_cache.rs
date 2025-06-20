@@ -173,8 +173,8 @@ impl FontCache {
         // Not sure what's the best way to proceed here.
         // let font = include_bytes!("/System/Library/Fonts/SFNSMono.ttf") as &[u8];
         // let font = include_bytes!("/System/Library/Fonts/SFNS.ttf") as &[u8];
-        // let font = include_bytes!("/System/Library/Fonts/Menlo.ttc") as &[u8];
-        let font = include_bytes!("/tmp/fonts/Inconsolata-Regular.ttf") as &[u8];
+        let font = include_bytes!("/System/Library/Fonts/Menlo.ttc") as &[u8];
+        // let font = include_bytes!("/tmp/fonts/Inconsolata-Regular.ttf") as &[u8];
         // let font =
         //     include_bytes!("/Users/user/Downloads/Noto_Color_Emoji/NotoColorEmoji-Regular.ttf")
         //         as &[u8];

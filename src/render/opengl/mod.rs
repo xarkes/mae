@@ -167,7 +167,7 @@ impl GLContext {
             gl::BindVertexArray(self.vao);
 
             let mut x = 0.0;
-            let y = 600.0 - 24.0;
+            let y = 0.0;
             // TODO(xarkes): Have to decide what to do with font size
             let font_size = 128.0;
 
@@ -273,9 +273,7 @@ impl GLContext {
     pub fn resize(&mut self, w: f32, h: f32) {
         self.width = w;
         self.height = h;
-        unsafe {
-            gl::Viewport(0, 0, w as i32, h as i32);
-        }
+        ogl_os_resize(self.ctx);
     }
 
     pub fn update(&mut self, font_cache: &mut crate::render::font_cache::FontCache) {
