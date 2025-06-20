@@ -72,7 +72,8 @@ where
 }
 
 const CACHE_GLYPH_COUNT: usize = 512;
-const FONT_SIZE_RASTER: usize = 128;
+// TODO(xarkes): Rasterize for the right size?
+const FONT_SIZE_RASTER: usize = 12;
 const ATLAS_WIDTH: usize = 2048;
 
 #[derive(Clone, Debug)]
@@ -113,6 +114,12 @@ impl Atlas {
         assert!(metrics.bounds.height <= FONT_SIZE_RASTER as f32);
 
         // Copy the square rasterized glyph in our atlas (non contiguous)
+        // TODO(xarkes): Rewrite this and just see the atlas as a long 1D array where squares are just contiguously put in place
+        // and just let the texture configuration do the job
+        // It will save space (FONT_SIZE_RASTER > the actual width/height)
+        // It will ease atlas resizing, etc.
+        // Probably will make eviction harder since you probably will have to deal with holes in the atlas
+        // TODO(xarkes): While doing above refactor, make sure you implement the eviction
         for y in 0..metrics.height {
             let dst = &mut self.data[self.next_x + y * self.width + self.next_y * self.width
                 ..self.next_x + y * self.width + self.next_y * self.width + metrics.width];
@@ -153,7 +160,8 @@ impl FontCache {
         // have multiple fonts (e.g. Google Noto) and load them depending on the language?
         // Not sure what's the best way to proceed here.
         // let font = include_bytes!("/System/Library/Fonts/SFNSMono.ttf") as &[u8];
-        let font = include_bytes!("/System/Library/Fonts/SFNS.ttf") as &[u8];
+        // let font = include_bytes!("/System/Library/Fonts/SFNS.ttf") as &[u8];
+        let font = include_bytes!("/tmp/fonts/Inconsolata-Regular.ttf") as &[u8];
         // let font =
         //     include_bytes!("/Users/user/Downloads/Noto_Color_Emoji/NotoColorEmoji-Regular.ttf")
         //         as &[u8];
@@ -167,6 +175,7 @@ impl FontCache {
             atlas: Atlas::new(),
         };
 
+        // Pre-fill the cache for ASCII
         for ccode in 33..127u8 {
             fc.add(ccode as char);
         }
@@ -194,6 +203,7 @@ impl FontCache {
     /// If not in cache, add it
     pub fn get(&mut self, glyph: char) -> (Option<&Glyph>, bool) {
         let mut added = false;
+        // TODO(xarkes): For perf just prerender the ASCII table and avoid checking the hashmap for English charset
         if self.table.get(&glyph).is_none() {
             self.add(glyph);
             added = true;

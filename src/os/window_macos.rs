@@ -184,7 +184,6 @@ impl Window {
                 true,
             );
             if let Some(ev) = event {
-                println!("Got event: {:?}", ev);
                 app.sendEvent(&ev);
             }
         }
