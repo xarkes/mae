@@ -98,6 +98,7 @@ impl GLContext {
             gl::BindVertexArray(0);
 
             gl::ClearColor(0.07, 0.31, 0.26, 0.);
+            gl::ClearColor(0., 0., 0., 0.);
         }
 
         // enable gl debugging
@@ -125,9 +126,9 @@ impl GLContext {
         unsafe {
             gl::Uniform3f(
                 gl::GetUniformLocation(self.program, CString::new("u_color").unwrap().as_ptr()),
-                1.0,
-                1.0,
-                1.0,
+                0.51,
+                0.70,
+                0.71,
             );
             gl::Disable(gl::BLEND);
             gl::BindVertexArray(self.vao);
@@ -158,19 +159,19 @@ impl GLContext {
 
     fn render_text(&mut self, font_cache: &mut crate::render::font_cache::FontCache) {
         unsafe {
-            let text = String::from("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
-            let text = String::from("abcdefghijklmnopqrstuvwxyz");
-            let text = String::from("This application has been made by me");
+            // let text = String::from("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+            // let text = String::from("abcdefghijklmnopqrstuvwxyz");
+            // let text = String::from("This application has been made by me");
+            let text = String::from("Glyph: z -> Glyph { width: 6, height: ");
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindVertexArray(self.vao);
 
             let mut x = 0.0;
-            let y = 0.0;
-            let font_size = 12.0;
-            let h = font_size;
-            let w = font_size;
+            let y = 600.0 - 24.0;
+            // TODO(xarkes): Have to decide what to do with font size
+            let font_size = 128.0;
 
-            // XXX: This is dumb, but I'm lazy atm. Rewrite this :)
+            // XXX(xarkes): This is dumb, but I'm lazy atm. Rewrite this :)
             {
                 let mut should_update = false;
                 for c in text.chars() {
@@ -196,9 +197,11 @@ impl GLContext {
                 }
                 let glyph = glyph.unwrap();
 
-                // Update VBO for each character
-                let xpos = x;
-                let ypos = y + (glyph.yoff * font_size);
+                // xarkes: Update VBO for each character
+                let w = (glyph.width) as f32;
+                let h = (glyph.height) as f32;
+                let xpos = x + glyph.xoff;
+                let ypos = y + glyph.yoff;
                 let vbo_data: [GLfloat; 24] = [
                     xpos,
                     ypos + h,
@@ -225,6 +228,9 @@ impl GLContext {
                     glyph.br_x,
                     glyph.br_y,
                 ];
+                x += glyph.advance;
+
+                // xarkes: Draw
                 gl::BindTexture(gl::TEXTURE_2D, self.font_texture);
                 gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
                 gl::BufferSubData(
@@ -235,7 +241,7 @@ impl GLContext {
                 );
                 gl::BindBuffer(gl::ARRAY_BUFFER, 0);
                 if false {
-                    // Display triangles bounds
+                    // xarkes: Display triangles bounds
                     gl::Uniform3f(
                         gl::GetUniformLocation(
                             self.program,
@@ -252,14 +258,12 @@ impl GLContext {
                 gl::Uniform3f(
                     gl::GetUniformLocation(self.program, CString::new("u_color").unwrap().as_ptr()),
                     1.0,
-                    0.2,
-                    0.2,
+                    1.0,
+                    1.0,
                 );
                 gl::Enable(gl::BLEND);
                 gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
                 gl::DrawArrays(gl::TRIANGLES, 0, 6);
-
-                x += glyph.xoff * font_size;
             }
             gl::BindVertexArray(0);
             gl::BindTexture(gl::TEXTURE_2D, 0);
@@ -336,8 +340,8 @@ impl GLContext {
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
 
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
+            // gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
+            // gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
 
             // gl::TexParameteri(
             //     gl::TEXTURE_2D,

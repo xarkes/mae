@@ -71,19 +71,24 @@ where
     }
 }
 
+// TODO(xarkes): Seems like max glyph count is not really relevant, as what matters is if the atlas texture(s)
+// is full or not
 const CACHE_GLYPH_COUNT: usize = 512;
 // TODO(xarkes): Rasterize for the right size?
 const FONT_SIZE_RASTER: usize = 12;
-const ATLAS_WIDTH: usize = 2048;
+const ATLAS_WIDTH: usize = 1024;
 
 #[derive(Clone, Debug)]
 pub struct Glyph {
+    pub width: usize,
+    pub height: usize,
+    pub advance: f32,
     pub tl_x: f32,
     pub tl_y: f32,
     pub br_x: f32,
     pub br_y: f32,
-    pub yoff: f32,
     pub xoff: f32,
+    pub yoff: f32,
 }
 
 pub struct Atlas {
@@ -92,6 +97,7 @@ pub struct Atlas {
     pub height: usize,
     next_x: usize,
     next_y: usize,
+    cur_max_height: usize,
 }
 
 impl Atlas {
@@ -102,24 +108,28 @@ impl Atlas {
             height: ATLAS_WIDTH,
             next_x: 0,
             next_y: 0,
+            cur_max_height: 0,
         }
     }
 
     /// Add a glyph to the current atlas
-    pub fn add_glyph(&mut self, metrics: fontdue::Metrics, bitmap: Vec<u8>) -> Glyph {
+    pub fn add_glyph(
+        &mut self,
+        metrics: fontdue::Metrics,
+        line_metrics: fontdue::LineMetrics,
+        bitmap: Vec<u8>,
+    ) -> Glyph {
         if self.next_y >= self.height {
+            // TODO(xarkes): Implement atlas eviction
             panic!("Full atlas is not handled yet");
         }
-        assert!(metrics.width <= FONT_SIZE_RASTER);
-        assert!(metrics.bounds.height <= FONT_SIZE_RASTER as f32);
+        if self.next_x + metrics.width >= self.width {
+            self.next_x = 0;
+            self.next_y += self.cur_max_height;
+            self.cur_max_height = 0;
+        }
 
         // Copy the square rasterized glyph in our atlas (non contiguous)
-        // TODO(xarkes): Rewrite this and just see the atlas as a long 1D array where squares are just contiguously put in place
-        // and just let the texture configuration do the job
-        // It will save space (FONT_SIZE_RASTER > the actual width/height)
-        // It will ease atlas resizing, etc.
-        // Probably will make eviction harder since you probably will have to deal with holes in the atlas
-        // TODO(xarkes): While doing above refactor, make sure you implement the eviction
         for y in 0..metrics.height {
             let dst = &mut self.data[self.next_x + y * self.width + self.next_y * self.width
                 ..self.next_x + y * self.width + self.next_y * self.width + metrics.width];
@@ -128,20 +138,22 @@ impl Atlas {
         }
 
         let glyph = Glyph {
-            tl_x: (self.next_x as f32) / self.width as f32,
-            tl_y: (self.next_y as f32) / self.height as f32,
-            // NOTE(xarkes): -1 because there are FONT_SIZE_RASTER lines/cols, starting at 0. Without -1, we would include the next glyph pixels.
-            br_x: (self.next_x as f32 + FONT_SIZE_RASTER as f32 - 1.0) / self.width as f32,
-            br_y: (self.next_y as f32 + FONT_SIZE_RASTER as f32 - 1.0) / self.height as f32,
-            yoff: (-metrics.bounds.height - metrics.bounds.ymin + FONT_SIZE_RASTER as f32)
-                / FONT_SIZE_RASTER as f32,
-            xoff: metrics.advance_width as f32 / FONT_SIZE_RASTER as f32,
+            width: metrics.width / 1,
+            height: metrics.height / 1,
+            // advance: metrics.advance_width * 4.0 / 5.0,
+            advance: metrics.advance_width,
+            tl_x: self.next_x as f32 / self.width as f32,
+            tl_y: self.next_y as f32 / self.height as f32,
+            br_x: (self.next_x as f32 + metrics.width as f32) / self.width as f32,
+            br_y: (self.next_y as f32 + metrics.height as f32) / self.height as f32,
+            xoff: metrics.xmin as f32,
+            yoff: line_metrics.new_line_size - metrics.height as f32 - metrics.ymin as f32,
         };
-        self.next_x += FONT_SIZE_RASTER;
-        if self.next_x >= self.width {
-            self.next_x = 0;
-            self.next_y += FONT_SIZE_RASTER;
-        }
+
+        // XXX(xarkes): Not sure why I am doing +1... but it solves some artefacts showing up. Maybe there is a bug somewhere else?
+        self.next_x += metrics.width + 1;
+        self.cur_max_height = std::cmp::max(self.cur_max_height, metrics.height);
+
         glyph
     }
 }
@@ -161,6 +173,7 @@ impl FontCache {
         // Not sure what's the best way to proceed here.
         // let font = include_bytes!("/System/Library/Fonts/SFNSMono.ttf") as &[u8];
         // let font = include_bytes!("/System/Library/Fonts/SFNS.ttf") as &[u8];
+        // let font = include_bytes!("/System/Library/Fonts/Menlo.ttc") as &[u8];
         let font = include_bytes!("/tmp/fonts/Inconsolata-Regular.ttf") as &[u8];
         // let font =
         //     include_bytes!("/Users/user/Downloads/Noto_Color_Emoji/NotoColorEmoji-Regular.ttf")
@@ -194,7 +207,13 @@ impl FontCache {
             return None;
         }
         let (metrics, bitmap) = self.font.rasterize(glyph, FONT_SIZE_RASTER as f32);
-        let glyph_data = self.atlas.add_glyph(metrics, bitmap);
+        let glyph_data = self.atlas.add_glyph(
+            metrics,
+            self.font
+                .horizontal_line_metrics(FONT_SIZE_RASTER as f32)
+                .unwrap(),
+            bitmap,
+        );
         self.table.set(glyph, glyph_data);
         self.table.get(&glyph)
     }
