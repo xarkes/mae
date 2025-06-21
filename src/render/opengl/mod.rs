@@ -5,11 +5,10 @@ include!("opengl_macos.rs");
 compile_error!("OpenGL not implemented for target OS!");
 
 extern crate gl;
-use std::ffi::CString;
-
-use gl::types::*;
-
+use super::RenderCommand;
 use crate::os::Window;
+use gl::types::*;
+use std::ffi::CString;
 
 static RECT_VERTEX_SHADER: &'static str = "
 #version 330 core
@@ -122,201 +121,15 @@ impl GLContext {
         }
     }
 
-    fn render_triangles(&self) {
-        unsafe {
-            gl::Uniform3f(
-                gl::GetUniformLocation(self.program, CString::new("u_color").unwrap().as_ptr()),
-                0.51,
-                0.70,
-                0.71,
-            );
-            gl::Disable(gl::BLEND);
-            gl::BindVertexArray(self.vao);
-            let vertex_data: [GLfloat; 12] = [
-                150.0, 150.0, 0.0, 0.0, 600.0, 300.0, 0.0, 0.0, 100.0, 300.0, 0.0, 0.0,
-            ];
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
-            gl::BufferSubData(
-                gl::ARRAY_BUFFER,
-                0,
-                (vertex_data.len() * std::mem::size_of::<GLfloat>()) as GLsizeiptr,
-                std::mem::transmute(&vertex_data[0]),
-            );
-            gl::DrawArrays(gl::TRIANGLES, 0, 3);
-            let vertex_data: [GLfloat; 12] = [
-                600.0, 600.0, 0.0, 0.0, 100.0, 550.0, 0.0, 0.0, 250.0, 300.0, 0.0, 0.0,
-            ];
-            gl::BufferSubData(
-                gl::ARRAY_BUFFER,
-                0,
-                (vertex_data.len() * std::mem::size_of::<GLfloat>()) as GLsizeiptr,
-                std::mem::transmute(&vertex_data[0]),
-            );
-            gl::DrawArrays(gl::TRIANGLES, 0, 3);
-            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-        }
-    }
-
-    fn render_text(&mut self, font_cache: &mut crate::render::font_cache::FontCache) {
-        unsafe {
-            // let text = String::from("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
-            // let text = String::from("abcdefghijklmnopqrstuvwxyz");
-            // let text = String::from("This application has been made by me");
-            let text = String::from("Glyph: z -> Glyph { width: 6, height: ");
-            gl::ActiveTexture(gl::TEXTURE0);
-            gl::BindVertexArray(self.vao);
-
-            let mut x = 0.0;
-            let y = 0.0;
-            // TODO(xarkes): Have to decide what to do with font size
-            let font_size = 128.0;
-
-            // XXX(xarkes): This is dumb, but I'm lazy atm. Rewrite this :)
-            {
-                let mut should_update = false;
-                for c in text.chars() {
-                    if c == '\t' {
-                        continue;
-                    }
-                    let (_, added) = font_cache.get(c);
-                    should_update |= added;
-                }
-                if should_update {
-                    self.update_font_texture(font_cache.atlas());
-                }
-            }
-
-            for c in text.chars() {
-                if c == '\t' {
-                    x += font_size;
-                    continue;
-                }
-                let (glyph, _) = font_cache.get(c);
-                if glyph.is_none() {
-                    continue;
-                }
-                let glyph = glyph.unwrap();
-
-                // xarkes: Update VBO for each character
-                let w = (glyph.width) as f32;
-                let h = (glyph.height) as f32;
-                let xpos = x + glyph.xoff;
-                let ypos = y + glyph.yoff;
-                let vbo_data: [GLfloat; 24] = [
-                    xpos,
-                    ypos + h,
-                    glyph.tl_x,
-                    glyph.br_y,
-                    xpos,
-                    ypos,
-                    glyph.tl_x,
-                    glyph.tl_y,
-                    xpos + w,
-                    ypos,
-                    glyph.br_x,
-                    glyph.tl_y,
-                    xpos,
-                    ypos + h,
-                    glyph.tl_x,
-                    glyph.br_y,
-                    xpos + w,
-                    ypos,
-                    glyph.br_x,
-                    glyph.tl_y,
-                    xpos + w,
-                    ypos + h,
-                    glyph.br_x,
-                    glyph.br_y,
-                ];
-                x += glyph.advance;
-
-                // xarkes: Draw
-                gl::BindTexture(gl::TEXTURE_2D, self.font_texture);
-                gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
-                gl::BufferSubData(
-                    gl::ARRAY_BUFFER,
-                    0,
-                    (vbo_data.len() * std::mem::size_of::<GLfloat>()) as GLsizeiptr,
-                    vbo_data.as_ptr() as *const _,
-                );
-                gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-                if false {
-                    // xarkes: Display triangles bounds
-                    gl::Uniform3f(
-                        gl::GetUniformLocation(
-                            self.program,
-                            CString::new("u_color").unwrap().as_ptr(),
-                        ),
-                        1.0,
-                        0.4,
-                        0.4,
-                    );
-                    gl::Disable(gl::BLEND);
-                    gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE);
-                    gl::DrawArrays(gl::TRIANGLES, 0, 6);
-                }
-                gl::Uniform3f(
-                    gl::GetUniformLocation(self.program, CString::new("u_color").unwrap().as_ptr()),
-                    1.0,
-                    1.0,
-                    1.0,
-                );
-                gl::Enable(gl::BLEND);
-                gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
-                gl::DrawArrays(gl::TRIANGLES, 0, 6);
-            }
-            gl::BindVertexArray(0);
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-        }
-    }
-
-    pub fn resize(&mut self, w: f32, h: f32) {
-        self.width = w;
-        self.height = h;
-        ogl_os_resize(self.ctx);
-    }
-
-    pub fn update(&mut self, font_cache: &mut crate::render::font_cache::FontCache) {
-        unsafe {
-            // Begin frame
-            let mut width = self.width;
-            let mut height = self.height;
-            if false {
-                // TODO: It seems it could be window size x2 on MacOS default settings.
-                // I think this could be related to the way it handles DPI or similar.
-                width *= 2.0;
-                height *= 2.0;
-            }
-            gl::Clear(gl::COLOR_BUFFER_BIT);
-            gl::Uniform2f(
-                gl::GetUniformLocation(
-                    self.program,
-                    CString::new("u_viewport_size_px").unwrap().as_ptr(),
-                ),
-                width,
-                height,
-            );
-            gl::Viewport(0, 0, width as i32, height as i32);
-
-            // Draw frame
-            gl::UseProgram(self.program);
-            self.render_triangles();
-            self.render_text(font_cache);
-            ogl_os_swapbuffers(self.ctx);
-        }
-    }
-
     pub fn update_font_texture(&mut self, atlas: &crate::render::font_cache::Atlas) {
         if self.font_texture != u32::MAX {
-            // XXX: If the font texture already exist, is it fine to just reallocate it?
+            // XXX(xarkes): If the font texture already exist, is it fine to just reallocate it?
             // Does OpenGL handle it or should we do things differently
-            // println!("FIXME: Not handled atm");
         }
 
         unsafe { gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1) };
 
-        // Create texture for font
-        println!("TEXTURE CREATION ======");
+        // xarkes: Create texture for font
         let mut font_texture = u32::MAX;
         unsafe {
             gl::GenTextures(1, &mut font_texture);
@@ -337,19 +150,82 @@ impl GLContext {
 
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
-
-            // gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
-            // gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
-
-            // gl::TexParameteri(
-            //     gl::TEXTURE_2D,
-            //     gl::TEXTURE_MIN_FILTER,
-            //     gl::NEAREST_MIPMAP_NEAREST as i32,
-            // );
-            // gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
-            // gl::GenerateMipmap(gl::TEXTURE_2D);
         }
         self.font_texture = font_texture;
+    }
+
+    pub fn resize(&mut self, w: f32, h: f32) {
+        self.width = w;
+        self.height = h;
+        ogl_os_resize(self.ctx);
+    }
+
+    pub fn begin_frame(&mut self) {
+        unsafe {
+            // Begin frame
+            let mut width = self.width;
+            let mut height = self.height;
+            if false {
+                // TODO: It seems it could be window size x2 on MacOS default settings.
+                // I think this could be related to the way it handles DPI or similar.
+                width *= 2.0;
+                height *= 2.0;
+            }
+            gl::Clear(gl::COLOR_BUFFER_BIT);
+            gl::Uniform2f(
+                gl::GetUniformLocation(
+                    self.program,
+                    CString::new("u_viewport_size_px").unwrap().as_ptr(),
+                ),
+                width,
+                height,
+            );
+            gl::Viewport(0, 0, width as i32, height as i32);
+            gl::UseProgram(self.program);
+        }
+    }
+
+    pub fn end_frame(&mut self) {
+        ogl_os_swapbuffers(self.ctx);
+    }
+
+    pub fn render_rect(&self, cmd: &RenderCommand) {
+        unsafe {
+            gl::ActiveTexture(gl::TEXTURE0);
+            gl::BindVertexArray(self.vao);
+            gl::BindTexture(gl::TEXTURE_2D, self.font_texture);
+            gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
+            gl::BufferSubData(
+                gl::ARRAY_BUFFER,
+                0,
+                (cmd.data.len() * std::mem::size_of::<GLfloat>()) as GLsizeiptr,
+                cmd.data.as_ptr() as *const _,
+            );
+            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
+            if false {
+                // xarkes: Display triangles bounds
+                gl::Uniform3f(
+                    gl::GetUniformLocation(self.program, CString::new("u_color").unwrap().as_ptr()),
+                    1.0,
+                    0.4,
+                    0.4,
+                );
+                gl::Disable(gl::BLEND);
+                gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE);
+                gl::DrawArrays(gl::TRIANGLES, 0, 6);
+            }
+            gl::Uniform3f(
+                gl::GetUniformLocation(self.program, CString::new("u_color").unwrap().as_ptr()),
+                1.0,
+                1.0,
+                1.0,
+            );
+            gl::Enable(gl::BLEND);
+            gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
+            gl::DrawArrays(gl::TRIANGLES, 0, 6);
+            gl::BindVertexArray(0);
+            gl::BindTexture(gl::TEXTURE_2D, 0);
+        }
     }
 }
 

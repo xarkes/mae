@@ -80,7 +80,7 @@ pub fn ogl_os_create_context(win: &Window) -> *mut AnyObject {
     ];
 
     let ctx: *mut AnyObject;
-    // SAFETY: This is just basic Objective C calls, if there is any problem, the Objective C layer will handle it.
+    // SAFETY(xarkes): This is just basic Objective C calls, if there is any problem, the Objective C runtime will handle it.
     unsafe {
         let pixel_format_class = AnyClass::get(&class_name).unwrap();
         let pixel_format: *mut AnyObject = msg_send![pixel_format_class, alloc];
@@ -99,7 +99,7 @@ pub fn ogl_os_create_context(win: &Window) -> *mut AnyObject {
         ctx = context;
     }
 
-    // xarkes: This is a bit hacky, but objc2 doesn't expose the NSOpenGL stuff, hence the code above.
+    // NOTE(xarkes): This is a bit hacky, but objc2 doesn't expose the NSOpenGL stuff, hence the code above.
     // OpenGL is deprecated on MacOS, so we should probably not support it, but using it eases the cross platform development.
     unsafe extern "C" {
         fn dlsym(handle: *mut std::ffi::c_void, symbol: *const i8) -> *mut std::ffi::c_void;
@@ -119,15 +119,14 @@ pub fn ogl_os_create_context(win: &Window) -> *mut AnyObject {
         panic!("Could not load libGL, renderer cannot be used.");
     }
 
-    // SAFETY: xarkes: We trust the OS to give us a valid pointer for the library handle with dlopen and we also trust it to give us valid function pointers with dlsym
+    // SAFETY(xarkes): We trust the OS to give us valid pointers with dlopen and dlsym
     gl::load_with(|symbol| unsafe {
         let symbol = std::ffi::CString::new(symbol).unwrap();
         let addr = dlsym(lib_ptr, symbol.as_ptr());
-        // println!("Loading {:?} -> {:?}", symbol, addr);
         addr as *const std::ffi::c_void
     });
 
-    // SAFETY: xarkes: The pointers come back from OpenGL itself and we decide to trust them.
+    // SAFETY(xarkes): The pointers come back from OpenGL library.
     // We also assume the GetString function was resolved earlier, if not it will simply result in a null deref.
     unsafe {
         let vendor = gl::GetString(gl::VENDOR) as *mut i8;
@@ -151,7 +150,6 @@ pub fn ogl_os_resize(ctx: *mut AnyObject) {
 }
 
 pub fn ogl_os_swapbuffers(ctx: *mut AnyObject) {
-    // SAFETY: flushBuffer signature is correct, no problem ahead
     unsafe {
         let _: () = msg_send![ctx, flushBuffer];
     }

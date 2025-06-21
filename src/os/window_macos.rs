@@ -71,13 +71,13 @@ define_class!(
             // controller.
             unsafe { window.setReleasedWhenClosed(false) };
 
-            // set various window properties
+            // xarkes: set window properties
             window.setTitle(ns_string!("A window"));
             window.center();
             unsafe { window.setContentMinSize(NSSize::new(100.0, 100.0)) };
             window.setDelegate(Some(ProtocolObject::from_ref(self)));
 
-            // create menu bar and add shortcuts
+            // xarkes: create menu bar and add cmd+Q shortcut
             let menubar = NSMenu::new(mtm);
             let app_menu_item = NSMenuItem::new(mtm);
             menubar.addItem(&app_menu_item);
@@ -95,7 +95,7 @@ define_class!(
             app_menu.addItem(&quit_menu_item);
             app_menu_item.setSubmenu(Some(&app_menu));
 
-            // create NSView and apply it to window
+            // xarkes: create NSView and apply it to window
             let view = unsafe { NSView::initWithFrame(NSView::alloc(mtm), frame_rect) };
             unsafe {
                 view.setAutoresizingMask(
@@ -105,17 +105,16 @@ define_class!(
             }
             window.setContentView(Some(&view));
 
-            // show the window
+            // xarkes: show the window
             window.makeKeyAndOrderFront(None);
             window.orderFront(None);
 
-            // store the window in the delegate
+            // xarkes: store the window in the delegate
             self.ivars().window.set(window).unwrap();
             self.ivars().view.set(view).unwrap();
 
+            // xarkes: activate the application, required when launching unbundled
             app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
-
-            // activate the application, required when launching unbundled
             #[allow(deprecated)]
             app.activateIgnoringOtherApps(true);
 
@@ -152,12 +151,12 @@ impl Delegate {
 
 impl Window {
     pub fn new(width: u16, height: u16) -> Self {
-        // xarkes: open the window OS side
+        // xarkes: open the window using cocoa API
         let mtm = MainThreadMarker::new().unwrap();
         let app = NSApplication::sharedApplication(mtm);
         let delegate = Delegate::new(mtm, width, height);
         app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
-        // NOTE(xarkes): due to our code in "applicationDidFinishLaunching", run won't be blocking
+        // NOTE(xarkes): due to our code in `applicationDidFinishLaunching`, run won't be blocking
         app.run();
 
         Window {
