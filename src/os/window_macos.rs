@@ -178,7 +178,7 @@ impl Window {
         unsafe {
             let event = app.nextEventMatchingMask_untilDate_inMode_dequeue(
                 NSAnyEventMask,
-                Some(&NSDate::distantFuture()),
+                Some(&NSDate::distantPast()),
                 NSDefaultRunLoopMode,
                 true,
             );
@@ -187,4 +187,23 @@ impl Window {
             }
         }
     }
+}
+
+// XXX(xarkes): Not window related, but lazy to add another file
+#[repr(C)]
+struct MachTimeBaseInfoT {
+    denom: u32,
+    numer: u32,
+}
+unsafe extern "C" {
+    fn mach_absolute_time() -> u64;
+    fn mach_timebase_info(t: *const std::ffi::c_void);
+}
+pub fn timer_init() -> f64 {
+    let info = MachTimeBaseInfoT { denom: 0, numer: 0 };
+    unsafe { mach_timebase_info(std::ptr::from_ref(&info) as *const _) };
+    info.denom as f64 * 1e9 / info.numer as f64
+}
+pub fn timer_value() -> u64 {
+    unsafe { mach_absolute_time() }
 }

@@ -49,6 +49,7 @@ impl Drawer {
             let glyph = glyph.unwrap();
 
             // xarkes: Update VBO for each character
+            // TODO(xarkes): Would batching this in one command be a better thing to do?
             let w = (glyph.width) as f32;
             let h = (glyph.height) as f32;
             let xpos = x + glyph.xoff;
