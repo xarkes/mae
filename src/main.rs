@@ -17,6 +17,7 @@ fn main() {
     println!("Freq: {}", freq);
     let mut start = os::timer_value();
     let mut time = 0f64;
+    let long_text = include_str!("/tmp/file.txt");
     loop {
         let w: f32;
         let h: f32;
@@ -35,8 +36,28 @@ fn main() {
             font_size,
             ms.as_str(),
         );
-        drawer.draw_text(0, 0, font_size, "This is my text");
-        drawer.draw_text(100, 150, font_size, "And another text! :p");
+        // drawer.draw_text(0, 0, font_size, "This is my text");
+        // drawer.draw_text(100, 150, font_size, "And another text! :p");
+
+        fn text_widget(x: u32, y: u32, winx: u32, winy: u32, content: &str, drawer: &draw::Drawer) {
+            // xarkes: iterate lines and draw them
+            let mut yoff = 0;
+            let width = winx - x;
+            let nchars = width / (12 / 2);
+            for line in content.split('\n') {
+                // TODO(xarkes): This sucks due to reallocation
+                let mut line = line.to_string();
+                line.truncate(nchars as usize);
+                drawer.draw_text(x, y + yoff, 12, line.as_str());
+                yoff += 14;
+
+                // xarkes: Don't draw not visible lines
+                if y + yoff > winy {
+                    break;
+                }
+            }
+        }
+        text_widget(0, 0, w as u32, h as u32, long_text, &drawer);
 
         {
             let mut renderer = renderer.borrow_mut();

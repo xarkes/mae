@@ -223,6 +223,7 @@ impl FontCache {
     pub fn get(&mut self, glyph: char) -> (Option<&Glyph>, bool) {
         let mut added = false;
         // TODO(xarkes): For perf just prerender the ASCII table and avoid checking the hashmap for English charset
+        // TODO(xarkes): For perf, make the hasmap use an optimized hash function (I suspect the current one to be too slow for this task), or have your own hashmap
         if self.table.get(&glyph).is_none() {
             self.add(glyph);
             added = true;

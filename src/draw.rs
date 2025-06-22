@@ -17,7 +17,7 @@ impl Drawer {
         let rc = self.renderer.upgrade().unwrap();
         let mut renderer = rc.borrow_mut();
 
-        let mut run = RenderRun::new();
+        let mut run = RenderRun::new(text.len());
 
         // xarkes: Generate glyph for each string character and update texture if needed
         // This is likely dumb, but that's it for now

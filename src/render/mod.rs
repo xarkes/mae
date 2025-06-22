@@ -26,9 +26,9 @@ pub(crate) struct RenderRun {
 }
 
 impl RenderRun {
-    pub fn new() -> Self {
+    pub fn new(prealloc: usize) -> Self {
         RenderRun {
-            commands: Vec::new(),
+            commands: Vec::with_capacity(prealloc),
         }
     }
 
