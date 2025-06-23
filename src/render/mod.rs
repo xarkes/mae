@@ -77,6 +77,10 @@ impl Renderer {
         self.ctx.update_font_texture(atlas);
     }
 
+    pub fn size(&self) -> (u32, u32) {
+        (self.ctx.width as u32, self.ctx.height as u32)
+    }
+
     pub fn resize(&mut self, w: f32, h: f32) {
         self.ctx.resize(w, h);
     }

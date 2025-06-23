@@ -1,71 +1,68 @@
 mod draw;
 mod os;
 mod render;
+mod rmgui;
+mod widgets;
 
 use std::{cell::RefCell, rc::Rc};
 
 fn main() {
-    let window = os::Window::new(600, 600);
-    let renderer = Rc::new(RefCell::new(render::Renderer::new(window)));
-    let drawer = draw::Drawer::new(Rc::downgrade(&renderer));
-
-    // TODO: Add a UI module which will handle the drawing of the scene
-    // as well as layouting, widgets, etc.
-    // TODO: Do I want to try to maintain both immediate and retained mode?
-
-    let freq = os::timer_init();
-    println!("Freq: {}", freq);
-    let mut start = os::timer_value();
-    let mut time = 0f64;
+    let mut window = GUIWindow::create_window(600, 600);
     let long_text = include_str!("/tmp/file.txt");
-    loop {
-        let w: f32;
-        let h: f32;
-        {
-            let mut renderer = renderer.borrow_mut();
-            renderer.win.get_events();
-            (w, h) = renderer.win.get_size();
-            renderer.resize(w, h);
+    let textarea = widgets::TextArea::new(String::from(long_text));
+    window.gui.add(textarea);
+    window.event_loop()
+}
+
+struct GUIWindow {
+    renderer: Rc<RefCell<render::Renderer>>,
+    gui: rmgui::RMGUI,
+}
+
+impl GUIWindow {
+    pub fn create_window(width: u32, height: u32) -> Self {
+        let window = os::Window::new(width, height);
+        let renderer = Rc::new(RefCell::new(render::Renderer::new(window)));
+        let drawer = draw::Drawer::new(renderer.clone());
+        // TODO: Do I want to try to maintain both immediate and retained mode?
+        GUIWindow {
+            renderer,
+            gui: rmgui::RMGUI::new(drawer),
         }
+    }
 
-        let ms = format!("{:.3}", time);
-        let font_size = 12u32;
-        drawer.draw_text(
-            w as u32 - font_size * ms.len() as u32,
-            0,
-            font_size,
-            ms.as_str(),
-        );
-        // drawer.draw_text(0, 0, font_size, "This is my text");
-        // drawer.draw_text(100, 150, font_size, "And another text! :p");
+    pub fn event_loop(&mut self) {
+        let freq = os::timer_init();
+        println!("Freq: {}", freq);
+        let mut start = os::timer_value();
+        let mut time = 0f64;
 
-        fn text_widget(x: u32, y: u32, winx: u32, winy: u32, content: &str, drawer: &draw::Drawer) {
-            // xarkes: iterate lines and draw them
-            let mut yoff = 0;
-            let width = winx - x;
-            let nchars = width / (12 / 2);
-            for line in content.split('\n') {
-                // TODO(xarkes): This sucks due to reallocation
-                let mut line = line.to_string();
-                line.truncate(nchars as usize);
-                drawer.draw_text(x, y + yoff, 12, line.as_str());
-                yoff += 14;
+        // xarkes: Add FPS counter
+        let fps_counter = widgets::Label::new(String::new());
+        self.gui.add(fps_counter.clone());
 
-                // xarkes: Don't draw not visible lines
-                if y + yoff > winy {
-                    break;
-                }
+        loop {
+            let w: f32;
+            let h: f32;
+            {
+                let mut renderer = self.renderer.borrow_mut();
+                renderer.win.get_events();
+                (w, h) = renderer.win.get_size();
+                renderer.resize(w, h);
             }
-        }
-        text_widget(0, 0, w as u32, h as u32, long_text, &drawer);
 
-        {
-            let mut renderer = renderer.borrow_mut();
-            renderer.update();
-        }
+            let ms = format!("{:.3}", time);
+            fps_counter.borrow_mut().text = ms;
+            self.gui.draw();
 
-        let end = os::timer_value();
-        time = (end - start) as f64 * 1_000_000.0 / freq;
-        start = end;
+            {
+                let mut renderer = self.renderer.borrow_mut();
+                renderer.update();
+            }
+
+            let end = os::timer_value();
+            time = (end - start) as f64 * 1_000_000.0 / freq;
+            start = end;
+        }
     }
 }
