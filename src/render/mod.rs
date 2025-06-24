@@ -8,22 +8,25 @@ use font_cache::FontCache;
 pub(crate) struct RenderBatch {
     data: Vec<f32>,
     bytes_count: isize,
-    idx: usize,
+    // idx: usize,
 }
 
 impl RenderBatch {
     pub fn new(prealloc: usize) -> Self {
         RenderBatch {
-            data: vec![0f32; prealloc * 24],
+            data: Vec::with_capacity(prealloc * 24),
+            // data: vec![0f32; prealloc * 24],
             bytes_count: 0,
-            idx: 0,
+            // idx: 0,
         }
     }
 
     pub fn add_data(&mut self, data: [f32; 24]) {
-        // NOTE(xarkes): I used to alloc with Vec::with_capacity and append with Vec::extend(), however it was approximately 3x slower, I don't know why.
-        self.data[self.idx..self.idx + 24].copy_from_slice(data.as_slice());
-        self.idx += 24;
+        // NOTE(xarkes): In terms of perf, the code below may be a bit faster. Keeping it for reference if needed in the future.
+        // self.data[self.idx..self.idx + 24].copy_from_slice(data.as_slice());
+        // self.idx += 24;
+        // NOTE(xarkes): extend(&data) is *way* faster than extend(data)
+        self.data.extend(&data);
         self.bytes_count += (std::mem::size_of::<f32>() * 24) as isize;
     }
 }
