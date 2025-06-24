@@ -98,6 +98,9 @@ impl GLContext {
 
             gl::ClearColor(0.07, 0.31, 0.26, 0.);
             // gl::ClearColor(0., 0., 0., 0.);
+
+            // Disable VSync
+            ogl_os_toggle_vsync(ctx, false);
         }
 
         // enable gl debugging
