@@ -48,7 +48,6 @@ impl Drawer {
             let glyph = glyph.unwrap();
 
             // xarkes: Update VBO for each character
-            // TODO(xarkes): Would batching this in one command be a better thing to do?
             let w = (glyph.width) as f32;
             let h = (glyph.height) as f32;
             let xpos = x + glyph.xoff;
@@ -82,8 +81,6 @@ impl Drawer {
             batch.add_data(vbo_data);
             x += glyph.advance;
         }
-
-        // TODO(xarkes): Cache this run when possible, many texts do not need to be redrawn per frame
         renderer.add_batch(batch);
     }
 }

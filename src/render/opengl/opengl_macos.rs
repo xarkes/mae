@@ -161,8 +161,8 @@ pub fn ogl_os_toggle_vsync(ctx: *mut AnyObject, enable: bool) {
         #[allow(non_snake_case)]
         let NSOpenGLContextParameterSwapInterval = 222i64;
         let val = match enable {
-            true => 0i32,
-            false => 1i32,
+            true => 1i32,
+            false => 0i32,
         };
         let _: () =
             msg_send![ctx, setValues: &val, forParameter:NSOpenGLContextParameterSwapInterval];
