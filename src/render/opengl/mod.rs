@@ -44,8 +44,8 @@ void main()
 ";
 
 pub struct GLContext {
-    pub width: f32,
-    pub height: f32,
+    width: f32,
+    height: f32,
     ctx: GLContextHandle,
     program: u32,
     vao: u32,

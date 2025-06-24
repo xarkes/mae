@@ -1,20 +1,21 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Weak};
 
 use crate::render::{RenderCommand, RenderCommandType, RenderRun, Renderer};
 
 pub struct Drawer {
-    pub renderer: Rc<RefCell<Renderer>>,
+    renderer: Weak<RefCell<Renderer>>,
 }
 
 /// Drawer class - its purpose is to provide a draw API
 /// that will translate it into commands for the renderer.
 impl Drawer {
-    pub fn new(renderer: Rc<RefCell<Renderer>>) -> Self {
+    pub fn new(renderer: Weak<RefCell<Renderer>>) -> Self {
         Drawer { renderer }
     }
 
     pub fn draw_text(&self, x: u32, y: u32, size: u32, text: &str) {
-        let mut renderer = self.renderer.borrow_mut();
+        let rc = self.renderer.upgrade().unwrap();
+        let mut renderer = rc.borrow_mut();
 
         let mut run = RenderRun::new(text.len());
 
