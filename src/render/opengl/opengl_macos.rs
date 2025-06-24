@@ -2,6 +2,7 @@ extern crate objc2;
 use objc2::msg_send;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject};
+#[allow(deprecated)]
 use objc2_app_kit::NSOpenGLContextParameter;
 use std::ffi::CStr;
 
@@ -158,13 +159,12 @@ pub fn ogl_os_swapbuffers(ctx: *mut AnyObject) {
 
 pub fn ogl_os_toggle_vsync(ctx: *mut AnyObject, enable: bool) {
     unsafe {
-        #[allow(non_snake_case)]
-        let NSOpenGLContextParameterSwapInterval = 222i64;
         let val = match enable {
             true => 1i32,
             false => 0i32,
         };
+        #[allow(deprecated)]
         let _: () =
-            msg_send![ctx, setValues: &val, forParameter:NSOpenGLContextParameterSwapInterval];
+            msg_send![ctx, setValues: &val, forParameter:NSOpenGLContextParameter::SwapInterval];
     }
 }
