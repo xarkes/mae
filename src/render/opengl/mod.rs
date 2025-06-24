@@ -191,9 +191,9 @@ impl GLContext {
         ogl_os_swapbuffers(self.ctx);
     }
 
-    pub fn render(&self, runs: &Vec<super::RenderRun>) {
+    pub fn render(&self, batches: &Vec<super::RenderBatch>) {
         // xarkes: Draw rectangles
-        for run in runs.iter() {
+        for batch in batches.iter() {
             unsafe {
                 gl::BindVertexArray(self.vao);
                 gl::ActiveTexture(gl::TEXTURE0);
@@ -205,18 +205,15 @@ impl GLContext {
 
             // xarkes: Fill vertex buffer
             let mut off = 0isize;
-            for cmd in run.commands.iter() {
-                let bytes_count = (cmd.data.len() * std::mem::size_of::<GLfloat>()) as GLsizeiptr;
-                unsafe {
-                    gl::BufferSubData(
-                        gl::ARRAY_BUFFER,
-                        off,
-                        bytes_count,
-                        cmd.data.as_ptr() as *const _,
-                    );
-                    off += bytes_count;
-                }
+            unsafe {
+                gl::BufferSubData(
+                    gl::ARRAY_BUFFER,
+                    off,
+                    batch.bytes_count,
+                    batch.data.as_ptr() as *const _,
+                );
             }
+            off += batch.bytes_count;
             if off > 64 * 1024 {
                 // TODO(xarkes): We will likely need bigger buffers at some point
                 println!("WARNING: Buffer is too small! Handle this!");

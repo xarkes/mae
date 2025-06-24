@@ -5,29 +5,23 @@ mod opengl;
 use crate::os::Window;
 use font_cache::FontCache;
 
-pub(crate) struct RenderCommand {
-    data: [f32; 24],
+pub(crate) struct RenderBatch {
+    data: Vec<f32>,
+    bytes_count: isize,
 }
 
-impl RenderCommand {
-    pub fn new(data: [f32; 24]) -> Self {
-        RenderCommand { data }
-    }
-}
-
-pub(crate) struct RenderRun {
-    commands: Vec<RenderCommand>,
-}
-
-impl RenderRun {
+impl RenderBatch {
+    const ELEM_SIZE: usize = std::mem::size_of::<f32>() * 24;
     pub fn new(prealloc: usize) -> Self {
-        RenderRun {
-            commands: Vec::with_capacity(prealloc),
+        RenderBatch {
+            data: Vec::with_capacity(prealloc * RenderBatch::ELEM_SIZE),
+            bytes_count: 0,
         }
     }
 
-    pub fn add_command(&mut self, cmd: RenderCommand) {
-        self.commands.push(cmd);
+    pub fn add_data(&mut self, data: [f32; 24]) {
+        self.data.extend(data);
+        self.bytes_count += RenderBatch::ELEM_SIZE as isize;
     }
 }
 
@@ -35,7 +29,7 @@ pub struct Renderer {
     pub win: Window,
     pub ctx: Box<opengl::GLContext>,
     pub font_cache: FontCache,
-    runs: Vec<RenderRun>,
+    batches: Vec<RenderBatch>,
 }
 
 impl Renderer {
@@ -62,7 +56,7 @@ impl Renderer {
             win,
             ctx,
             font_cache,
-            runs: Vec::new(),
+            batches: Vec::new(),
         }
     }
 
@@ -77,12 +71,12 @@ impl Renderer {
 
     pub fn update(&mut self) {
         self.ctx.begin_frame();
-        self.ctx.render(&self.runs);
+        self.ctx.render(&self.batches);
         self.ctx.end_frame();
-        self.runs.clear();
+        self.batches.clear();
     }
 
-    pub fn add_run(&mut self, run: RenderRun) {
-        self.runs.push(run);
+    pub fn add_batch(&mut self, batch: RenderBatch) {
+        self.batches.push(batch);
     }
 }

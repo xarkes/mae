@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Weak};
 
-use crate::render::{RenderCommand, RenderRun, Renderer};
+use crate::render::{RenderBatch, Renderer};
 
 pub struct Drawer {
     renderer: Weak<RefCell<Renderer>>,
@@ -16,8 +16,7 @@ impl Drawer {
     pub fn draw_text(&self, x: u32, y: u32, size: u32, text: &str) {
         let rc = self.renderer.upgrade().unwrap();
         let mut renderer = rc.borrow_mut();
-
-        let mut run = RenderRun::new(text.len());
+        let mut batch = RenderBatch::new(text.len());
 
         // xarkes: Generate glyph for each string character and update texture if needed
         // This is likely dumb, but that's it for now
@@ -80,11 +79,11 @@ impl Drawer {
                 glyph.br_x,
                 glyph.br_y,
             ];
-            run.add_command(RenderCommand::new(vbo_data));
+            batch.add_data(vbo_data);
             x += glyph.advance;
         }
 
         // TODO(xarkes): Cache this run when possible, many texts do not need to be redrawn per frame
-        renderer.add_run(run);
+        renderer.add_batch(batch);
     }
 }
