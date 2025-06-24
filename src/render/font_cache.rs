@@ -78,7 +78,7 @@ const CACHE_GLYPH_COUNT: usize = 512;
 const FONT_SIZE_RASTER: usize = 12;
 const ATLAS_WIDTH: usize = 1024;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Glyph {
     pub width: usize,
     pub height: usize,
@@ -161,6 +161,7 @@ impl Atlas {
 pub struct FontCache {
     font: fontdue::Font,
     table: LRUCache<char, Glyph>,
+    table_ascii: [Glyph; 256],
     atlas: Atlas,
 }
 impl FontCache {
@@ -180,16 +181,15 @@ impl FontCache {
         //         as &[u8];
         // let font = include_bytes!("/System/Library/Fonts/Apple Symbols.ttf") as &[u8];
         let font = fontdue::Font::from_bytes(font, fontdue::FontSettings::default()).unwrap();
-        // let w = 128;
-        // let h = 128;
         let mut fc = FontCache {
             font,
             table: LRUCache::new(CACHE_GLYPH_COUNT),
+            table_ascii: [Glyph::default(); 256],
             atlas: Atlas::new(),
         };
 
-        // Pre-fill the cache for ASCII
-        for ccode in 33..127u8 {
+        // xarkes: Pre-fill the cache for ASCII
+        for ccode in 0..=255u8 {
             fc.add(ccode as char);
         }
         fc
@@ -200,10 +200,10 @@ impl FontCache {
     fn add(&mut self, glyph: char) -> Option<&Glyph> {
         assert!(self.table.get(&glyph).is_none());
         if !self.font.has_glyph(glyph) {
-            println!(
-                "glyph '{:?}' not found, switch font?",
-                glyph.to_string().into_bytes()
-            );
+            // println!(
+            //     "glyph '{:?}' not found, switch font?",
+            //     glyph.to_string().into_bytes()
+            // );
             return None;
         }
         let (metrics, bitmap) = self.font.rasterize(glyph, FONT_SIZE_RASTER as f32);
@@ -214,15 +214,23 @@ impl FontCache {
                 .unwrap(),
             bitmap,
         );
-        self.table.set(glyph, glyph_data);
-        self.table.get(&glyph)
+        if glyph.len_utf8() == 1 {
+            self.table_ascii[glyph as u8 as usize] = glyph_data;
+            Some(&self.table_ascii[glyph as u8 as usize])
+        } else {
+            self.table.set(glyph, glyph_data);
+            self.table.get(&glyph)
+        }
     }
 
     /// Retrieve rasterized glyph
     /// If not in cache, add it
     pub fn get(&mut self, glyph: char) -> (Option<&Glyph>, bool) {
         let mut added = false;
-        // TODO(xarkes): For perf just prerender the ASCII table and avoid checking the hashmap for English charset
+        // xarkes: For perf purpose, we already cached the ASCII table, just return the bitmap from it
+        if glyph.len_utf8() == 1 {
+            return (Some(&self.table_ascii[glyph as u8 as usize]), false);
+        }
         // TODO(xarkes): For perf, make the hasmap use an optimized hash function (I suspect the current one to be too slow for this task), or have your own hashmap
         if self.table.get(&glyph).is_none() {
             self.add(glyph);

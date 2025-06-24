@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Weak};
 
-use crate::render::{RenderCommand, RenderCommandType, RenderRun, Renderer};
+use crate::render::{RenderCommand, RenderRun, Renderer};
 
 pub struct Drawer {
     renderer: Weak<RefCell<Renderer>>,
@@ -80,7 +80,7 @@ impl Drawer {
                 glyph.br_x,
                 glyph.br_y,
             ];
-            run.add_command(RenderCommand::new(RenderCommandType::RECT, vbo_data));
+            run.add_command(RenderCommand::new(vbo_data));
             x += glyph.advance;
         }
 

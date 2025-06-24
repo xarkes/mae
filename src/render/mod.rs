@@ -5,19 +5,13 @@ mod opengl;
 use crate::os::Window;
 use font_cache::FontCache;
 
-#[derive(PartialEq, Eq)]
-pub(crate) enum RenderCommandType {
-    RECT,
-}
-
 pub(crate) struct RenderCommand {
-    ty: RenderCommandType,
     data: [f32; 24],
 }
 
 impl RenderCommand {
-    pub fn new(ty: RenderCommandType, data: [f32; 24]) -> Self {
-        RenderCommand { ty, data }
+    pub fn new(data: [f32; 24]) -> Self {
+        RenderCommand { data }
     }
 }
 
@@ -83,15 +77,7 @@ impl Renderer {
 
     pub fn update(&mut self) {
         self.ctx.begin_frame();
-        for run in self.runs.iter() {
-            for command in run.commands.iter() {
-                if command.ty == RenderCommandType::RECT {
-                    self.ctx.render_rect(&command);
-                } else {
-                    panic!("Trying to use an unsupported render command.");
-                }
-            }
-        }
+        self.ctx.render(&self.runs);
         self.ctx.end_frame();
         self.runs.clear();
     }

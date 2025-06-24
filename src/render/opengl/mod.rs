@@ -5,7 +5,6 @@ include!("opengl_macos.rs");
 compile_error!("OpenGL not implemented for target OS!");
 
 extern crate gl;
-use super::RenderCommand;
 use crate::os::Window;
 use gl::types::*;
 use std::ffi::CString;
@@ -78,7 +77,7 @@ impl GLContext {
             gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
             gl::BufferData(
                 gl::ARRAY_BUFFER,
-                (size_of::<GLfloat>() * 6 * 4) as GLsizeiptr,
+                64 * 1024,
                 std::ptr::null(),
                 gl::DYNAMIC_DRAW,
             );
@@ -192,42 +191,68 @@ impl GLContext {
         ogl_os_swapbuffers(self.ctx);
     }
 
-    pub fn render_rect(&self, cmd: &RenderCommand) {
-        unsafe {
-            gl::ActiveTexture(gl::TEXTURE0);
-            gl::BindVertexArray(self.vao);
-            gl::BindTexture(gl::TEXTURE_2D, self.font_texture);
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
-            gl::BufferSubData(
-                gl::ARRAY_BUFFER,
-                0,
-                (cmd.data.len() * std::mem::size_of::<GLfloat>()) as GLsizeiptr,
-                cmd.data.as_ptr() as *const _,
-            );
-            gl::BindBuffer(gl::ARRAY_BUFFER, 0);
-            if false {
-                // xarkes: Display triangles bounds
+    pub fn render(&self, runs: &Vec<super::RenderRun>) {
+        // xarkes: Draw rectangles
+        for run in runs.iter() {
+            unsafe {
+                gl::BindVertexArray(self.vao);
+                gl::ActiveTexture(gl::TEXTURE0);
+                gl::BindTexture(gl::TEXTURE_2D, self.font_texture);
+                gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
+            }
+
+            // TODO(xarkes): Rename commands and run, this is unclear
+
+            // xarkes: Fill vertex buffer
+            let mut off = 0isize;
+            for cmd in run.commands.iter() {
+                let bytes_count = (cmd.data.len() * std::mem::size_of::<GLfloat>()) as GLsizeiptr;
+                unsafe {
+                    gl::BufferSubData(
+                        gl::ARRAY_BUFFER,
+                        off,
+                        bytes_count,
+                        cmd.data.as_ptr() as *const _,
+                    );
+                    off += bytes_count;
+                }
+            }
+            if off > 64 * 1024 {
+                // TODO(xarkes): We will likely need bigger buffers at some point
+                println!("WARNING: Buffer is too small! Handle this!");
+            }
+
+            // xarkes: Draw buffer
+            unsafe {
+                let points_count = (off as usize / (4 * std::mem::size_of::<GLfloat>())) as i32;
+                if false {
+                    // xarkes: Display triangles bounds
+                    gl::Uniform3f(
+                        gl::GetUniformLocation(
+                            self.program,
+                            CString::new("u_color").unwrap().as_ptr(),
+                        ),
+                        1.0,
+                        0.4,
+                        0.4,
+                    );
+                    gl::Disable(gl::BLEND);
+                    gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE);
+                    gl::DrawArrays(gl::TRIANGLES, 0, points_count);
+                    gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
+                    gl::Enable(gl::BLEND);
+                }
                 gl::Uniform3f(
                     gl::GetUniformLocation(self.program, CString::new("u_color").unwrap().as_ptr()),
                     1.0,
-                    0.4,
-                    0.4,
+                    1.0,
+                    1.0,
                 );
-                gl::Disable(gl::BLEND);
-                gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE);
-                gl::DrawArrays(gl::TRIANGLES, 0, 6);
+                // TODO(xarkes): For memory efficiency, switch to triangle strip
+                gl::DrawArrays(gl::TRIANGLES, 0, points_count);
+                gl::BindVertexArray(0);
+                gl::BindTexture(gl::TEXTURE_2D, 0);
             }
-            gl::Uniform3f(
-                gl::GetUniformLocation(self.program, CString::new("u_color").unwrap().as_ptr()),
-                1.0,
-                1.0,
-                1.0,
-            );
-            gl::Enable(gl::BLEND);
-            gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
-            gl::DrawArrays(gl::TRIANGLES, 0, 6);
-            gl::BindVertexArray(0);
-            gl::BindTexture(gl::TEXTURE_2D, 0);
         }
     }
 }

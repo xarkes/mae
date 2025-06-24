@@ -5,6 +5,9 @@ mod widgets;
 
 use std::{cell::RefCell, rc::Rc};
 
+// TODO(xarkes):
+// - [ ] Add proper logging
+
 fn main() {
     let window = os::Window::new(600, 600);
     let renderer = Rc::new(RefCell::new(render::Renderer::new(window)));
