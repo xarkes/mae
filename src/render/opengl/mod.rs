@@ -9,36 +9,84 @@ use crate::os::Window;
 use gl::types::*;
 use std::ffi::CString;
 
+use super::Rect2DInst;
+
+static ATTRIBS: [(u32, i32, u32, &str); 7] = [
+    (0, 4, gl::FLOAT, "c2v_dst_rect"),
+    (1, 4, gl::FLOAT, "c2v_src_rect"),
+    (2, 4, gl::FLOAT, "c2v_color_0"),
+    (3, 4, gl::FLOAT, "c2v_color_1"),
+    (4, 4, gl::FLOAT, "c2v_color_2"),
+    (5, 4, gl::FLOAT, "c2v_color_3"),
+    (6, 4, gl::FLOAT, "c2v_extra"),
+];
+
 static RECT_VERTEX_SHADER: &'static str = "
 #version 330 core
 
-in vec4 vertex; // <vec2 pos, vec2 tex>
+// input variables: Content to Vertex
+in vec4 c2v_dst_rect;
+in vec4 c2v_src_rect;
+in vec4 c2v_color_0;
+in vec4 c2v_color_1;
+in vec4 c2v_color_2;
+in vec4 c2v_color_3;
+in vec4 c2v_extra;
+
+// output variables: Vertex to Phragment
+out vec2 v2p_tex_coords;
+out vec4 v2p_tint;
+out float v2p_omit_texture;
 
 uniform vec2 u_viewport_size_px;
 
-out vec2 tex_coords;
-
 void main() {
-  // xarkes: convert position from pixels coords (with top left 0,0) to gl viewport
-  gl_Position = vec4(2 * vertex.x / u_viewport_size_px.x - 1, 2 * (1 - vertex.y / u_viewport_size_px.y) - 1, 0.0, 1.0);
-  tex_coords = vertex.zw;
+  vec2 vertices[] = vec2[](vec2(-1, -1), vec2(-1, +1), vec2(+1, -1), vec2(+1, +1));
+
+  // xarkes: compute destination coords
+  vec2 dst_half_size = (c2v_dst_rect.zw - c2v_dst_rect.xy) / 2;
+  vec2 dst_center    = (c2v_dst_rect.zw + c2v_dst_rect.xy) / 2;
+  vec2 dst_position  = vertices[gl_VertexID] * dst_half_size + dst_center;
+
+  // xarkes: compute texture coords
+  vec2 src_half_size = (c2v_src_rect.zw - c2v_src_rect.xy) / 2;
+  vec2 src_center    = (c2v_src_rect.zw + c2v_src_rect.xy) / 2;
+  vec2 src_position  = vertices[gl_VertexID] * src_half_size + src_center;
+
+  // xarkes: find color
+  vec4 colors[] = vec4[](c2v_color_0, c2v_color_1, c2v_color_2, c2v_color_2);
+  vec4 color = colors[gl_VertexID];
+  {
+      gl_Position = vec4(2 * dst_position.x / u_viewport_size_px.x - 1,
+                         2 * (1 - dst_position.y / u_viewport_size_px.y) - 1,
+                         0.0, 1.0);
+      v2p_tex_coords = src_position;
+      v2p_tint = color;
+      v2p_omit_texture = c2v_extra.x;
+      v2p_omit_texture = 0;
+  }
 }
 ";
 
 static RECT_FRAGMENT_SHADER: &'static str = "
 #version 330 core
 
-in vec2 tex_coords;
+// input variables: Vertex to Phragment
+in vec2 v2p_tex_coords;
+in vec4 v2p_tint;
+in float v2p_omit_texture;
+
+out vec4 final_color;
 
 uniform sampler2D text;
-uniform vec3 u_color;
-
-out vec4 color;
 
 void main()
 {
-  vec4 sampled = vec4(1.0, 1.0, 1.0, texture(text, tex_coords).r);
-  color = vec4(u_color.xyz, 1.0f) * sampled;
+  vec4 sample = vec4(1.0, 1.0, 1.0, 1.0);
+  if (v2p_omit_texture < 1) {
+      sample = vec4(1.0, 1.0, 1.0, texture(text, v2p_tex_coords).r);
+  }
+  final_color = v2p_tint * sample;
 }
 ";
 
@@ -64,15 +112,15 @@ impl GLContext {
         let mut vbo = 0;
 
         unsafe {
-            // Enable blending for our text textures
+            // xarkes: enable blending for our text textures
             gl::Enable(gl::BLEND);
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
 
-            // Create Vertex Array Object
+            // xarkes: create Vertex Array Object
             gl::GenVertexArrays(1, &mut vao);
             gl::BindVertexArray(vao);
 
-            // Create a Vertex Buffer Object and copy the vertex data to it
+            // xarkes: create a Vertex Buffer Object and copy the vertex data to it
             gl::GenBuffers(1, &mut vbo);
             gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
             gl::BufferData(
@@ -81,29 +129,17 @@ impl GLContext {
                 std::ptr::null(),
                 gl::DYNAMIC_DRAW,
             );
-
-            gl::EnableVertexAttribArray(0);
-            gl::VertexAttribPointer(
-                0,
-                4,
-                gl::FLOAT,
-                gl::FALSE,
-                (4 as usize * size_of::<GLfloat>()) as i32,
-                std::ptr::null(),
-            );
-
             gl::BindBuffer(gl::ARRAY_BUFFER, 0);
             gl::BindVertexArray(0);
 
             gl::ClearColor(0.07, 0.31, 0.26, 0.);
             // gl::ClearColor(0., 0., 0., 0.);
 
-            // Disable VSync
+            // xarkes: disable VSync
             ogl_os_toggle_vsync(ctx, false);
         }
 
-        // enable gl debugging
-        // XXX: Not available on macos
+        // xarkes: enable gl debugging
         #[cfg(not(target_os = "macos"))]
         unsafe {
             gl::Enable(gl::DEBUG_OUTPUT);
@@ -192,7 +228,7 @@ impl GLContext {
     }
 
     pub fn render(&self, batches: &Vec<super::RenderBatch>) {
-        // xarkes: Draw rectangles
+        // xarkes: draw one rectangle batch group
         for batch in batches.iter() {
             unsafe {
                 gl::BindVertexArray(self.vao);
@@ -201,9 +237,7 @@ impl GLContext {
                 gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
             }
 
-            // TODO(xarkes): Rename commands and run, this is unclear
-
-            // xarkes: Fill vertex buffer
+            // xarkes: fill vertex buffer
             let mut off = 0isize;
             unsafe {
                 gl::BufferSubData(
@@ -219,36 +253,36 @@ impl GLContext {
                 println!("WARNING: Buffer is too small! Handle this!");
             }
 
-            // xarkes: Draw buffer
-            unsafe {
-                let points_count = (off as usize / (4 * std::mem::size_of::<GLfloat>())) as i32;
-                if false {
-                    // xarkes: Display triangles bounds
-                    gl::Uniform3f(
-                        gl::GetUniformLocation(
-                            self.program,
-                            CString::new("u_color").unwrap().as_ptr(),
-                        ),
-                        1.0,
-                        0.4,
-                        0.4,
+            // xarkes: bind input attributes
+            let mut atoff = 0usize;
+            for attr in ATTRIBS {
+                unsafe {
+                    gl::EnableVertexAttribArray(attr.0);
+                    gl::VertexAttribDivisor(attr.0, 1);
+                    gl::VertexAttribPointer(
+                        attr.0,
+                        attr.1,
+                        attr.2,
+                        gl::FALSE,
+                        std::mem::size_of::<Rect2DInst>() as i32,
+                        atoff as *const _,
                     );
-                    gl::Disable(gl::BLEND);
-                    gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE);
-                    gl::DrawArrays(gl::TRIANGLES, 0, points_count);
-                    gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
-                    gl::Enable(gl::BLEND);
+                    atoff += attr.1 as usize * std::mem::size_of::<f32>();
                 }
-                gl::Uniform3f(
-                    gl::GetUniformLocation(self.program, CString::new("u_color").unwrap().as_ptr()),
-                    1.0,
-                    1.0,
-                    1.0,
-                );
-                // TODO(xarkes): For memory efficiency, switch to triangle strip
-                gl::DrawArrays(gl::TRIANGLES, 0, points_count);
+            }
+
+            // xarkes: draw buffer
+            unsafe {
+                // NOTE(xarkes): I wonder if in terms of performances this is similar to storing the triangles directly in memory and calling DrawArrays only once.
+                let inst_count = (off as usize / std::mem::size_of::<Rect2DInst>()) as i32;
+                gl::DrawArraysInstanced(gl::TRIANGLE_STRIP, 0, 4, inst_count);
+            }
+
+            // xarkes: unbind data
+            unsafe {
                 gl::BindVertexArray(0);
                 gl::BindTexture(gl::TEXTURE_2D, 0);
+                gl::BindBuffer(gl::ARRAY_BUFFER, 0);
             }
         }
     }
@@ -294,12 +328,20 @@ fn link_program(vs: GLuint, fs: GLuint) -> GLuint {
         let program = gl::CreateProgram();
         gl::AttachShader(program, vs);
         gl::AttachShader(program, fs);
+
+        // xarkes: bind vertex input variables
+        for attr in ATTRIBS {
+            gl::BindAttribLocation(program, attr.0, attr.3.as_ptr() as *const _);
+        }
+
         gl::LinkProgram(program);
-        // Get the link status
+        gl::ValidateProgram(program);
+
+        // xarkes: verify link status
         let mut status = gl::FALSE as GLint;
         gl::GetProgramiv(program, gl::LINK_STATUS, &mut status);
 
-        // Fail on error
+        // xarkes: fail on error
         if status != (gl::TRUE as GLint) {
             let mut len: GLint = 0;
             gl::GetProgramiv(program, gl::INFO_LOG_LENGTH, &mut len);

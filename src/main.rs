@@ -20,7 +20,7 @@ fn main() {
     let mut time = 0f64;
     let long_text = include_str!("/tmp/file.txt");
     loop {
-        // xarkes: Handle events
+        // xarkes: handle events
         let w: f32;
         let h: f32;
         {
@@ -30,19 +30,28 @@ fn main() {
             renderer.resize(w, h);
         }
 
-        // xarkes: Draw fps counter
+        // xarkes: draw fps counter
         {
             let fps = 1f64 / time * 1000f64;
             let text = format!("{:.2}ms - {}fps", time, fps as u64);
             let font_size = 12u32;
             let x = (w - (text.len() as f32 * font_size as f32 / 1.6)) as u32;
-            drawer.draw_text(x, 0, font_size, text.as_str(), text.len());
+            drawer.draw_text(
+                x,
+                0,
+                font_size,
+                text.as_str(),
+                text.len(),
+                draw::color::WHITE,
+            );
         }
 
-        // xarkes: Draw interface
+        // xarkes: draw interface
+        drawer.draw_text(0, 0, 12, "salut", 5, draw::color::WHITE);
+        drawer.draw_rect(100, 100, 300, 300, draw::color::TMP);
         widgets::textarea(&drawer, 200, 0, w as u32, h as u32, long_text);
 
-        // xarkes: Render
+        // xarkes: render
         {
             let mut renderer = renderer.borrow_mut();
             renderer.update();

@@ -1,6 +1,28 @@
 use std::{cell::RefCell, rc::Weak};
 
-use crate::render::{Rect2DInst, RenderBatch, Renderer};
+use crate::render::{Extra, Rect2DInst, RectCoords, RenderBatch, Renderer, V4f32};
+
+pub mod color {
+    use crate::render::V4f32;
+    pub const BLACK: V4f32 = V4f32 {
+        r: 0.0,
+        g: 0.0,
+        b: 0.0,
+        a: 1.0,
+    };
+    pub const TMP: V4f32 = V4f32 {
+        r: 1.0,
+        g: 0.4,
+        b: 0.5,
+        a: 1.0,
+    };
+    pub const WHITE: V4f32 = V4f32 {
+        r: 1.0,
+        g: 1.0,
+        b: 1.0,
+        a: 1.0,
+    };
+}
 
 pub struct Drawer {
     renderer: Weak<RefCell<Renderer>>,
@@ -13,7 +35,7 @@ impl Drawer {
         Drawer { renderer }
     }
 
-    pub fn draw_rect(&self, x: u32, y: u32, width: u32, height: u32) {
+    pub fn draw_rect(&self, x: u32, y: u32, width: u32, height: u32, color: V4f32) {
         let rc = self.renderer.upgrade().unwrap();
         let mut renderer = rc.borrow_mut();
         let mut batch = RenderBatch::new(1);
@@ -21,9 +43,26 @@ impl Drawer {
         let y = y as f32;
         let width = width as f32;
         let height = height as f32;
+        batch.add_rect(Rect2DInst {
+            dst: RectCoords {
+                x0: x,
+                y0: y,
+                x1: x + width,
+                y1: y + height,
+            },
+            src: RectCoords {
+                x0: 0.0,
+                y0: 0.0,
+                x1: 0.0,
+                y1: 0.0,
+            },
+            colors: [color, color, color, color],
+            extra: Extra::new(true),
+        });
+        renderer.add_batch(batch);
     }
 
-    pub fn draw_text(&self, x: u32, y: u32, size: u32, text: &str, length: usize) {
+    pub fn draw_text(&self, x: u32, y: u32, size: u32, text: &str, length: usize, color: V4f32) {
         let rc = self.renderer.upgrade().unwrap();
         let mut renderer = rc.borrow_mut();
         let mut batch = RenderBatch::new(text.len());
@@ -60,38 +99,27 @@ impl Drawer {
             }
             let glyph = glyph.unwrap();
 
-            // xarkes: Update VBO for each character
+            // xarkes: push a rect instruction for each character
             let w = (glyph.width) as f32;
             let h = (glyph.height) as f32;
             let xpos = x + glyph.xoff;
             let ypos = y + glyph.yoff;
-            let inst = Rect2DInst {
-                x: xpos,
-                y: ypos + h,
-                tex_x: glyph.tl_x,
-                tex_y: glyph.br_y,
-                x2: xpos,
-                y2: ypos,
-                tex_x2: glyph.tl_x,
-                tex_y2: glyph.tl_y,
-                x3: xpos + w,
-                y3: ypos,
-                tex_x3: glyph.br_x,
-                tex_y3: glyph.tl_y,
-                x4: xpos,
-                y4: ypos + h,
-                tex_x4: glyph.tl_x,
-                tex_y4: glyph.br_y,
-                x5: xpos + w,
-                y5: ypos,
-                tex_x5: glyph.br_x,
-                tex_y5: glyph.tl_y,
-                x6: xpos + w,
-                y6: ypos + h,
-                tex_x6: glyph.br_x,
-                tex_y6: glyph.br_y,
-            };
-            batch.add_rect(inst);
+            batch.add_rect(Rect2DInst {
+                dst: RectCoords {
+                    x0: xpos,
+                    y0: ypos,
+                    x1: xpos + w,
+                    y1: ypos + h,
+                },
+                src: RectCoords {
+                    x0: glyph.x0,
+                    y0: glyph.y0,
+                    x1: glyph.x1,
+                    y1: glyph.y1,
+                },
+                colors: [color, color, color, color],
+                extra: Extra::new(false),
+            });
             x += glyph.advance;
         }
         renderer.add_batch(batch);

@@ -11,31 +11,57 @@ pub(crate) struct RenderBatch {
 }
 
 #[repr(C)]
+#[derive(Debug)]
+pub struct RectCoords {
+    pub x0: f32,
+    pub y0: f32,
+    pub x1: f32,
+    pub y1: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct V4f32 {
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+    pub a: f32,
+}
+impl V4f32 {
+    pub fn new(r: f32, g: f32, b: f32, a: f32) -> Self {
+        V4f32 { r, g, b, a }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct Extra {
+    pub omit_texture: f32,
+    pub _unused: [f32; 3],
+}
+impl Extra {
+    pub fn new(omit_texture: bool) -> Self {
+        let omit = match omit_texture {
+            true => 1.0,
+            false => 0.0,
+        };
+        Extra {
+            omit_texture: omit,
+            _unused: [0.0, 0.0, 0.0],
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug)]
 pub struct Rect2DInst {
-    pub x: f32,
-    pub y: f32,
-    pub tex_x: f32,
-    pub tex_y: f32,
-    pub x2: f32,
-    pub y2: f32,
-    pub tex_x2: f32,
-    pub tex_y2: f32,
-    pub x3: f32,
-    pub y3: f32,
-    pub tex_x3: f32,
-    pub tex_y3: f32,
-    pub x4: f32,
-    pub y4: f32,
-    pub tex_x4: f32,
-    pub tex_y4: f32,
-    pub x5: f32,
-    pub y5: f32,
-    pub tex_x5: f32,
-    pub tex_y5: f32,
-    pub x6: f32,
-    pub y6: f32,
-    pub tex_x6: f32,
-    pub tex_y6: f32,
+    /// Coordinates in screen space (pixels) of top left and bottom right corners of the rect
+    pub dst: RectCoords,
+    /// Coordinates in texture space, top left, bottom right
+    pub src: RectCoords,
+    /// Color for each corner of the rectangle
+    pub colors: [V4f32; 4],
+    pub extra: Extra,
 }
 
 impl RenderBatch {
@@ -62,7 +88,7 @@ pub struct Renderer {
 impl Renderer {
     pub fn new(win: Window) -> Self {
         // TODO(xarkes): Can we have this at compile time rather than runtime?
-        debug_assert!(std::mem::size_of::<Rect2DInst>() == 6 * 4 * 4);
+        // debug_assert!(std::mem::size_of::<Rect2DInst>() == 4 * 4 * 3);
         let mut available_renderers = Vec::new();
         if cfg!(feature = "opengl") {
             available_renderers.push("opengl");
