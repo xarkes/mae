@@ -9,8 +9,8 @@ use objc2::{
 };
 use objc2_app_kit::{
     NSAnyEventMask, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
-    NSAutoresizingMaskOptions, NSBackingStoreType, NSMenu, NSMenuItem, NSView, NSWindow,
-    NSWindowDelegate, NSWindowStyleMask,
+    NSAutoresizingMaskOptions, NSBackingStoreType, NSEventType, NSMenu, NSMenuItem, NSView,
+    NSWindow, NSWindowDelegate, NSWindowStyleMask,
 };
 use objc2_foundation::{
     MainThreadMarker, NSDate, NSDefaultRunLoopMode, NSNotification, NSObject, NSObjectProtocol,
@@ -171,21 +171,45 @@ impl Window {
         (rect.size.width as f32, rect.size.height as f32)
     }
 
-    pub fn get_events(&self) {
+    pub fn get_events(&self) -> Vec<WindowEvent> {
         let mtm = MainThreadMarker::new().unwrap();
         let app = NSApplication::sharedApplication(mtm);
+
+        let mut events = Vec::new();
         // SAFETY: TODO
         unsafe {
-            let event = app.nextEventMatchingMask_untilDate_inMode_dequeue(
-                NSAnyEventMask,
-                Some(&NSDate::distantPast()),
-                NSDefaultRunLoopMode,
-                true,
-            );
-            if let Some(ev) = event {
-                app.sendEvent(&ev);
+            loop {
+                let event = app.nextEventMatchingMask_untilDate_inMode_dequeue(
+                    NSAnyEventMask,
+                    Some(&NSDate::distantPast()),
+                    NSDefaultRunLoopMode,
+                    true,
+                );
+                if let Some(ev) = event {
+                    // xarkes: send the event to the NSApplication
+                    app.sendEvent(&ev);
+                    // xarkes: translate the OS event into a more generic event
+                    let mut new_ev = WindowEvent {
+                        ty: WindowEventType::Unknown,
+                        data0: 0.0,
+                        data1: 0.0,
+                    };
+                    match ev.r#type() {
+                        NSEventType::MouseMoved => {
+                            new_ev.ty = WindowEventType::MouseMove;
+                            let point = ev.locationInWindow();
+                            new_ev.data0 = point.x as f32;
+                            new_ev.data1 = self.get_size().1 - point.y as f32;
+                        }
+                        _ => {}
+                    }
+                    events.push(new_ev);
+                } else {
+                    break;
+                }
             }
         }
+        events
     }
 }
 

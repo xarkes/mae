@@ -16,6 +16,12 @@ pub mod color {
         b: 0.5,
         a: 1.0,
     };
+    pub const TMP2: V4f32 = V4f32 {
+        r: 1.0,
+        g: 0.5,
+        b: 0.6,
+        a: 1.0,
+    };
     pub const WHITE: V4f32 = V4f32 {
         r: 1.0,
         g: 1.0,
@@ -35,21 +41,12 @@ impl Drawer {
         Drawer { renderer }
     }
 
-    pub fn draw_rect(&self, x: u32, y: u32, width: u32, height: u32, color: V4f32) {
+    pub fn draw_rect(&self, coords: &RectCoords, color: V4f32) {
         let rc = self.renderer.upgrade().unwrap();
         let mut renderer = rc.borrow_mut();
         let mut batch = RenderBatch::new(1);
-        let x = x as f32;
-        let y = y as f32;
-        let width = width as f32;
-        let height = height as f32;
         let rect = Rect2DInst {
-            dst: RectCoords {
-                x0: x,
-                y0: y,
-                x1: x + width,
-                y1: y + height,
-            },
+            dst: *coords,
             src: RectCoords {
                 x0: 0.0,
                 y0: 0.0,
@@ -63,7 +60,7 @@ impl Drawer {
         renderer.add_batch(batch);
     }
 
-    pub fn draw_text(&self, x: u32, y: u32, size: u32, text: &str, length: usize, color: V4f32) {
+    pub fn draw_text(&self, x: f32, y: f32, size: u32, text: &str, length: usize, color: V4f32) {
         let rc = self.renderer.upgrade().unwrap();
         let mut renderer = rc.borrow_mut();
         let mut batch = RenderBatch::new(text.len());
@@ -85,7 +82,6 @@ impl Drawer {
         }
 
         let mut x = x as f32;
-        let y = y as f32;
         for (i, c) in text.char_indices() {
             if i >= length {
                 break;

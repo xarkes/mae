@@ -11,12 +11,22 @@ pub(crate) struct RenderBatch {
 }
 
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct RectCoords {
     pub x0: f32,
     pub y0: f32,
     pub x1: f32,
     pub y1: f32,
+}
+impl RectCoords {
+    pub fn from_size(x: f32, y: f32, w: f32, h: f32) -> Self {
+        RectCoords {
+            x0: x,
+            y0: y,
+            x1: x + w,
+            y1: y + h,
+        }
+    }
 }
 
 #[repr(C)]
@@ -31,6 +41,12 @@ impl V4f32 {
     pub fn new(r: f32, g: f32, b: f32, a: f32) -> Self {
         V4f32 { r, g, b, a }
     }
+}
+
+#[derive(Clone, Copy)]
+pub struct V2f32 {
+    pub x: f32,
+    pub y: f32,
 }
 
 #[repr(C)]
