@@ -54,7 +54,7 @@ void main() {
   vec2 src_position  = vertices[gl_VertexID] * src_half_size + src_center;
 
   // xarkes: find color
-  vec4 colors[] = vec4[](c2v_color_0, c2v_color_1, c2v_color_2, c2v_color_2);
+  vec4 colors[] = vec4[](c2v_color_0, c2v_color_1, c2v_color_2, c2v_color_3);
   vec4 color = colors[gl_VertexID];
   {
       gl_Position = vec4(2 * dst_position.x / u_viewport_size_px.x - 1,
@@ -63,7 +63,6 @@ void main() {
       v2p_tex_coords = src_position;
       v2p_tint = color;
       v2p_omit_texture = c2v_extra.x;
-      v2p_omit_texture = 0;
   }
 }
 ";
@@ -331,7 +330,8 @@ fn link_program(vs: GLuint, fs: GLuint) -> GLuint {
 
         // xarkes: bind vertex input variables
         for attr in ATTRIBS {
-            gl::BindAttribLocation(program, attr.0, attr.3.as_ptr() as *const _);
+            let c_str = std::ffi::CString::new(attr.3.as_bytes()).unwrap();
+            gl::BindAttribLocation(program, attr.0, c_str.as_ptr());
         }
 
         gl::LinkProgram(program);

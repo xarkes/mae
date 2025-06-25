@@ -1,11 +1,14 @@
-use crate::draw::{self, Drawer};
+use crate::{
+    draw::{self, Drawer},
+    render::V4f32,
+};
 
 pub fn textarea(drawer: &Drawer, x: u32, y: u32, winx: u32, winy: u32, content: &str) {
     let width = winx - x;
     let height = winy - y;
 
     // xarkes: draw background
-    drawer.draw_rect(x, y, width, height, draw::color::BLACK);
+    drawer.draw_rect(x, y, width, height, V4f32::new(0.2, 0.2, 0.2, 1.0));
 
     // xarkes: iterate lines and draw them
     let mut yoff = 0;

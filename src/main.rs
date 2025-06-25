@@ -30,6 +30,11 @@ fn main() {
             renderer.resize(w, h);
         }
 
+        // xarkes: draw interface
+        drawer.draw_text(0, 0, 12, "salut", 5, draw::color::WHITE);
+        drawer.draw_rect(100, 100, 300, 300, draw::color::TMP);
+        widgets::textarea(&drawer, 200, 0, w as u32, h as u32, long_text);
+
         // xarkes: draw fps counter
         {
             let fps = 1f64 / time * 1000f64;
@@ -45,11 +50,6 @@ fn main() {
                 draw::color::WHITE,
             );
         }
-
-        // xarkes: draw interface
-        drawer.draw_text(0, 0, 12, "salut", 5, draw::color::WHITE);
-        drawer.draw_rect(100, 100, 300, 300, draw::color::TMP);
-        widgets::textarea(&drawer, 200, 0, w as u32, h as u32, long_text);
 
         // xarkes: render
         {

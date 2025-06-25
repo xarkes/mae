@@ -43,7 +43,7 @@ impl Drawer {
         let y = y as f32;
         let width = width as f32;
         let height = height as f32;
-        batch.add_rect(Rect2DInst {
+        let rect = Rect2DInst {
             dst: RectCoords {
                 x0: x,
                 y0: y,
@@ -58,7 +58,8 @@ impl Drawer {
             },
             colors: [color, color, color, color],
             extra: Extra::new(true),
-        });
+        };
+        batch.add_rect(rect);
         renderer.add_batch(batch);
     }
 
