@@ -21,6 +21,8 @@ static ATTRIBS: [(u32, i32, u32, &str); 7] = [
     (6, 4, gl::FLOAT, "c2v_extra"),
 ];
 
+static ATTRIBS_OUT: [(u32, &str); 1] = [(0, "final_color")];
+
 static RECT_VERTEX_SHADER: &'static str = "
 #version 330 core
 
@@ -332,6 +334,12 @@ fn link_program(vs: GLuint, fs: GLuint) -> GLuint {
         for attr in ATTRIBS {
             let c_str = std::ffi::CString::new(attr.3.as_bytes()).unwrap();
             gl::BindAttribLocation(program, attr.0, c_str.as_ptr());
+        }
+
+        // xarkes: explicitely bind output variables
+        for attr in ATTRIBS_OUT {
+            let c_str = std::ffi::CString::new(attr.1.as_bytes()).unwrap();
+            gl::BindFragDataLocation(program, attr.0, c_str.as_ptr());
         }
 
         gl::LinkProgram(program);
