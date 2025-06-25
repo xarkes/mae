@@ -171,7 +171,7 @@ impl Window {
         (rect.size.width as f32, rect.size.height as f32)
     }
 
-    pub fn get_events(&self) -> Vec<WindowEvent> {
+    pub fn get_events(&self) -> Vec<OSEvent> {
         let mtm = MainThreadMarker::new().unwrap();
         let app = NSApplication::sharedApplication(mtm);
 
@@ -189,17 +189,15 @@ impl Window {
                     // xarkes: send the event to the NSApplication
                     app.sendEvent(&ev);
                     // xarkes: translate the OS event into a more generic event
-                    let mut new_ev = WindowEvent {
-                        ty: WindowEventType::Unknown,
-                        data0: 0.0,
-                        data1: 0.0,
+                    let mut new_ev = OSEvent {
+                        ty: OSEventType::Unknown,
+                        pos: (-1.0, -1.0),
                     };
                     match ev.r#type() {
                         NSEventType::MouseMoved => {
-                            new_ev.ty = WindowEventType::MouseMove;
+                            new_ev.ty = OSEventType::MouseMove;
                             let point = ev.locationInWindow();
-                            new_ev.data0 = point.x as f32;
-                            new_ev.data1 = self.get_size().1 - point.y as f32;
+                            new_ev.pos = (point.x as f32, self.get_size().1 - point.y as f32)
                         }
                         _ => {}
                     }
