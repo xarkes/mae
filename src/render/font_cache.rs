@@ -138,9 +138,8 @@ impl Atlas {
         }
 
         let glyph = Glyph {
-            width: metrics.width / 1,
-            height: metrics.height / 1,
-            // advance: metrics.advance_width * 4.0 / 5.0,
+            width: metrics.width,
+            height: metrics.height,
             advance: metrics.advance_width,
             tl_x: self.next_x as f32 / self.width as f32,
             tl_y: self.next_y as f32 / self.height as f32,

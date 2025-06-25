@@ -6,28 +6,49 @@ use crate::os::Window;
 use font_cache::FontCache;
 
 pub(crate) struct RenderBatch {
-    data: Vec<f32>,
+    data: Vec<Rect2DInst>,
     bytes_count: isize,
-    // idx: usize,
+}
+
+#[repr(C)]
+pub struct Rect2DInst {
+    pub x: f32,
+    pub y: f32,
+    pub tex_x: f32,
+    pub tex_y: f32,
+    pub x2: f32,
+    pub y2: f32,
+    pub tex_x2: f32,
+    pub tex_y2: f32,
+    pub x3: f32,
+    pub y3: f32,
+    pub tex_x3: f32,
+    pub tex_y3: f32,
+    pub x4: f32,
+    pub y4: f32,
+    pub tex_x4: f32,
+    pub tex_y4: f32,
+    pub x5: f32,
+    pub y5: f32,
+    pub tex_x5: f32,
+    pub tex_y5: f32,
+    pub x6: f32,
+    pub y6: f32,
+    pub tex_x6: f32,
+    pub tex_y6: f32,
 }
 
 impl RenderBatch {
     pub fn new(prealloc: usize) -> Self {
         RenderBatch {
-            data: Vec::with_capacity(prealloc * 24),
-            // data: vec![0f32; prealloc * 24],
+            data: Vec::with_capacity(prealloc),
             bytes_count: 0,
-            // idx: 0,
         }
     }
 
-    pub fn add_data(&mut self, data: [f32; 24]) {
-        // NOTE(xarkes): In terms of perf, the code below may be a bit faster. Keeping it for reference if needed in the future.
-        // self.data[self.idx..self.idx + 24].copy_from_slice(data.as_slice());
-        // self.idx += 24;
-        // NOTE(xarkes): extend(&data) is *way* faster than extend(data)
-        self.data.extend(&data);
-        self.bytes_count += (std::mem::size_of::<f32>() * 24) as isize;
+    pub fn add_rect(&mut self, inst: Rect2DInst) {
+        self.data.push(inst);
+        self.bytes_count += std::mem::size_of::<Rect2DInst>() as isize;
     }
 }
 
@@ -40,6 +61,8 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn new(win: Window) -> Self {
+        // TODO(xarkes): Can we have this at compile time rather than runtime?
+        debug_assert!(std::mem::size_of::<Rect2DInst>() == 6 * 4 * 4);
         let mut available_renderers = Vec::new();
         if cfg!(feature = "opengl") {
             available_renderers.push("opengl");
