@@ -7,6 +7,7 @@ compile_error!("Support for target OS is not implemented!");
 #[derive(PartialEq, Eq)]
 pub enum OSEventType {
     MouseMove,
+    MouseClick,
     Unknown,
 }
 pub struct OSEvent {

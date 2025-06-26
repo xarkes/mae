@@ -199,6 +199,11 @@ impl Window {
                             let point = ev.locationInWindow();
                             new_ev.pos = (point.x as f32, self.get_size().1 - point.y as f32)
                         }
+                        NSEventType::LeftMouseDown => {
+                            new_ev.ty = OSEventType::MouseClick;
+                            let point = ev.locationInWindow();
+                            new_ev.pos = (point.x as f32, self.get_size().1 - point.y as f32)
+                        }
                         _ => {}
                     }
                     events.push(new_ev);

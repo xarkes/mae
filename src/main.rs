@@ -21,7 +21,7 @@ fn main() {
     let freq = os::timer_init();
     let mut start = os::timer_value();
     let mut time = 0f64;
-    let long_text = include_str!("/tmp/file.txt");
+    let long_text = include_str!("./main.rs");
 
     let mut ui = Box::new(UIState::new(drawer));
     loop {
@@ -37,8 +37,8 @@ fn main() {
 
         // xarkes: draw interface
         {
-            widgets::treeview(ui.as_ref(), 0.0, 0.0, 200.0, h);
-            widgets::textarea(ui.as_ref(), 200.0, 0.0, 200.0 + w, h, long_text);
+            widgets::treeview(ui.as_ref(), 0.0, 0.0, 0.0, h);
+            // widgets::textarea(ui.as_ref(), 200.0, 0.0, 200.0 + w, h, long_text);
         }
 
         // xarkes: draw fps counter
