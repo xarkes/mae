@@ -5,8 +5,6 @@ mod ui;
 mod widgets;
 
 use std::{cell::RefCell, rc::Rc};
-
-use render::RectCoords;
 use ui::UIState;
 
 // TODO(xarkes):
@@ -25,6 +23,7 @@ fn main() {
     let long_text = include_str!("./main.rs");
 
     let mut ui = Box::new(UIState::new(drawer));
+    let mut val = 1234;
     loop {
         // xarkes: handle events
         let w: f32;
@@ -36,22 +35,22 @@ fn main() {
             renderer.resize(w, h);
         }
 
+        // TODO: Now the "remaining" logic would be to handle properly the drawing
+        // with size hints, checking parents, etc.
+
         // xarkes: draw interface
         {
-            let mut value = 1.5;
-            widgets::button(
-                ui.as_ref(),
-                &RectCoords::from_size(100., 100., 100.0, 20.0),
-                Some("Increment"),
-            );
-            widgets::label(
-                ui.as_ref(),
-                100.,
-                130.,
-                format!("Value here: {}", value).as_str(),
-            )
-            // widgets::treeview(ui.as_ref(), 0.0, 0.0, 0.0, h);
-            // widgets::textarea(ui.as_ref(), 200.0, 0.0, 200.0 + w, h, long_text);
+            let but = ui.button(ui.root.clone(), Some("Click me"));
+            if but.clicked() {
+                val += 1;
+            }
+            let color = draw::color::WHITE;
+            let txt = format!("Yooo {}", val);
+            ui.drawer
+                .draw_text(100., 120., 12, txt.as_str(), txt.len(), color);
+
+            // xarkes: actually layout and draw the interface
+            // ui.draw();
         }
 
         // xarkes: draw fps counter

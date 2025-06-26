@@ -160,8 +160,8 @@ impl Window {
         app.run();
 
         Window {
-            app,
-            window: delegate.ivars().window.clone(),
+            // app,
+            // window: delegate.ivars().window.clone(),
             view: delegate.ivars().view.clone(),
         }
     }
@@ -191,6 +191,7 @@ impl Window {
                     // xarkes: translate the OS event into a more generic event
                     let mut new_ev = OSEvent {
                         ty: OSEventType::Unknown,
+                        key: OSKey::Unknown,
                         pos: (-1.0, -1.0),
                     };
                     match ev.r#type() {
@@ -200,7 +201,14 @@ impl Window {
                             new_ev.pos = (point.x as f32, self.get_size().1 - point.y as f32)
                         }
                         NSEventType::LeftMouseDown => {
-                            new_ev.ty = OSEventType::MouseClick;
+                            new_ev.ty = OSEventType::Press;
+                            new_ev.key = OSKey::LeftMouseButton;
+                            let point = ev.locationInWindow();
+                            new_ev.pos = (point.x as f32, self.get_size().1 - point.y as f32)
+                        }
+                        NSEventType::LeftMouseUp => {
+                            new_ev.ty = OSEventType::Release;
+                            new_ev.key = OSKey::LeftMouseButton;
                             let point = ev.locationInWindow();
                             new_ev.pos = (point.x as f32, self.get_size().1 - point.y as f32)
                         }
