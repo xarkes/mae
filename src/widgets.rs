@@ -34,6 +34,15 @@ pub fn button(ui: &UIState, coords: &RectCoords, label: Option<&str>) {
     }
 }
 
+pub fn label(ui: &UIState, x: f32, y: f32, label: &str) {
+    ui.drawer.draw_rect(
+        &RectCoords::from_size(x, y, label.len() as f32 * 6.0, 12.0),
+        COLOR_BG,
+    );
+    ui.drawer
+        .draw_text(x, y, 12, label, label.len(), draw::color::WHITE);
+}
+
 pub fn treeview(ui: &UIState, x: f32, y: f32, width: f32, height: f32) {
     // xarkes: draw background
     let coords = RectCoords::from_size(x, y, width, height);

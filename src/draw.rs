@@ -82,6 +82,7 @@ impl Drawer {
         }
 
         let mut x = x as f32;
+        let y = y + size as f32;
         for (i, c) in text.char_indices() {
             if i >= length {
                 break;

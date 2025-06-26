@@ -146,7 +146,8 @@ impl Atlas {
             x1: (self.next_x as f32 + metrics.width as f32) / self.width as f32,
             y1: (self.next_y as f32 + metrics.height as f32) / self.height as f32,
             xoff: metrics.xmin as f32,
-            yoff: line_metrics.new_line_size - metrics.height as f32 - metrics.ymin as f32,
+            // yoff: line_metrics.new_line_size - metrics.height as f32 - metrics.ymin as f32,
+            yoff: -(metrics.height as f32 + metrics.ymin as f32),
         };
 
         // XXX(xarkes): Not sure why I am doing +1... but it solves some artefacts showing up. Maybe there is a bug somewhere else?

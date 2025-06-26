@@ -6,6 +6,7 @@ mod widgets;
 
 use std::{cell::RefCell, rc::Rc};
 
+use render::RectCoords;
 use ui::UIState;
 
 // TODO(xarkes):
@@ -37,7 +38,19 @@ fn main() {
 
         // xarkes: draw interface
         {
-            widgets::treeview(ui.as_ref(), 0.0, 0.0, 0.0, h);
+            let mut value = 1.5;
+            widgets::button(
+                ui.as_ref(),
+                &RectCoords::from_size(100., 100., 100.0, 20.0),
+                Some("Increment"),
+            );
+            widgets::label(
+                ui.as_ref(),
+                100.,
+                130.,
+                format!("Value here: {}", value).as_str(),
+            )
+            // widgets::treeview(ui.as_ref(), 0.0, 0.0, 0.0, h);
             // widgets::textarea(ui.as_ref(), 200.0, 0.0, 200.0 + w, h, long_text);
         }
 
