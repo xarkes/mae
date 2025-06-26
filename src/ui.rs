@@ -1,10 +1,9 @@
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     draw::{self, Drawer},
     os::{OSEvent, OSEventType, OSKey, Window},
     render::RectCoords,
-    widgets,
 };
 
 #[repr(u64)]
@@ -19,12 +18,38 @@ enum UIWidgetEvent {
     MouseReleased = 4u64,
 }
 
+#[repr(u32)]
+#[derive(Clone, Copy)]
+enum UISizeKind {
+    Pixels,
+    Percents,
+}
+
+#[derive(Clone, Copy)]
+pub struct UISize {
+    kind: UISizeKind,
+    value: f32,
+}
+impl UISize {
+    pub fn pct(val: f32) -> Self {
+        UISize {
+            kind: UISizeKind::Percents,
+            value: val,
+        }
+    }
+    pub fn px(val: f32) -> Self {
+        UISize {
+            kind: UISizeKind::Pixels,
+            value: val,
+        }
+    }
+}
+
 pub struct UIWidget {
     bounds: RectCoords,
-    parent: Option<Rc<UIWidget>>,
-    next: Option<Rc<UIWidget>>,
+    parent: Option<Rc<RefCell<UIWidget>>>,
 
-    // Computed flags
+    // event flags
     flags: u64,
     events: u64,
 }
@@ -45,9 +70,14 @@ impl UIWidget {
 }
 
 pub struct UIState {
-    pub root: Rc<UIWidget>,
+    pub root: Rc<RefCell<UIWidget>>,
     pub drawer: Drawer,
     events: Vec<OSEvent>,
+
+    //// style and layout related
+    parent: Rc<RefCell<UIWidget>>,
+    width: UISize,
+    height: UISize,
 
     //// input related
     mouse: (f32, f32),
@@ -56,54 +86,90 @@ pub struct UIState {
 }
 impl UIState {
     pub fn new(drawer: Drawer) -> Self {
+        let root = Rc::new(RefCell::new(UIWidget {
+            bounds: RectCoords::from_size(0., 0., 1024., 768.),
+            parent: None,
+            flags: 0,
+            events: 0,
+        }));
         UIState {
-            root: Rc::new(UIWidget {
-                bounds: RectCoords::from_size(0., 0., 1024., 768.),
-                parent: None,
-                next: None,
-                flags: 0,
-                events: 0,
-            }),
+            root: root.clone(),
             drawer,
             events: Vec::new(),
+            parent: root.clone(),
+            width: UISize {
+                kind: UISizeKind::Percents,
+                value: 1.,
+            },
+            height: UISize {
+                kind: UISizeKind::Percents,
+                value: 1.,
+            },
             mouse: (-1., -1.),
             click: (-1., -1.),
             release: (-1., -1.),
         }
     }
 
-    fn create_ui_widget(
-        &mut self,
-        bounds: RectCoords,
-        parent: Rc<UIWidget>,
-        flags: u64,
-    ) -> UIWidget {
+    fn create_ui_widget(&mut self, bounds: RectCoords, flags: u64) -> UIWidget {
         let mut w = UIWidget {
             bounds,
-            parent: Some(parent),
-            next: None,
+            parent: Some(self.parent.clone()),
             flags,
             events: 0,
         };
-        // self.consume_events_for_widget(&mut w);
-        if point_in_rect(&bounds, self.mouse) {
+        if point_in_rect(&bounds, self.mouse) && w.clickable() {
             w.events |= UIWidgetEvent::MouseOver as u64;
         }
-        if point_in_rect(&bounds, self.click) {
+        if point_in_rect(&bounds, self.click) && w.clickable() {
             w.events |= UIWidgetEvent::MouseClicked as u64;
-        } else if point_in_rect(&bounds, self.release) {
+        } else if point_in_rect(&bounds, self.release) && w.clickable() {
             w.events |= UIWidgetEvent::MouseReleased as u64;
-            // consume the release
+            // xarkes: consume the release so clicked() triggers only once
             self.release = (-1., -1.);
         }
         w
     }
 
     /////////////////////////////////
+    //// Styling and layout
+    pub fn size(&mut self, w: UISize, h: UISize) {
+        self.width(w);
+        self.height(h);
+    }
+    pub fn width(&mut self, w: UISize) {
+        self.width = w;
+    }
+    pub fn height(&mut self, h: UISize) {
+        self.height = h;
+    }
+    pub fn parent(&mut self, parent: Rc<RefCell<UIWidget>>) {
+        self.parent = parent;
+    }
+    fn compute_layout_bounds(&self) -> RectCoords {
+        let x = 0.;
+        let y = 0.;
+        let w = match self.width.kind {
+            UISizeKind::Pixels => self.width.value,
+            UISizeKind::Percents => {
+                self.width.value * (self.parent.borrow().bounds.x1 - self.parent.borrow().bounds.x0)
+            }
+        };
+        let h = match self.height.kind {
+            UISizeKind::Pixels => self.height.value,
+            UISizeKind::Percents => {
+                self.height.value
+                    * (self.parent.borrow().bounds.y1 - self.parent.borrow().bounds.y0)
+            }
+        };
+        RectCoords::from_size(x, y, x + w, x + h)
+    }
+
+    /////////////////////////////////
     //// UI widgets
-    pub fn button(&mut self, parent: Rc<UIWidget>, label: Option<&str>) -> UIWidget {
-        let bounds = RectCoords::from_size(100., 100., 100., 20.);
-        let uibox = self.create_ui_widget(bounds, parent, UIWidgetFlag::MouseClickable as u64);
+    pub fn button(&mut self, label: Option<&str>) -> UIWidget {
+        let bounds = self.compute_layout_bounds();
+        let uibox = self.create_ui_widget(bounds, UIWidgetFlag::MouseClickable as u64);
         let mut bg_color = draw::color::TMP;
         let mut draw_off = 0.;
         if uibox.hover() {
@@ -136,25 +202,6 @@ impl UIState {
 
     /////////////////////////////////
     //// Events related functions
-    // fn consume_events_for_widget(&mut self, w: &mut UIWidget) {
-    //     let mut idx = 0;
-    //     while idx < self.events.len() {
-    //         let ev = &self.events[idx];
-    //         let mouse_in_bounds = point_in_rect(&w.bounds, ev.pos);
-    //         let ev_is_mouse = ev.key == (OSKey::LeftMouseButton);
-    //         if ev.ty == OSEventType::MouseMove && mouse_in_bounds {
-    //             w.events |= UIWidgetEvent::MouseOver as u64;
-    //             self.events.remove(idx);
-    //             continue;
-    //         }
-    //         if ev_is_mouse && ev.ty == OSEventType::Press && mouse_in_bounds && w.clickable() {
-    //             w.flags |= UIWidgetEvent::MouseClicked as u64;
-    //             self.events.remove(idx);
-    //             continue;
-    //         }
-    //         idx = idx + 1;
-    //     }
-    // }
     fn consume_events(&mut self) {
         for ev in &self.events {
             if ev.ty == OSEventType::MouseMove {
@@ -170,6 +217,10 @@ impl UIState {
     pub fn get_events(&mut self, win: &Window) {
         self.events = win.get_events();
         self.consume_events();
+    }
+    pub fn resize(&mut self, w: f32, h: f32) {
+        self.root.borrow_mut().bounds.x1 = w;
+        self.root.borrow_mut().bounds.y1 = h;
     }
 }
 

@@ -5,7 +5,7 @@ mod ui;
 mod widgets;
 
 use std::{cell::RefCell, rc::Rc};
-use ui::UIState;
+use ui::{UISize, UIState};
 
 // TODO(xarkes):
 // - [ ] XXX: Urgent: take a decision regarding the APIs. Should we work with u32 (pixels) or floats? Currently it is a bit a mix of everything and we have to decide which one to use and stick to it.
@@ -33,14 +33,13 @@ fn main() {
             ui.get_events(&renderer.win);
             (w, h) = renderer.win.get_size();
             renderer.resize(w, h);
+            ui.resize(w, h);
         }
-
-        // TODO: Now the "remaining" logic would be to handle properly the drawing
-        // with size hints, checking parents, etc.
 
         // xarkes: draw interface
         {
-            let but = ui.button(ui.root.clone(), Some("Click me"));
+            ui.size(UISize::pct(0.2), UISize::px(20.));
+            let but = ui.button(Some("Click me"));
             if but.clicked() {
                 val += 1;
             }
@@ -48,9 +47,6 @@ fn main() {
             let txt = format!("Yooo {}", val);
             ui.drawer
                 .draw_text(100., 120., 12, txt.as_str(), txt.len(), color);
-
-            // xarkes: actually layout and draw the interface
-            // ui.draw();
         }
 
         // xarkes: draw fps counter
