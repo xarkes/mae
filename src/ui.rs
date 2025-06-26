@@ -3,7 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 use crate::{
     draw::{self, Drawer},
     os::{OSEvent, OSEventType, OSKey, Window},
-    render::RectCoords,
+    render::{RectCoords, V4f32},
 };
 
 #[repr(u64)]
@@ -48,6 +48,7 @@ impl UISize {
 pub struct UIWidget {
     bounds: RectCoords,
     parent: Option<Rc<RefCell<UIWidget>>>,
+    last_child: Option<Rc<RefCell<UIWidget>>>,
 
     // event flags
     flags: u64,
@@ -74,12 +75,13 @@ pub struct UIState {
     pub drawer: Drawer,
     events: Vec<OSEvent>,
 
-    //// style and layout related
+    //// style and layout related options, used for creation
     parent: Rc<RefCell<UIWidget>>,
     width: UISize,
     height: UISize,
+    color: V4f32,
 
-    //// input related
+    //// input events cache
     mouse: (f32, f32),
     click: (f32, f32),
     release: (f32, f32),
@@ -89,6 +91,7 @@ impl UIState {
         let root = Rc::new(RefCell::new(UIWidget {
             bounds: RectCoords::from_size(0., 0., 1024., 768.),
             parent: None,
+            last_child: None,
             flags: 0,
             events: 0,
         }));
@@ -105,19 +108,31 @@ impl UIState {
                 kind: UISizeKind::Percents,
                 value: 1.,
             },
+            color: draw::color::WHITE,
             mouse: (-1., -1.),
             click: (-1., -1.),
             release: (-1., -1.),
         }
     }
 
-    fn create_ui_widget(&mut self, bounds: RectCoords, flags: u64) -> UIWidget {
+    fn create_ui_widget(&mut self, flags: u64) -> Rc<RefCell<UIWidget>> {
+        // xarkes: apply layout properties and compute bounds
+        // let prev = self.parent.borrow().last_child.clone();
+        // let prev = match prev {
+        //     Some(child) => child,
+        //     None => self.parent.clone(),
+        // };
+        let prev = self.parent.borrow().last_child.clone();
+        let bounds = self.compute_layout_bounds(prev);
         let mut w = UIWidget {
             bounds,
             parent: Some(self.parent.clone()),
+            last_child: None,
             flags,
             events: 0,
         };
+
+        // xarkes: apply events flags
         if point_in_rect(&bounds, self.mouse) && w.clickable() {
             w.events |= UIWidgetEvent::MouseOver as u64;
         }
@@ -128,7 +143,11 @@ impl UIState {
             // xarkes: consume the release so clicked() triggers only once
             self.release = (-1., -1.);
         }
-        w
+
+        // xarkes: update parent childs
+        let childref = Rc::new(RefCell::new(w));
+        self.parent.borrow_mut().last_child = Some(childref.clone());
+        childref
     }
 
     /////////////////////////////////
@@ -146,9 +165,23 @@ impl UIState {
     pub fn parent(&mut self, parent: Rc<RefCell<UIWidget>>) {
         self.parent = parent;
     }
-    fn compute_layout_bounds(&self) -> RectCoords {
-        let x = 0.;
-        let y = 0.;
+    pub fn color(&mut self, color: V4f32) {
+        self.color = color;
+    }
+    fn compute_layout_bounds(&self, prev: Option<Rc<RefCell<UIWidget>>>) -> RectCoords {
+        // xarkes: for now, only vertical axis
+        let x;
+        let y;
+        match prev {
+            None => {
+                x = 0.0;
+                y = 0.0;
+            }
+            Some(prev) => {
+                x = prev.borrow().bounds.x0;
+                y = prev.borrow().bounds.y1;
+            }
+        }
         let w = match self.width.kind {
             UISizeKind::Pixels => self.width.value,
             UISizeKind::Percents => {
@@ -162,42 +195,56 @@ impl UIState {
                     * (self.parent.borrow().bounds.y1 - self.parent.borrow().bounds.y0)
             }
         };
-        RectCoords::from_size(x, y, x + w, x + h)
+        RectCoords::from_size(x, y, w, h)
     }
 
     /////////////////////////////////
     //// UI widgets
-    pub fn button(&mut self, label: Option<&str>) -> UIWidget {
-        let bounds = self.compute_layout_bounds();
-        let uibox = self.create_ui_widget(bounds, UIWidgetFlag::MouseClickable as u64);
-        let mut bg_color = draw::color::TMP;
-        let mut draw_off = 0.;
-        if uibox.hover() {
-            bg_color = draw::color::TMP2;
-        }
-        if uibox.click() {
-            draw_off = 1.;
-        }
-        self.drawer.draw_rect(
-            &RectCoords {
-                x0: bounds.x0 + draw_off,
-                y0: bounds.y0 + draw_off,
-                x1: bounds.x1 + draw_off,
-                y1: bounds.y1 + draw_off,
-            },
-            bg_color,
-        );
-        if let Some(label) = label {
-            self.drawer.draw_text(
-                bounds.x0 + draw_off,
-                bounds.y0 + draw_off,
-                12,
-                label,
-                label.len(),
-                draw::color::WHITE,
+    pub fn button(&mut self, label: Option<&str>) -> Rc<RefCell<UIWidget>> {
+        let button = self.create_ui_widget(UIWidgetFlag::MouseClickable as u64);
+        {
+            let uibox = button.borrow();
+            let mut bg_color = draw::color::TMP;
+            let mut draw_off = 0.;
+            if uibox.hover() {
+                bg_color = draw::color::TMP2;
+            }
+            if uibox.click() {
+                draw_off = 1.;
+            }
+            self.drawer.draw_rect(
+                &RectCoords {
+                    x0: uibox.bounds.x0 + draw_off,
+                    y0: uibox.bounds.y0 + draw_off,
+                    x1: uibox.bounds.x1 + draw_off,
+                    y1: uibox.bounds.y1 + draw_off,
+                },
+                bg_color,
             );
+            if let Some(label) = label {
+                self.drawer.draw_text(
+                    uibox.bounds.x0 + draw_off,
+                    uibox.bounds.y0 + draw_off,
+                    12,
+                    label,
+                    label.len(),
+                    draw::color::WHITE,
+                );
+            }
         }
-        uibox
+        button
+    }
+    pub fn label(&mut self, label: &str) -> Rc<RefCell<UIWidget>> {
+        let widget = self.create_ui_widget(0);
+        self.drawer.draw_text(
+            widget.borrow().bounds.x0,
+            widget.borrow().bounds.y0,
+            12,
+            label,
+            label.len(),
+            self.color,
+        );
+        widget
     }
 
     /////////////////////////////////
@@ -219,8 +266,14 @@ impl UIState {
         self.consume_events();
     }
     pub fn resize(&mut self, w: f32, h: f32) {
-        self.root.borrow_mut().bounds.x1 = w;
-        self.root.borrow_mut().bounds.y1 = h;
+        let root = Rc::new(RefCell::new(UIWidget {
+            bounds: RectCoords::from_size(0., 0., w, h),
+            parent: None,
+            last_child: None,
+            flags: 0,
+            events: 0,
+        }));
+        self.root = root;
     }
 }
 

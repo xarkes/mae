@@ -38,15 +38,21 @@ fn main() {
 
         // xarkes: draw interface
         {
+            ui.parent(ui.root.clone());
             ui.size(UISize::pct(0.2), UISize::px(20.));
             let but = ui.button(Some("Click me"));
-            if but.clicked() {
+            if but.borrow().clicked() {
                 val += 1;
             }
-            let color = draw::color::WHITE;
-            let txt = format!("Yooo {}", val);
-            ui.drawer
-                .draw_text(100., 120., 12, txt.as_str(), txt.len(), color);
+            ui.size(UISize::pct(0.2), UISize::px(20.));
+            ui.label(format!("Yooo {}", val).as_str());
+            ui.label(format!("Yooo {}", val).as_str());
+            ui.label(format!("Yooo {}", val).as_str());
+            ui.label(format!("Yooo {}", val).as_str());
+            ui.label(format!("Yooo {}", val).as_str());
+            ui.label(format!("Yooo {}", val).as_str());
+            ui.label(format!("Yooo {}", val).as_str());
+            ui.label(format!("Yooo {}", val).as_str());
         }
 
         // xarkes: draw fps counter
