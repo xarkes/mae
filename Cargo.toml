@@ -2,7 +2,6 @@
 name = "mae"
 version = "0.0.1"
 edition = "2024"
-build = "build.rs"
 
 [features]
 default = ["opengl"]
@@ -13,7 +12,7 @@ fontdue = "0.9.3"
 gl = { version = "*", optional = true }
 
 [target.'cfg(target_os="linux")'.dependencies]
-x11 = "*"
+x11 = { version = "2.21.0", feature = ["x11", "glx"] }
 
 [target.'cfg(target_os="macos")'.dependencies]
 objc2 = "*"
