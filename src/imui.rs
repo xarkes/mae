@@ -2,8 +2,8 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     draw::{self, Drawer},
-    os::{OSEvent, OSEventType, OSKey, Window},
-    render::{RectCoords, V4f32},
+    os::{self, OSEvent, OSEventType, OSKey, Window},
+    render::{self, RectCoords, V4f32},
 };
 
 #[repr(u64)]
@@ -70,7 +70,7 @@ impl UIWidget {
     }
 }
 
-pub struct UIState {
+pub struct IMUIState {
     pub root: Rc<RefCell<UIWidget>>,
     pub drawer: Drawer,
     events: Vec<OSEvent>,
@@ -86,7 +86,7 @@ pub struct UIState {
     click: (f32, f32),
     release: (f32, f32),
 }
-impl UIState {
+impl IMUIState {
     pub fn new(drawer: Drawer) -> Self {
         let root = Rc::new(RefCell::new(UIWidget {
             bounds: RectCoords::from_size(0., 0., 1024., 768.),
@@ -95,7 +95,7 @@ impl UIState {
             flags: 0,
             events: 0,
         }));
-        UIState {
+        IMUIState {
             root: root.clone(),
             drawer,
             events: Vec::new(),
@@ -112,6 +112,49 @@ impl UIState {
             mouse: (-1., -1.),
             click: (-1., -1.),
             release: (-1., -1.),
+        }
+    }
+    pub fn eventloop(&mut self, mut drawfunction: impl FnMut(&mut IMUIState)) {
+        let display_fps = true;
+        let freq = os::timer_init();
+        let mut time = 0f64;
+        let mut start = os::timer_value();
+        loop {
+            // xarkes: handle events
+            let w: f32;
+            {
+                self.get_events();
+                (w, _) = self.resize();
+            }
+
+            // xarkes: draw interface
+            {
+                drawfunction(self);
+            }
+
+            // xarkes: draw and update FPS counter
+            if display_fps {
+                let fps = 1f64 / time * 1000f64;
+                let text = format!("{:.2}ms - {}fps", time, fps as u64);
+                let font_size = 12;
+                self.drawer.draw_text(
+                    w - (text.len() as f32 * font_size as f32 / 1.6),
+                    0.0,
+                    font_size,
+                    text.as_str(),
+                    text.len(),
+                    draw::color::FPS,
+                );
+                let end = os::timer_value();
+                time = (end - start) as f64 * 1_000_000.0 / freq;
+                start = end;
+            }
+
+            // xarkes: render
+            {
+                let mut renderer = self.drawer.renderer.borrow_mut();
+                renderer.update();
+            }
         }
     }
 
@@ -261,11 +304,13 @@ impl UIState {
             }
         }
     }
-    pub fn get_events(&mut self, win: &Window) {
-        self.events = win.get_events();
+    pub fn get_events(&mut self) {
+        self.events = self.drawer.renderer.borrow().win.get_events();
         self.consume_events();
     }
-    pub fn resize(&mut self, w: f32, h: f32) {
+    pub fn resize(&mut self) -> (f32, f32) {
+        let (w, h) = self.drawer.renderer.borrow().win.get_size();
+        self.drawer.renderer.borrow_mut().resize(w, h);
         let root = Rc::new(RefCell::new(UIWidget {
             bounds: RectCoords::from_size(0., 0., w, h),
             parent: None,
@@ -274,10 +319,17 @@ impl UIState {
             events: 0,
         }));
         self.root = root;
+        (w, h)
     }
 }
 
 //// Utility functions
 fn point_in_rect(loc: &RectCoords, point: (f32, f32)) -> bool {
     point.0 >= loc.x0 && point.0 <= loc.x1 && point.1 >= loc.y0 && point.1 <= loc.y1
+}
+pub fn create_window(w: u32, h: u32) -> Box<IMUIState> {
+    let window = os::Window::new(w, h);
+    let renderer = Rc::new(RefCell::new(render::Renderer::new(window)));
+    let drawer = draw::Drawer::new(renderer.clone());
+    Box::new(IMUIState::new(drawer))
 }

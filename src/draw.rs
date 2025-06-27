@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Weak};
+use std::{cell::RefCell, rc::Rc};
 
 use crate::render::{Extra, Rect2DInst, RectCoords, RenderBatch, Renderer, V4f32};
 
@@ -22,6 +22,12 @@ pub mod color {
         b: 0.6,
         a: 1.0,
     };
+    pub const FPS: V4f32 = V4f32 {
+        r: 1.0,
+        g: 0.2,
+        b: 0.2,
+        a: 1.0,
+    };
     pub const WHITE: V4f32 = V4f32 {
         r: 1.0,
         g: 1.0,
@@ -31,19 +37,18 @@ pub mod color {
 }
 
 pub struct Drawer {
-    renderer: Weak<RefCell<Renderer>>,
+    pub renderer: Rc<RefCell<Renderer>>,
 }
 
 /// Drawer class - its purpose is to provide a draw API
 /// that will translate it into commands for the renderer.
 impl Drawer {
-    pub fn new(renderer: Weak<RefCell<Renderer>>) -> Self {
+    pub fn new(renderer: Rc<RefCell<Renderer>>) -> Self {
         Drawer { renderer }
     }
 
     pub fn draw_rect(&self, coords: &RectCoords, color: V4f32) {
-        let rc = self.renderer.upgrade().unwrap();
-        let mut renderer = rc.borrow_mut();
+        let mut renderer = self.renderer.borrow_mut();
         let mut batch = RenderBatch::new(1);
         let rect = Rect2DInst {
             dst: *coords,
@@ -61,8 +66,7 @@ impl Drawer {
     }
 
     pub fn draw_text(&self, x: f32, y: f32, size: u32, text: &str, length: usize, color: V4f32) {
-        let rc = self.renderer.upgrade().unwrap();
-        let mut renderer = rc.borrow_mut();
+        let mut renderer = self.renderer.borrow_mut();
         let mut batch = RenderBatch::new(text.len());
 
         // xarkes: Generate glyph for each string character and update texture if needed

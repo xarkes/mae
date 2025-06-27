@@ -21,8 +21,8 @@ use objc2_foundation::{
 struct AppDelegateIvars {
     window: OnceCell<Retained<NSWindow>>,
     view: OnceCell<Retained<NSView>>,
-    width: u16,
-    height: u16,
+    width: u32,
+    height: u32,
 }
 
 define_class!(
@@ -139,7 +139,7 @@ define_class!(
 );
 
 impl Delegate {
-    fn new(mtm: MainThreadMarker, width: u16, height: u16) -> Retained<Self> {
+    fn new(mtm: MainThreadMarker, width: u32, height: u32) -> Retained<Self> {
         let mut vars = AppDelegateIvars::default();
         vars.width = width;
         vars.height = height;
@@ -150,7 +150,7 @@ impl Delegate {
 }
 
 impl Window {
-    pub fn new(width: u16, height: u16) -> Self {
+    pub fn new(width: u32, height: u32) -> Self {
         // xarkes: open the window using cocoa API
         let mtm = MainThreadMarker::new().unwrap();
         let app = NSApplication::sharedApplication(mtm);
