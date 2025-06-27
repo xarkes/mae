@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::hash::Hash;
 
 struct LRUEntry<K, V> {
+    #[allow(dead_code)]
     key: K,
     val: V,
     prev: *mut LRUEntry<K, V>,
@@ -9,6 +10,7 @@ struct LRUEntry<K, V> {
 }
 
 struct LRUCache<K, V> {
+    #[allow(dead_code)]
     max: usize,
     first: *mut LRUEntry<K, V>,
     // last: *mut LRUEntry<K, V>,
@@ -113,12 +115,7 @@ impl Atlas {
     }
 
     /// Add a glyph to the current atlas
-    pub fn add_glyph(
-        &mut self,
-        metrics: fontdue::Metrics,
-        line_metrics: fontdue::LineMetrics,
-        bitmap: Vec<u8>,
-    ) -> Glyph {
+    pub fn add_glyph(&mut self, metrics: fontdue::Metrics, bitmap: Vec<u8>) -> Glyph {
         if self.next_y >= self.height {
             // TODO(xarkes): Implement atlas eviction
             panic!("Full atlas is not handled yet");
@@ -146,7 +143,6 @@ impl Atlas {
             x1: (self.next_x as f32 + metrics.width as f32) / self.width as f32,
             y1: (self.next_y as f32 + metrics.height as f32) / self.height as f32,
             xoff: metrics.xmin as f32,
-            // yoff: line_metrics.new_line_size - metrics.height as f32 - metrics.ymin as f32,
             yoff: -(metrics.height as f32 + metrics.ymin as f32),
         };
 
@@ -207,13 +203,7 @@ impl FontCache {
             return None;
         }
         let (metrics, bitmap) = self.font.rasterize(glyph, FONT_SIZE_RASTER as f32);
-        let glyph_data = self.atlas.add_glyph(
-            metrics,
-            self.font
-                .horizontal_line_metrics(FONT_SIZE_RASTER as f32)
-                .unwrap(),
-            bitmap,
-        );
+        let glyph_data = self.atlas.add_glyph(metrics, bitmap);
         if glyph.len_utf8() == 1 {
             self.table_ascii[glyph as u8 as usize] = glyph_data;
             Some(&self.table_ascii[glyph as u8 as usize])

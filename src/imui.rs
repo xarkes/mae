@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     draw::{self, Drawer},
-    os::{self, OSEvent, OSEventType, OSKey, Window},
+    os::{self, OSEvent, OSEventType, OSKey},
     render::{self, RectCoords, V4f32},
 };
 
@@ -47,6 +47,7 @@ impl UISize {
 
 pub struct UIWidget {
     bounds: RectCoords,
+    #[allow(dead_code)]
     parent: Option<Rc<RefCell<UIWidget>>>,
     last_child: Option<Rc<RefCell<UIWidget>>>,
 
