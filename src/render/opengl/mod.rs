@@ -1,7 +1,9 @@
 #[cfg(target_os = "macos")]
 include!("opengl_macos.rs");
+#[cfg(target_os = "linux")]
+include!("opengl_linux.rs");
 
-#[cfg(all(not(target_os = "macos")))]
+#[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
 compile_error!("OpenGL not implemented for target OS!");
 
 extern crate gl;
@@ -91,6 +93,11 @@ void main()
 }
 ";
 
+#[cfg(target_os = "macos")]
+type GLStringPtr = *const i8;
+#[cfg(target_os = "linux")]
+type GLStringPtr = *const u8;
+
 pub struct GLContext {
     width: f32,
     height: f32,
@@ -104,6 +111,19 @@ pub struct GLContext {
 impl GLContext {
     pub fn new(win: &Window) -> Self {
         let ctx = ogl_os_create_context(win);
+        // SAFETY(xarkes): The pointers come back from OpenGL library.
+        // We also assume the GetString function was resolved earlier, if not it will simply result in a null deref.
+        unsafe {
+            let vendor = gl::GetString(gl::VENDOR) as GLStringPtr;
+            let version = gl::GetString(gl::VERSION) as GLStringPtr;
+            if vendor != std::ptr::null_mut() && version != std::ptr::null_mut() {
+                let vendorstr = std::ffi::CStr::from_ptr(vendor).to_str().expect("<err>");
+                let versionstr = std::ffi::CStr::from_ptr(version).to_str().expect("<err>");
+                println!("OpenGL vendor: {} - version: {}", vendorstr, versionstr);
+            } else {
+                println!("Could not retrieve OpenGL vendor and version!");
+            }
+        }
 
         let vs = compile_shader(RECT_VERTEX_SHADER, gl::VERTEX_SHADER);
         let fs = compile_shader(RECT_FRAGMENT_SHADER, gl::FRAGMENT_SHADER);
@@ -137,7 +157,7 @@ impl GLContext {
             gl::ClearColor(0., 0., 0., 0.);
 
             // xarkes: disable VSync
-            ogl_os_toggle_vsync(ctx, false);
+            ogl_os_toggle_vsync(&ctx, false);
         }
 
         // xarkes: enable gl debugging
@@ -196,7 +216,7 @@ impl GLContext {
     pub fn resize(&mut self, w: f32, h: f32) {
         self.width = w;
         self.height = h;
-        ogl_os_resize(self.ctx);
+        ogl_os_resize(&self.ctx);
     }
 
     pub fn begin_frame(&mut self) {
@@ -225,7 +245,7 @@ impl GLContext {
     }
 
     pub fn end_frame(&mut self) {
-        ogl_os_swapbuffers(self.ctx);
+        ogl_os_swapbuffers(&self.ctx);
     }
 
     pub fn render(&self, batches: &Vec<super::RenderBatch>) {
@@ -384,7 +404,7 @@ extern "system" fn gl_debug_func(
 ) {
     let decoded;
     unsafe {
-        decoded = std::ffi::CStr::from_ptr(message as *mut i8)
+        decoded = std::ffi::CStr::from_ptr(message as *const u8)
             .to_str()
             .expect("<decode error>");
     }

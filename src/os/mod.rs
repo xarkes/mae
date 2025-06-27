@@ -1,7 +1,11 @@
 #[cfg(target_os = "macos")]
 include!("window_macos.rs");
+#[cfg(target_os = "linux")]
+include!("window_linux.rs");
 
-#[cfg(all(not(target_os = "macos")))]
+// QUESTION(xarkes): is it a good way to do it? one thing which is annoying is that there is no "interface" declaration telling what the window_xxx.rs should implement
+
+#[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
 compile_error!("Support for target OS is not implemented!");
 
 #[derive(PartialEq, Eq)]
@@ -22,11 +26,14 @@ pub struct OSEvent {
     pub pos: (f32, f32),
 }
 
+#[cfg(target_os = "macos")]
 pub struct Window {
-    // #[cfg(target_os = "macos")]
     // app: Retained<NSApplication>,
-    // #[cfg(target_os = "macos")]
     // window: OnceCell<Retained<NSWindow>>,
-    #[cfg(target_os = "macos")]
     pub view: OnceCell<Retained<NSView>>,
+}
+#[cfg(target_os = "linux")]
+pub struct Window {
+    pub display: *mut x11::xlib::Display,
+    pub win: u64
 }

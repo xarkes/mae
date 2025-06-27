@@ -128,36 +128,22 @@ pub fn ogl_os_create_context(win: &Window) -> *mut AnyObject {
         addr as *const std::ffi::c_void
     });
 
-    // SAFETY(xarkes): The pointers come back from OpenGL library.
-    // We also assume the GetString function was resolved earlier, if not it will simply result in a null deref.
-    unsafe {
-        let vendor = gl::GetString(gl::VENDOR) as *mut i8;
-        let version = gl::GetString(gl::VERSION) as *mut i8;
-        if vendor != std::ptr::null_mut() && version != std::ptr::null_mut() {
-            let vendorstr = std::ffi::CStr::from_ptr(vendor).to_str().expect("<err>");
-            let versionstr = std::ffi::CStr::from_ptr(version).to_str().expect("<err>");
-            println!("OpenGL vendor: {} - version: {}", vendorstr, versionstr);
-        } else {
-            println!("Could not retrieve OpenGL vendor and version!");
-        }
-    }
-
     ctx
 }
 
-pub fn ogl_os_resize(ctx: *mut AnyObject) {
+pub fn ogl_os_resize(ctx: &GLContextHandle) {
     unsafe {
-        let _: () = msg_send![ctx, update];
+        let _: () = msg_send![*ctx, update];
     }
 }
 
-pub fn ogl_os_swapbuffers(ctx: *mut AnyObject) {
+pub fn ogl_os_swapbuffers(ctx: &GLContextHandle) {
     unsafe {
-        let _: () = msg_send![ctx, flushBuffer];
+        let _: () = msg_send![*ctx, flushBuffer];
     }
 }
 
-pub fn ogl_os_toggle_vsync(ctx: *mut AnyObject, enable: bool) {
+pub fn ogl_os_toggle_vsync(ctx: &GLContextHandle, enable: bool) {
     unsafe {
         let val = match enable {
             true => 1i32,
@@ -165,6 +151,6 @@ pub fn ogl_os_toggle_vsync(ctx: *mut AnyObject, enable: bool) {
         };
         #[allow(deprecated)]
         let _: () =
-            msg_send![ctx, setValues: &val, forParameter:NSOpenGLContextParameter::SwapInterval];
+            msg_send![*ctx, setValues: &val, forParameter:NSOpenGLContextParameter::SwapInterval];
     }
 }
