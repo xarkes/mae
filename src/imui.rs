@@ -81,6 +81,7 @@ pub struct IMUIState {
     width: UISize,
     height: UISize,
     color: V4f32,
+    layout: u32,
 
     //// input events cache
     mouse: (f32, f32),
@@ -110,6 +111,7 @@ impl IMUIState {
                 value: 1.,
             },
             color: draw::color::WHITE,
+            layout: 0,
             mouse: (-1., -1.),
             click: (-1., -1.),
             release: (-1., -1.),
@@ -161,13 +163,7 @@ impl IMUIState {
 
     fn create_ui_widget(&mut self, flags: u64) -> Rc<RefCell<UIWidget>> {
         // xarkes: apply layout properties and compute bounds
-        // let prev = self.parent.borrow().last_child.clone();
-        // let prev = match prev {
-        //     Some(child) => child,
-        //     None => self.parent.clone(),
-        // };
-        let prev = self.parent.borrow().last_child.clone();
-        let bounds = self.compute_layout_bounds(prev);
+        let bounds = self.compute_layout_bounds();
         let mut w = UIWidget {
             bounds,
             parent: Some(self.parent.clone()),
@@ -212,46 +208,83 @@ impl IMUIState {
     pub fn color(&mut self, color: V4f32) {
         self.color = color;
     }
-    fn compute_layout_bounds(&self, prev: Option<Rc<RefCell<UIWidget>>>) -> RectCoords {
-        // xarkes: for now, only vertical axis
-        let x;
-        let y;
-        match prev {
-            None => {
-                x = 0.0;
-                y = 0.0;
-            }
-            Some(prev) => {
-                x = prev.borrow().bounds.x0;
-                y = prev.borrow().bounds.y1;
+    pub fn color_rgb(&mut self, r: u8, g: u8, b: u8) -> V4f32 {
+        self.color = V4f32 {
+            r: r as f32 / 256.,
+            g: g as f32 / 256.,
+            b: b as f32 / 256.,
+            a: 1.,
+        };
+        self.color
+    }
+    pub fn layout(&mut self, layout: u32) {
+        self.layout = layout;
+    }
+    fn compute_layout_bounds(&self) -> RectCoords {
+        // TODO(xarkes): think of an actual layout algorithm and fix node relationships
+        // in this immediate context we can only rely on previously added nodes
+
+        let prev = self.parent.borrow().last_child.clone();
+        let prev_bounds = match prev {
+            None => RectCoords {
+                x0: 0.,
+                y0: 0.,
+                x1: 0.,
+                y1: 0.,
+            },
+            Some(prev) => prev.borrow().bounds,
+        };
+
+        fn uisize_as_px(uisize: &UISize, parent_val: f32) -> f32 {
+            match uisize.kind {
+                UISizeKind::Pixels => uisize.value,
+                UISizeKind::Percents => uisize.value * parent_val,
             }
         }
-        let w = match self.width.kind {
-            UISizeKind::Pixels => self.width.value,
-            UISizeKind::Percents => {
-                self.width.value * (self.parent.borrow().bounds.x1 - self.parent.borrow().bounds.x0)
+
+        let parent_width = self.parent.borrow().bounds.x1 - self.parent.borrow().bounds.x0;
+        let parent_height = self.parent.borrow().bounds.y1 - self.parent.borrow().bounds.y0;
+        match self.layout {
+            0 => {
+                // default
+                let w = uisize_as_px(&self.width, parent_width);
+                let h = uisize_as_px(&self.height, parent_height);
+                RectCoords::from_size(prev_bounds.x0, prev_bounds.y1, w, h)
             }
-        };
-        let h = match self.height.kind {
-            UISizeKind::Pixels => self.height.value,
-            UISizeKind::Percents => {
-                self.height.value
-                    * (self.parent.borrow().bounds.y1 - self.parent.borrow().bounds.y0)
+            1 => {
+                // centered
+                let w = uisize_as_px(&self.width, parent_width);
+                let h = uisize_as_px(&self.height, parent_height);
+                let x = self.parent.borrow().bounds.x0 + (parent_width - w) / 2.0;
+                let y = self.parent.borrow().bounds.y0 + prev_bounds.y1;
+                RectCoords::from_size(x, y, w, h)
             }
-        };
-        RectCoords::from_size(x, y, w, h)
+            _ => {
+                panic!("not handled");
+            }
+        }
     }
 
     /////////////////////////////////
     //// UI widgets
+    pub fn widget(&mut self) -> Rc<RefCell<UIWidget>> {
+        let widget = self.create_ui_widget(0);
+        self.drawer.draw_rect(&widget.borrow().bounds, self.color);
+        widget
+    }
     pub fn button(&mut self, label: Option<&str>) -> Rc<RefCell<UIWidget>> {
         let button = self.create_ui_widget(UIWidgetFlag::MouseClickable as u64);
         {
             let uibox = button.borrow();
-            let mut bg_color = draw::color::TMP;
+            let mut bg_color = self.color;
             let mut draw_off = 0.;
             if uibox.hover() {
-                bg_color = draw::color::TMP2;
+                bg_color = V4f32 {
+                    r: self.color.r * 1.1,
+                    g: self.color.g * 1.1,
+                    b: self.color.b * 1.1,
+                    a: self.color.a,
+                };
             }
             if uibox.click() {
                 draw_off = 1.;

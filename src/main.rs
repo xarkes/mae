@@ -15,22 +15,48 @@ use imui::UISize;
 
 fn main() {
     let mut ui = imui::create_window(1024, 768);
-    let mut val = 1234;
+    let mut count = 0;
     ui.eventloop(|ui| {
-        ui.parent(ui.root.clone());
-        ui.size(UISize::pct(0.2), UISize::px(20.));
-        let but = ui.button(Some("Click me"));
-        if but.borrow().clicked() {
-            val += 1;
+        // top bar
+        let blue = ui.color_rgb(61, 78, 219);
+        {
+            ui.layout(0);
+            ui.parent(ui.root.clone());
+            ui.size(UISize::pct(1.), UISize::px(40.));
+            ui.widget();
         }
-        ui.size(UISize::pct(0.2), UISize::px(20.));
-        ui.label(format!("Yooo {}", val).as_str());
-        ui.label(format!("Yooo {}", val).as_str());
-        ui.label(format!("Yooo {}", val).as_str());
-        ui.label(format!("Yooo {}", val).as_str());
-        ui.label(format!("Yooo {}", val).as_str());
-        ui.label(format!("Yooo {}", val).as_str());
-        ui.label(format!("Yooo {}", val).as_str());
-        ui.label(format!("Yooo {}", val).as_str());
+
+        // main content
+        let content = {
+            ui.size(UISize::pct(1.), UISize::pct(0.8));
+            ui.color_rgb(230, 230, 230);
+            ui.widget()
+        };
+
+        // white box
+        let mid = {
+            ui.parent(content);
+
+            // stupid spacer
+            ui.size(UISize::pct(0.), UISize::px(100.));
+            ui.widget();
+
+            ui.size(UISize::pct(0.5), UISize::pct(0.5));
+            ui.color_rgb(255, 255, 255);
+            ui.layout(1);
+            ui.widget()
+        };
+
+        // button
+        {
+            ui.parent(mid);
+            ui.color(blue);
+            ui.size(UISize::pct(0.6), UISize::px(30.));
+            if ui.button(Some("Click here!")).borrow().clicked() {
+                count += 1;
+            }
+            ui.color_rgb(0, 0, 0);
+            ui.label(format!("You clicked... {} times!", count).as_str());
+        }
     });
 }
