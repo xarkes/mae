@@ -339,7 +339,7 @@ impl IMUIState {
         }
     }
     pub fn get_events(&mut self) {
-        self.events = self.drawer.renderer.borrow().win.get_events();
+        self.events = self.drawer.renderer.borrow_mut().win.get_events();
         self.consume_events();
     }
     pub fn resize(&mut self) -> (f32, f32) {

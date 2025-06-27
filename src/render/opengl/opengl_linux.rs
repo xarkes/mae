@@ -1,6 +1,6 @@
 use x11::glx;
 use x11::glx::__GLXcontextRec;
-use x11::xlib;
+use x11::xlib::{self, XVisualInfo};
 
 pub struct GLContextHandle {
     ctx: *mut __GLXcontextRec,
@@ -13,7 +13,7 @@ type GLXCreateContextAttribsARBProc = unsafe extern "C" fn(
     _3: *const std::ffi::c_void,
     _2: *const std::ffi::c_void,
     _1: i32,
-    _0: &[i32; 5],
+    _0: *const i32,
 ) -> *mut __GLXcontextRec;
 
 pub fn ogl_os_create_context(win: &Window) -> GLContextHandle {
@@ -83,36 +83,43 @@ pub fn ogl_os_create_context(win: &Window) -> GLContextHandle {
         xlib::XFree(*fbconfig as *mut std::ffi::c_void);
 
         let vi = glx::glXGetVisualFromFBConfig(win.display, fbc);
+        println!("{:?}", vi);
 
         // xarkes: we don't support < ~3.3 for now
-        #[allow(non_snake_case)]
-        let glxCreateContextAttribs = glx::glXGetProcAddressARB(
-            std::ffi::CString::new("glXCreateContextAttribsARB")
-                .unwrap()
-                .as_ptr(),
-        );
-        if glxCreateContextAttribs.is_none() {
-            println!("Could not load glXCreateContextAttribsARB! Is your OpenGL version too old?");
-            glcontext = glx::glXCreateContext(win.display, vi, std::ptr::null_mut(), 1);
-        } else {
+        #[cfg(target_os = "none/todo")]
+        {
             #[allow(non_snake_case)]
-            let glxCreateContextAttribs: GLXCreateContextAttribsARBProc =
-                std::mem::transmute(glxCreateContextAttribs.unwrap());
-            let attribs = [
-                glx::arb::GLX_CONTEXT_MAJOR_VERSION_ARB,
-                3,
-                glx::arb::GLX_CONTEXT_MINOR_VERSION_ARB,
-                3,
-                0,
-            ];
-            glcontext = glxCreateContextAttribs(
-                win.display as *const std::ffi::c_void,
-                vi as *const std::ffi::c_void,
-                std::ptr::null_mut(),
-                1,
-                &attribs,
+            let glxCreateContextAttribs = glx::glXGetProcAddressARB(
+                std::ffi::CString::new("glXCreateContextAttribsARB")
+                    .unwrap()
+                    .as_ptr(),
             );
+            if glxCreateContextAttribs.is_none() {
+                println!(
+                    "Could not load glXCreateContextAttribsARB! Is your OpenGL version too old?"
+                );
+                glcontext = glx::glXCreateContext(win.display, vi, std::ptr::null_mut(), 1);
+            } else {
+                #[allow(non_snake_case)]
+                let glxCreateContextAttribs: GLXCreateContextAttribsARBProc =
+                    std::mem::transmute(glxCreateContextAttribs.unwrap());
+                let attribs = [
+                    //glx::arb::GLX_CONTEXT_MAJOR_VERSION_ARB,
+                    // 1,
+                    // glx::arb::GLX_CONTEXT_MINOR_VERSION_ARB,
+                    // 1,
+                    0,
+                ];
+                glcontext = glxCreateContextAttribs(
+                    win.display as *const std::ffi::c_void,
+                    vi as *const std::ffi::c_void,
+                    std::ptr::null_mut(),
+                    1,
+                    0 as *const i32, // &attribs as *const i32,
+                );
+            }
         }
+        glcontext = glx::glXCreateContext(win.display, vi, std::ptr::null_mut(), 1);
         if glcontext.is_null() {
             panic!("GLContext creation failed!");
         }

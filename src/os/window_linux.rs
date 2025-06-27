@@ -35,10 +35,13 @@ fn create_window(width: u32, height: u32) -> (*mut x11::xlib::Display, u64) {
             display,
             win,
             // x11::xlib::ExposureMask | x11::xlib::KeyPressMask, // TODO: Handle keyboard
-            x11::xlib::ExposureMask,
+            x11::xlib::ExposureMask
+                | x11::xlib::PointerMotionMask
+                | x11::xlib::ButtonPressMask
+                | x11::xlib::ButtonReleaseMask,
         );
 
-        (display,win)
+        (display, win)
     }
 }
 
@@ -46,27 +49,69 @@ impl Window {
     pub fn new(width: u32, height: u32) -> Self {
         let (display, win) = create_window(width, height);
         Window {
+            size: (width as f32, height as f32),
             display,
-            win
+            win,
         }
     }
 
     pub fn get_size(&self) -> (f32, f32) {
-        (0., 0.)
+        self.size
     }
 
-    pub fn get_events(&self) -> Vec<OSEvent> {
-        // TODO(xarkes): implement
-        // unsafe {
-            // loop {
-            //     while x11::xlib::XPending(self.display) != 0 {
-            //         let mut event = x11::xlib::XEvent { type_: 0 };
-            //         x11::xlib::XNextEvent(self.display, &mut event as *mut x11::xlib::XEvent);
-            //         println!("Unhandled event: {:?}", event)
-            //     }
-            // }
-        // }
-        Vec::new()
+    pub fn get_events(&mut self) -> Vec<OSEvent> {
+        let mut events = Vec::new();
+        unsafe {
+            while x11::xlib::XPending(self.display) != 0 {
+                let mut event = x11::xlib::XEvent { type_: 0 };
+                x11::xlib::XNextEvent(self.display, &mut event as *mut x11::xlib::XEvent);
+                match event.type_ {
+                    x11::xlib::Expose => {
+                        self.size = (event.expose.width as f32, event.expose.height as f32);
+                    }
+                    x11::xlib::MotionNotify => {
+                        let ev = OSEvent {
+                            ty: OSEventType::MouseMove,
+                            key: OSKey::LeftMouseButton,
+                            pos: (event.motion.x as f32, event.motion.y as f32),
+                        };
+                        events.push(ev);
+                    }
+                    x11::xlib::ButtonPress => {
+                        let ev = OSEvent {
+                            ty: OSEventType::Press,
+                            key: match event.button.button {
+                                1 => OSKey::LeftMouseButton,
+                                _ => {
+                                    println!("Unhandled mouse press!");
+                                    OSKey::Unknown
+                                }
+                            },
+                            pos: (event.button.x as f32, event.button.y as f32),
+                        };
+                        events.push(ev);
+                    }
+                    x11::xlib::ButtonRelease => {
+                        let ev = OSEvent {
+                            ty: OSEventType::Release,
+                            key: match event.button.button {
+                                1 => OSKey::LeftMouseButton,
+                                _ => {
+                                    println!("Unhandled mouse press!");
+                                    OSKey::Unknown
+                                }
+                            },
+                            pos: (event.button.x as f32, event.button.y as f32),
+                        };
+                        events.push(ev);
+                    }
+                    _ => {
+                        println!("Unhandled event: {:?}", event)
+                    }
+                }
+            }
+        }
+        events
     }
 }
 

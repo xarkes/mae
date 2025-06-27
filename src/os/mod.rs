@@ -34,6 +34,7 @@ pub struct Window {
 }
 #[cfg(target_os = "linux")]
 pub struct Window {
+    size: (f32, f32),
     pub display: *mut x11::xlib::Display,
-    pub win: u64
+    pub win: u64,
 }
