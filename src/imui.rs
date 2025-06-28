@@ -75,7 +75,11 @@ pub struct IMUIState {
     release: (f32, f32),
 }
 impl IMUIState {
-    pub fn new(drawer: Drawer) -> Self {
+    pub fn new(w: u32, h: u32) -> Self {
+        let window = os::Window::new(w, h);
+        let renderer = render::Renderer::new(window);
+        let drawer = draw::Drawer::new(renderer);
+
         let root = Rc::new(RefCell::new(UIWidget {
             bounds: RectCoords::from_size(0., 0., 1024., 768.),
             parent: None,
@@ -137,8 +141,7 @@ impl IMUIState {
 
             // xarkes: render
             {
-                let mut renderer = self.drawer.renderer.borrow_mut();
-                renderer.update();
+                self.drawer.renderer.update();
             }
         }
     }
@@ -321,12 +324,12 @@ impl IMUIState {
         }
     }
     pub fn get_events(&mut self) {
-        self.events = self.drawer.renderer.borrow_mut().win.get_events();
+        self.events = self.drawer.renderer.win.get_events();
         self.consume_events();
     }
     pub fn resize(&mut self) -> (f32, f32) {
-        let (w, h) = self.drawer.renderer.borrow().win.get_size();
-        self.drawer.renderer.borrow_mut().resize(w, h);
+        let (w, h) = self.drawer.renderer.win.get_size();
+        self.drawer.renderer.resize(w, h);
         let root = Rc::new(RefCell::new(UIWidget {
             bounds: RectCoords::from_size(0., 0., w, h),
             parent: None,
@@ -344,9 +347,5 @@ fn point_in_rect(loc: &RectCoords, point: (f32, f32)) -> bool {
     point.0 >= loc.x0 && point.0 <= loc.x1 && point.1 >= loc.y0 && point.1 <= loc.y1
 }
 pub fn create_window(w: u32, h: u32) -> Box<IMUIState> {
-    // TODO: move window creation in Renderer new
-    let window = os::Window::new(w, h);
-    let renderer = Rc::new(RefCell::new(render::Renderer::new(window)));
-    let drawer = draw::Drawer::new(renderer.clone());
-    Box::new(IMUIState::new(drawer))
+    Box::new(IMUIState::new(w, h))
 }

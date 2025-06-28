@@ -1,5 +1,3 @@
-use std::{cell::RefCell, rc::Rc};
-
 use crate::render::{Extra, Rect2DInst, RectCoords, RenderBatch, Renderer, V4f32};
 
 pub mod color {
@@ -20,18 +18,17 @@ pub mod color {
 }
 
 pub struct Drawer {
-    pub renderer: Rc<RefCell<Renderer>>,
+    pub renderer: Renderer,
 }
 
 /// Drawer class - its purpose is to provide a draw API
 /// that will translate it into commands for the renderer.
 impl Drawer {
-    pub fn new(renderer: Rc<RefCell<Renderer>>) -> Self {
+    pub fn new(renderer: Renderer) -> Self {
         Drawer { renderer }
     }
 
-    pub fn draw_rect(&self, coords: &RectCoords, color: V4f32) {
-        let mut renderer = self.renderer.borrow_mut();
+    pub fn draw_rect(&mut self, coords: &RectCoords, color: V4f32) {
         let mut batch = RenderBatch::new(1);
         let rect = Rect2DInst {
             dst: *coords,
@@ -45,11 +42,18 @@ impl Drawer {
             extra: Extra::new(true),
         };
         batch.add_rect(rect);
-        renderer.add_batch(batch);
+        self.renderer.add_batch(batch);
     }
 
-    pub fn draw_text(&self, x: f32, y: f32, size: u32, text: &str, length: usize, color: V4f32) {
-        let mut renderer = self.renderer.borrow_mut();
+    pub fn draw_text(
+        &mut self,
+        x: f32,
+        y: f32,
+        size: u32,
+        text: &str,
+        length: usize,
+        color: V4f32,
+    ) {
         let mut batch = RenderBatch::new(text.len());
 
         // xarkes: Generate glyph for each string character and update texture if needed
@@ -60,11 +64,11 @@ impl Drawer {
                 if c == '\t' {
                     continue;
                 }
-                let (_, added) = renderer.font_cache.get(c);
+                let (_, added) = self.renderer.font_cache.get(c);
                 should_update |= added;
             }
             if should_update {
-                renderer.update_font_texture();
+                self.renderer.update_font_texture();
             }
         }
 
@@ -78,7 +82,7 @@ impl Drawer {
                 x += size as f32;
                 continue;
             }
-            let (glyph, _) = renderer.font_cache.get(c);
+            let (glyph, _) = self.renderer.font_cache.get(c);
             if glyph.is_none() {
                 continue;
             }
@@ -107,6 +111,6 @@ impl Drawer {
             });
             x += glyph.advance;
         }
-        renderer.add_batch(batch);
+        self.renderer.add_batch(batch);
     }
 }
