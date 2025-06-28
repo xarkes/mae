@@ -18,12 +18,17 @@ fn main() {
     let mut count = 0;
     ui.eventloop(|ui| {
         // top bar
+        // let param = LayoutParam::default();
         let blue = ui.color_rgb(61, 78, 219);
         {
             ui.layout(0);
             ui.parent(ui.root.clone());
             ui.size(UISize::pct(1.), UISize::px(40.));
             ui.widget();
+
+            // pattern a envisager
+            // param.reset().size(bidule);
+            // ui.widget(param);
         }
 
         // main content

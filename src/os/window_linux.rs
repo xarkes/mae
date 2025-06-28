@@ -116,11 +116,29 @@ impl Window {
 }
 
 // XXX(xarkes): Not window related, but lazy to add another file. Rename window_linux to os_linux?
+#[repr(C)]
+struct Timespec {
+    tv_sec: u64,
+    tv_nsec: u64,
+}
+unsafe extern "C" {
+    fn clock_gettime(id: u64, timespec: *const std::ffi::c_void);
+}
 pub fn timer_init() -> f64 {
-    // TODO(xarkes)
-    0.
+    // xarkes: no init required with current implem on Linux
+    1.
 }
 pub fn timer_value() -> u64 {
-    // TODO(xarkes)
-    0
+    let CLOCK_MONOTONIC_RAW = 4;
+    let mut ts = Timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    unsafe {
+        clock_gettime(
+            CLOCK_MONOTONIC_RAW,
+            std::ptr::from_ref(&ts) as *const std::ffi::c_void,
+        );
+    }
+    ts.tv_sec * 1_000_000_000 + ts.tv_nsec
 }

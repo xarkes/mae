@@ -8,7 +8,7 @@ compile_error!("OpenGL not implemented for target OS!");
 
 extern crate gl;
 use crate::os::Window;
-use gl::types::*;
+use gl::types::{GLchar, GLenum, GLint, GLuint};
 use std::ffi::CString;
 
 use super::Rect2DInst;

@@ -1,5 +1,11 @@
 #[cfg(target_os = "macos")]
 include!("window_macos.rs");
+
+// #[cfg(target_os = "macos")]
+// mod window_macos;
+// #[cfg(target_os = "macos")]
+// use window_macos::*;
+
 #[cfg(target_os = "linux")]
 include!("window_linux.rs");
 
@@ -26,6 +32,8 @@ pub struct OSEvent {
     pub pos: (f32, f32),
 }
 
+// TODO: declare trait to retrieve view/display depending on OS
+// + declare window base as base structure for shared properties (homemade inheritance)
 #[cfg(target_os = "macos")]
 pub struct Window {
     // app: Retained<NSApplication>,

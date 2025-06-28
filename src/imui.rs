@@ -18,30 +18,16 @@ enum UIWidgetEvent {
     MouseReleased = 4u64,
 }
 
-#[repr(u32)]
-#[derive(Clone, Copy)]
-enum UISizeKind {
-    Pixels,
-    Percents,
-}
-
-#[derive(Clone, Copy)]
-pub struct UISize {
-    kind: UISizeKind,
-    value: f32,
+pub enum UISize {
+    Pixels(f32),
+    Percents(f32),
 }
 impl UISize {
     pub fn pct(val: f32) -> Self {
-        UISize {
-            kind: UISizeKind::Percents,
-            value: val,
-        }
+        UISize::Percents(val)
     }
     pub fn px(val: f32) -> Self {
-        UISize {
-            kind: UISizeKind::Pixels,
-            value: val,
-        }
+        UISize::Pixels(val)
     }
 }
 
@@ -102,15 +88,11 @@ impl IMUIState {
             drawer,
             events: Vec::new(),
             parent: root.clone(),
-            width: UISize {
-                kind: UISizeKind::Percents,
-                value: 1.,
-            },
-            height: UISize {
-                kind: UISizeKind::Percents,
-                value: 1.,
-            },
+            width: UISize::pct(1.),
+            height: UISize::pct(1.),
             color: draw::color::WHITE,
+
+            // TODO(xarkes): Make this optional
             layout: 0,
             mouse: (-1., -1.),
             click: (-1., -1.),
@@ -236,9 +218,9 @@ impl IMUIState {
         };
 
         fn uisize_as_px(uisize: &UISize, parent_val: f32) -> f32 {
-            match uisize.kind {
-                UISizeKind::Pixels => uisize.value,
-                UISizeKind::Percents => uisize.value * parent_val,
+            match uisize {
+                UISize::Pixels(val) => *val,
+                UISize::Percents(val) => val * parent_val,
             }
         }
 
@@ -362,6 +344,7 @@ fn point_in_rect(loc: &RectCoords, point: (f32, f32)) -> bool {
     point.0 >= loc.x0 && point.0 <= loc.x1 && point.1 >= loc.y0 && point.1 <= loc.y1
 }
 pub fn create_window(w: u32, h: u32) -> Box<IMUIState> {
+    // TODO: move window creation in Renderer new
     let window = os::Window::new(w, h);
     let renderer = Rc::new(RefCell::new(render::Renderer::new(window)));
     let drawer = draw::Drawer::new(renderer.clone());

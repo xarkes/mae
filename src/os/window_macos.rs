@@ -189,10 +189,11 @@ impl Window {
                     // xarkes: send the event to the NSApplication
                     app.sendEvent(&ev);
                     // xarkes: translate the OS event into a more generic event
+                    // TODO: no temporary event, return the created object
                     let mut new_ev = OSEvent {
                         ty: OSEventType::Unknown,
                         key: OSKey::Unknown,
-                        pos: (-1.0, -1.0),
+                        pos: (-1.0, -1.0), // sucks
                     };
                     match ev.r#type() {
                         NSEventType::MouseMoved => {
