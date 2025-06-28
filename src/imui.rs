@@ -59,7 +59,7 @@ impl UIWidget {
     }
 }
 
-pub struct IMUIState {
+pub struct IMUI {
     pub root: Rc<RefCell<UIWidget>>,
     pub drawer: Drawer,
     events: Vec<OSEvent>,
@@ -76,7 +76,7 @@ pub struct IMUIState {
     click: Option<Point>,
     release: Option<Point>,
 }
-impl IMUIState {
+impl IMUI {
     pub fn new(w: u32, h: u32) -> Self {
         let window = os::Window::new(w, h);
         let renderer = render::Renderer::new(window);
@@ -89,7 +89,7 @@ impl IMUIState {
             flags: 0,
             events: 0,
         }));
-        IMUIState {
+        IMUI {
             root: root.clone(),
             drawer,
             events: Vec::new(),
@@ -103,7 +103,7 @@ impl IMUIState {
             release: None,
         }
     }
-    pub fn eventloop(&mut self, mut drawfunction: impl FnMut(&mut IMUIState)) {
+    pub fn eventloop(&mut self, mut drawfunction: impl FnMut(&mut IMUI)) {
         let display_fps = true;
         let freq = os::timer_init();
         let mut time = 0f64;
@@ -349,7 +349,4 @@ fn point_in_rect(loc: &RectCoords, point: Option<Point>) -> bool {
     } else {
         false
     }
-}
-pub fn create_window(w: u32, h: u32) -> Box<IMUIState> {
-    Box::new(IMUIState::new(w, h))
 }

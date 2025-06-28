@@ -1,17 +1,15 @@
 use crate::imui;
 
-#[cfg(target_os = "macos")]
-include!("window_macos.rs");
-
+// TODO(xarkes): maybe this would be cleaner, I don't care at the moment
 // #[cfg(target_os = "macos")]
 // mod window_macos;
 // #[cfg(target_os = "macos")]
 // use window_macos::*;
 
+#[cfg(target_os = "macos")]
+include!("macos.rs");
 #[cfg(target_os = "linux")]
-include!("window_linux.rs");
-
-// QUESTION(xarkes): is it a good way to do it? one thing which is annoying is that there is no "interface" declaration telling what the window_xxx.rs should implement
+include!("linux.rs");
 
 #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
 compile_error!("Support for target OS is not implemented!");
@@ -21,12 +19,10 @@ pub enum OSEventType {
     MouseMove,
     Press,
     Release,
-    Unknown,
 }
 #[derive(PartialEq, Eq)]
 pub enum OSKey {
     LeftMouseButton,
-    Unknown,
 }
 pub struct OSEvent {
     pub ty: OSEventType,

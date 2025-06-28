@@ -4,17 +4,10 @@ mod os;
 mod render;
 mod widgets;
 
-use imui::UISize;
-
-// TODO(xarkes):
-// - [ ] XXX: Urgent: take a decision regarding the APIs. Should we work with u32 (pixels) or floats? Currently it is a bit a mix of everything and we have to decide which one to use and stick to it.
-// - [ ] Add proper logging
-// - [ ] Draw the interface as you'd like it
-// - [ ] Handle events (mouse over, mouse click, keyboard inputs, ...)
-// - [ ] Port to Linux
+use imui::{IMUI, UISize};
 
 fn main() {
-    let mut ui = imui::create_window(1024, 768);
+    let mut ui = IMUI::new(1024, 768);
     let mut count = 0;
     ui.eventloop(|ui| {
         // top bar
