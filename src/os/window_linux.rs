@@ -8,6 +8,7 @@ fn create_window(width: u32, height: u32) -> (*mut x11::xlib::Display, u64) {
         }
 
         let root = x11::xlib::XRootWindow(display, 0);
+        // TODO(xarkes): I don't know what colormap is for and if this API is useful
         // let colormap = x11::xlib::XCreateColormap(display, root, core::ptr::null_mut(), 0);
         let mut swa: x11::xlib::XSetWindowAttributes = std::mem::zeroed();
         swa.event_mask = x11::xlib::StructureNotifyMask;
@@ -34,7 +35,6 @@ fn create_window(width: u32, height: u32) -> (*mut x11::xlib::Display, u64) {
         x11::xlib::XSelectInput(
             display,
             win,
-            // x11::xlib::ExposureMask | x11::xlib::KeyPressMask, // TODO: Handle keyboard
             x11::xlib::ExposureMask
                 | x11::xlib::PointerMotionMask
                 | x11::xlib::ButtonPressMask
@@ -65,20 +65,21 @@ impl Window {
             while x11::xlib::XPending(self.display) != 0 {
                 let mut event = x11::xlib::XEvent { type_: 0 };
                 x11::xlib::XNextEvent(self.display, &mut event as *mut x11::xlib::XEvent);
+                let ev: OSEvent;
                 match event.type_ {
                     x11::xlib::Expose => {
                         self.size = (event.expose.width as f32, event.expose.height as f32);
+                        continue;
                     }
                     x11::xlib::MotionNotify => {
-                        let ev = OSEvent {
+                        ev = OSEvent {
                             ty: OSEventType::MouseMove,
                             key: OSKey::LeftMouseButton,
                             pos: (event.motion.x as f32, event.motion.y as f32),
                         };
-                        events.push(ev);
                     }
                     x11::xlib::ButtonPress => {
-                        let ev = OSEvent {
+                        ev = OSEvent {
                             ty: OSEventType::Press,
                             key: match event.button.button {
                                 1 => OSKey::LeftMouseButton,
@@ -89,10 +90,9 @@ impl Window {
                             },
                             pos: (event.button.x as f32, event.button.y as f32),
                         };
-                        events.push(ev);
                     }
                     x11::xlib::ButtonRelease => {
-                        let ev = OSEvent {
+                        ev = OSEvent {
                             ty: OSEventType::Release,
                             key: match event.button.button {
                                 1 => OSKey::LeftMouseButton,
@@ -103,12 +103,13 @@ impl Window {
                             },
                             pos: (event.button.x as f32, event.button.y as f32),
                         };
-                        events.push(ev);
                     }
                     _ => {
-                        println!("Unhandled event: {:?}", event)
+                        println!("Unhandled event: {:?}", event);
+                        continue;
                     }
                 }
+                events.push(ev);
             }
         }
         events

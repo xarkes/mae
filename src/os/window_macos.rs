@@ -166,6 +166,11 @@ impl Window {
         }
     }
 
+    /// Translate event location to screen coords
+    fn translate_loc(&self, point: NSPoint) -> (f32, f32) {
+        (point.x as f32, self.get_size().1 - point.y as f32)
+    }
+
     pub fn get_size(&self) -> (f32, f32) {
         let rect = self.view.get().unwrap().frame();
         (rect.size.width as f32, rect.size.height as f32)
@@ -189,31 +194,32 @@ impl Window {
                     // xarkes: send the event to the NSApplication
                     app.sendEvent(&ev);
                     // xarkes: translate the OS event into a more generic event
-                    // TODO: no temporary event, return the created object
-                    let mut new_ev = OSEvent {
-                        ty: OSEventType::Unknown,
-                        key: OSKey::Unknown,
-                        pos: (-1.0, -1.0), // sucks
-                    };
+                    let new_ev: OSEvent;
                     match ev.r#type() {
                         NSEventType::MouseMoved => {
-                            new_ev.ty = OSEventType::MouseMove;
-                            let point = ev.locationInWindow();
-                            new_ev.pos = (point.x as f32, self.get_size().1 - point.y as f32)
+                            new_ev = OSEvent {
+                                ty: OSEventType::MouseMove,
+                                key: OSKey::LeftMouseButton,
+                                pos: self.translate_loc(ev.locationInWindow()),
+                            }
                         }
                         NSEventType::LeftMouseDown => {
-                            new_ev.ty = OSEventType::Press;
-                            new_ev.key = OSKey::LeftMouseButton;
-                            let point = ev.locationInWindow();
-                            new_ev.pos = (point.x as f32, self.get_size().1 - point.y as f32)
+                            new_ev = OSEvent {
+                                ty: OSEventType::Press,
+                                key: OSKey::LeftMouseButton,
+                                pos: self.translate_loc(ev.locationInWindow()),
+                            }
                         }
                         NSEventType::LeftMouseUp => {
-                            new_ev.ty = OSEventType::Release;
-                            new_ev.key = OSKey::LeftMouseButton;
-                            let point = ev.locationInWindow();
-                            new_ev.pos = (point.x as f32, self.get_size().1 - point.y as f32)
+                            new_ev = OSEvent {
+                                ty: OSEventType::Release,
+                                key: OSKey::LeftMouseButton,
+                                pos: self.translate_loc(ev.locationInWindow()),
+                            }
                         }
-                        _ => {}
+                        _ => {
+                            continue;
+                        }
                     }
                     events.push(new_ev);
                 } else {
