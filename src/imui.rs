@@ -6,6 +6,8 @@ use crate::{
     render::{self, RectCoords, V4f32},
 };
 
+pub(crate) type Point = (f32, f32);
+
 #[repr(u64)]
 enum UIWidgetFlag {
     MouseClickable = 1u64,
@@ -70,9 +72,9 @@ pub struct IMUIState {
     layout: u32,
 
     //// input events cache
-    mouse: (f32, f32),
-    click: (f32, f32),
-    release: (f32, f32),
+    mouse: Option<Point>,
+    click: Option<Point>,
+    release: Option<Point>,
 }
 impl IMUIState {
     pub fn new(w: u32, h: u32) -> Self {
@@ -95,12 +97,10 @@ impl IMUIState {
             width: UISize::pct(1.),
             height: UISize::pct(1.),
             color: draw::color::WHITE,
-
-            // TODO(xarkes): Make this optional
             layout: 0,
-            mouse: (-1., -1.),
-            click: (-1., -1.),
-            release: (-1., -1.),
+            mouse: None,
+            click: None,
+            release: None,
         }
     }
     pub fn eventloop(&mut self, mut drawfunction: impl FnMut(&mut IMUIState)) {
@@ -166,7 +166,7 @@ impl IMUIState {
         } else if point_in_rect(&bounds, self.release) && w.clickable() {
             w.events |= UIWidgetEvent::MouseReleased as u64;
             // xarkes: consume the release so clicked() triggers only once
-            self.release = (-1., -1.);
+            self.release = None;
         }
 
         // xarkes: update parent childs
@@ -314,12 +314,12 @@ impl IMUIState {
     fn consume_events(&mut self) {
         for ev in &self.events {
             if ev.ty == OSEventType::MouseMove {
-                self.mouse = ev.pos;
+                self.mouse = Some(ev.pos);
             } else if ev.ty == OSEventType::Press && ev.key == OSKey::LeftMouseButton {
-                self.click = ev.pos;
+                self.click = Some(ev.pos);
             } else if ev.ty == OSEventType::Release && ev.key == OSKey::LeftMouseButton {
-                self.click = (-1., -1.);
-                self.release = ev.pos;
+                self.click = None;
+                self.release = Some(ev.pos);
             }
         }
     }
@@ -327,7 +327,7 @@ impl IMUIState {
         self.events = self.drawer.renderer.win.get_events();
         self.consume_events();
     }
-    pub fn resize(&mut self) -> (f32, f32) {
+    pub fn resize(&mut self) -> Point {
         let (w, h) = self.drawer.renderer.win.get_size();
         self.drawer.renderer.resize(w, h);
         let root = Rc::new(RefCell::new(UIWidget {
@@ -343,8 +343,12 @@ impl IMUIState {
 }
 
 //// Utility functions
-fn point_in_rect(loc: &RectCoords, point: (f32, f32)) -> bool {
-    point.0 >= loc.x0 && point.0 <= loc.x1 && point.1 >= loc.y0 && point.1 <= loc.y1
+fn point_in_rect(loc: &RectCoords, point: Option<Point>) -> bool {
+    if let Some(point) = point {
+        point.0 >= loc.x0 && point.0 <= loc.x1 && point.1 >= loc.y0 && point.1 <= loc.y1
+    } else {
+        false
+    }
 }
 pub fn create_window(w: u32, h: u32) -> Box<IMUIState> {
     Box::new(IMUIState::new(w, h))

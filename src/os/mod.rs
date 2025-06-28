@@ -1,3 +1,5 @@
+use crate::imui;
+
 #[cfg(target_os = "macos")]
 include!("window_macos.rs");
 
@@ -29,7 +31,7 @@ pub enum OSKey {
 pub struct OSEvent {
     pub ty: OSEventType,
     pub key: OSKey,
-    pub pos: (f32, f32),
+    pub pos: imui::Point,
 }
 
 // TODO: declare trait to retrieve view/display depending on OS
