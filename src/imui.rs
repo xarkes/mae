@@ -20,23 +20,18 @@ enum UIWidgetEvent {
     MouseReleased = 4u64,
 }
 
+pub enum UITextAlign {
+    Left,
+    Center,
+}
+
 pub enum UISize {
     Pixels(f32),
     Percents(f32),
 }
-impl UISize {
-    pub fn pct(val: f32) -> Self {
-        UISize::Percents(val)
-    }
-    pub fn px(val: f32) -> Self {
-        UISize::Pixels(val)
-    }
-}
 
 pub struct UIWidget {
     bounds: RectCoords,
-    #[allow(dead_code)]
-    parent: Option<Rc<RefCell<UIWidget>>>,
     last_child: Option<Rc<RefCell<UIWidget>>>,
 
     // event flags
@@ -59,17 +54,77 @@ impl UIWidget {
     }
 }
 
-pub struct IMUI {
-    pub root: Rc<RefCell<UIWidget>>,
-    pub drawer: Drawer,
-    events: Vec<OSEvent>,
-
-    //// style and layout related options, used for creation
-    parent: Rc<RefCell<UIWidget>>,
+pub struct UIWidgetParams {
+    parent: Option<Rc<RefCell<UIWidget>>>,
     width: UISize,
     height: UISize,
     color: V4f32,
     layout: u32,
+    text_align: UITextAlign,
+}
+impl UIWidgetParams {
+    pub fn default() -> Self {
+        UIWidgetParams {
+            parent: None,
+            width: UISize::Percents(1.),
+            height: UISize::Percents(1.),
+            color: V4f32 {
+                r: 1.,
+                g: 1.,
+                b: 1.,
+                a: 1.,
+            },
+            layout: 0,
+            text_align: UITextAlign::Left,
+        }
+    }
+    pub fn size(&mut self, w: UISize, h: UISize) -> &mut Self {
+        self.width(w);
+        self.height(h);
+        self
+    }
+    pub fn width(&mut self, w: UISize) -> &mut Self {
+        self.width = w;
+        self
+    }
+    pub fn height(&mut self, h: UISize) -> &mut Self {
+        self.height = h;
+        self
+    }
+    pub fn parent(&mut self, parent: Option<Rc<RefCell<UIWidget>>>) -> &mut Self {
+        self.parent = parent;
+        self
+    }
+    pub fn color(&mut self, color: V4f32) -> &mut Self {
+        self.color = color;
+        self
+    }
+    pub fn layout(&mut self, layout: u32) -> &mut Self {
+        self.layout = layout;
+        self
+    }
+    pub fn text_align(&mut self, mode: UITextAlign) -> &mut Self {
+        self.text_align = mode;
+        self
+    }
+    pub fn reset(&mut self) {
+        // TODO(xarkes): This sucks
+        self.parent = UIWidgetParams::default().parent;
+        self.width = UIWidgetParams::default().width;
+        self.height = UIWidgetParams::default().height;
+        self.color = UIWidgetParams::default().color;
+        self.layout = UIWidgetParams::default().layout;
+        self.text_align = UIWidgetParams::default().text_align;
+    }
+}
+
+pub struct IMUI {
+    pub root: Rc<RefCell<UIWidget>>,
+    pub drawer: Drawer,
+    debug: bool,
+    size: (f32, f32),
+    events: Vec<OSEvent>,
+    params: UIWidgetParams,
 
     //// input events cache
     mouse: Option<Point>,
@@ -84,7 +139,6 @@ impl IMUI {
 
         let root = Rc::new(RefCell::new(UIWidget {
             bounds: RectCoords::from_size(0., 0., 1024., 768.),
-            parent: None,
             last_child: None,
             flags: 0,
             events: 0,
@@ -92,16 +146,17 @@ impl IMUI {
         IMUI {
             root: root.clone(),
             drawer,
+            debug: false,
+            size: (0., 0.),
             events: Vec::new(),
-            parent: root.clone(),
-            width: UISize::pct(1.),
-            height: UISize::pct(1.),
-            color: draw::color::WHITE,
-            layout: 0,
+            params: UIWidgetParams::default(),
             mouse: None,
             click: None,
             release: None,
         }
+    }
+    pub fn debug(&mut self) {
+        self.debug = true;
     }
     pub fn eventloop(&mut self, mut drawfunction: impl FnMut(&mut IMUI)) {
         let display_fps = true;
@@ -151,7 +206,6 @@ impl IMUI {
         let bounds = self.compute_layout_bounds();
         let mut w = UIWidget {
             bounds,
-            parent: Some(self.parent.clone()),
             last_child: None,
             flags,
             events: 0,
@@ -171,45 +225,18 @@ impl IMUI {
 
         // xarkes: update parent childs
         let childref = Rc::new(RefCell::new(w));
-        self.parent.borrow_mut().last_child = Some(childref.clone());
+        self.params.parent.as_mut().unwrap().borrow_mut().last_child = Some(childref.clone());
         childref
     }
 
     /////////////////////////////////
     //// Styling and layout
-    pub fn size(&mut self, w: UISize, h: UISize) {
-        self.width(w);
-        self.height(h);
-    }
-    pub fn width(&mut self, w: UISize) {
-        self.width = w;
-    }
-    pub fn height(&mut self, h: UISize) {
-        self.height = h;
-    }
-    pub fn parent(&mut self, parent: Rc<RefCell<UIWidget>>) {
-        self.parent = parent;
-    }
-    pub fn color(&mut self, color: V4f32) {
-        self.color = color;
-    }
-    pub fn color_rgb(&mut self, r: u8, g: u8, b: u8) -> V4f32 {
-        self.color = V4f32 {
-            r: r as f32 / 256.,
-            g: g as f32 / 256.,
-            b: b as f32 / 256.,
-            a: 1.,
-        };
-        self.color
-    }
-    pub fn layout(&mut self, layout: u32) {
-        self.layout = layout;
-    }
     fn compute_layout_bounds(&self) -> RectCoords {
         // TODO(xarkes): think of an actual layout algorithm and fix node relationships
         // in this immediate context we can only rely on previously added nodes
-
-        let prev = self.parent.borrow().last_child.clone();
+        let params = &self.params;
+        let parent = params.parent.as_ref().unwrap().borrow();
+        let prev = parent.last_child.clone();
         let prev_bounds = match prev {
             None => RectCoords {
                 x0: 0.,
@@ -227,48 +254,96 @@ impl IMUI {
             }
         }
 
-        let parent_width = self.parent.borrow().bounds.x1 - self.parent.borrow().bounds.x0;
-        let parent_height = self.parent.borrow().bounds.y1 - self.parent.borrow().bounds.y0;
-        match self.layout {
+        let parent_width = parent.bounds.x1 - parent.bounds.x0;
+        let parent_height = parent.bounds.y1 - parent.bounds.y0;
+        let mut rect = match params.layout {
             0 => {
                 // default
-                let w = uisize_as_px(&self.width, parent_width);
-                let h = uisize_as_px(&self.height, parent_height);
+                let w = uisize_as_px(&params.width, parent_width);
+                let h = uisize_as_px(&params.height, parent_height);
                 RectCoords::from_size(prev_bounds.x0, prev_bounds.y1, w, h)
             }
             1 => {
                 // centered
-                let w = uisize_as_px(&self.width, parent_width);
-                let h = uisize_as_px(&self.height, parent_height);
-                let x = self.parent.borrow().bounds.x0 + (parent_width - w) / 2.0;
-                let y = self.parent.borrow().bounds.y0 + prev_bounds.y1;
+                let w = uisize_as_px(&params.width, parent_width);
+                let h = uisize_as_px(&params.height, parent_height);
+                let x = parent.bounds.x0 + (parent_width - w) / 2.0;
+                let y = parent.bounds.y0 + prev_bounds.y1;
                 RectCoords::from_size(x, y, w, h)
             }
             _ => {
                 panic!("not handled");
             }
+        };
+
+        // xarkes: Adjust rectangle to be in bounds of screen
+        // TODO(xarkes): Replace this into asserts and make the layout algorithm solid if possible
+        // I guess the challenge here is that you cannot know before drawing the required space
+        // or whatever (since it's immediate mode)
+        if rect.x0 < 0. {
+            rect.x0 = 0.;
         }
+        if rect.x1 > self.size.0 {
+            rect.x1 = self.size.0;
+        }
+        if rect.y0 < 0. {
+            rect.y0 = 0.;
+        }
+        if rect.y1 > self.size.1 {
+            rect.y1 = self.size.1;
+        }
+        rect
+    }
+    pub fn params<'a>(&'a mut self) -> &'a mut UIWidgetParams {
+        self.params.reset();
+        &mut self.params
+    }
+    pub fn rparams(&mut self) -> &mut UIWidgetParams {
+        &mut self.params
     }
 
     /////////////////////////////////
     //// UI widgets
+    fn draw_bounds(&mut self, widget: &UIWidget) {
+        if self.debug {
+            // TODO(xarkes): Have them put in a specific batch? i.e. makes sure nothing draws on top?
+            self.drawer
+                .draw_empty_rect(&widget.bounds, color_rgb(255, 0, 0), 1.);
+            let txt = format!("{}px", widget.bounds.x1 - widget.bounds.x0);
+            let font_size = 12.;
+            let y = match widget.bounds.y0 < font_size {
+                true => widget.bounds.y0 + font_size,
+                false => widget.bounds.y0 - font_size,
+            };
+            self.drawer.draw_text(
+                widget.bounds.x0,
+                y,
+                12 as u32,
+                txt.as_str(),
+                txt.len(),
+                color_rgb(255, 0, 0),
+            )
+        }
+    }
     pub fn widget(&mut self) -> Rc<RefCell<UIWidget>> {
         let widget = self.create_ui_widget(0);
-        self.drawer.draw_rect(&widget.borrow().bounds, self.color);
+        self.drawer
+            .draw_rect(&widget.borrow().bounds, self.params.color);
+        self.draw_bounds(&widget.borrow());
         widget
     }
     pub fn button(&mut self, label: Option<&str>) -> Rc<RefCell<UIWidget>> {
         let button = self.create_ui_widget(UIWidgetFlag::MouseClickable as u64);
         {
             let uibox = button.borrow();
-            let mut bg_color = self.color;
+            let mut bg_color = self.params.color;
             let mut draw_off = 0.;
             if uibox.hover() {
                 bg_color = V4f32 {
-                    r: self.color.r * 1.1,
-                    g: self.color.g * 1.1,
-                    b: self.color.b * 1.1,
-                    a: self.color.a,
+                    r: self.params.color.r * 1.1,
+                    g: self.params.color.g * 1.1,
+                    b: self.params.color.b * 1.1,
+                    a: self.params.color.a,
                 };
             }
             if uibox.click() {
@@ -294,18 +369,24 @@ impl IMUI {
                 );
             }
         }
+        self.draw_bounds(&button.borrow());
         button
     }
     pub fn label(&mut self, label: &str) -> Rc<RefCell<UIWidget>> {
         let widget = self.create_ui_widget(0);
         self.drawer.draw_text(
-            widget.borrow().bounds.x0,
+            // TODO(xarkes): Text align center requires text api to precompute the text length
+            match self.params.text_align {
+                UITextAlign::Left => widget.borrow().bounds.x0,
+                UITextAlign::Center => (widget.borrow().bounds.x1 - widget.borrow().bounds.x0) / 2.,
+            },
             widget.borrow().bounds.y0,
             12,
             label,
             label.len(),
-            self.color,
+            self.params.color,
         );
+        self.draw_bounds(&widget.borrow());
         widget
     }
 
@@ -328,17 +409,16 @@ impl IMUI {
         self.consume_events();
     }
     pub fn resize(&mut self) -> Point {
-        let (w, h) = self.drawer.renderer.win.get_size();
-        self.drawer.renderer.resize(w, h);
+        self.size = self.drawer.renderer.win.get_size();
+        self.drawer.renderer.resize(self.size.0, self.size.1);
         let root = Rc::new(RefCell::new(UIWidget {
-            bounds: RectCoords::from_size(0., 0., w, h),
-            parent: None,
+            bounds: RectCoords::from_size(0., 0., self.size.0, self.size.1),
             last_child: None,
             flags: 0,
             events: 0,
         }));
         self.root = root;
-        (w, h)
+        self.size
     }
 }
 
@@ -348,5 +428,13 @@ fn point_in_rect(loc: &RectCoords, point: Option<Point>) -> bool {
         point.0 >= loc.x0 && point.0 <= loc.x1 && point.1 >= loc.y0 && point.1 <= loc.y1
     } else {
         false
+    }
+}
+pub fn color_rgb(r: u8, g: u8, b: u8) -> V4f32 {
+    V4f32 {
+        r: r as f32 / 256.,
+        g: g as f32 / 256.,
+        b: b as f32 / 256.,
+        a: 1.,
     }
 }

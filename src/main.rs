@@ -4,57 +4,66 @@ mod os;
 mod render;
 mod widgets;
 
-use imui::{IMUI, UISize};
+use imui::{IMUI, UISize, UITextAlign};
 
 fn main() {
     let mut ui = IMUI::new(1024, 768);
+    ui.debug();
     let mut count = 0;
     ui.eventloop(|ui| {
-        // top bar
-        // let param = LayoutParam::default();
-        let blue = ui.color_rgb(61, 78, 219);
-        {
-            ui.layout(0);
-            ui.parent(ui.root.clone());
-            ui.size(UISize::pct(1.), UISize::px(40.));
-            ui.widget();
+        let root = ui.root.clone();
+        let blue = imui::color_rgb(61, 78, 219);
+        let white = imui::color_rgb(255, 255, 255);
+        let black = imui::color_rgb(0, 0, 0);
 
-            // pattern a envisager
-            // param.reset().size(bidule);
-            // ui.widget(param);
+        // top bar
+        {
+            ui.params()
+                .layout(0)
+                .parent(Some(root.clone()))
+                .size(UISize::Percents(1.), UISize::Pixels(40.))
+                .color(blue);
+            ui.widget();
         }
 
         // main content
-        let content = {
-            ui.size(UISize::pct(1.), UISize::pct(0.8));
-            ui.color_rgb(230, 230, 230);
-            ui.widget()
-        };
+        ui.params()
+            .parent(Some(root.clone()))
+            .size(UISize::Percents(1.), UISize::Percents(1.))
+            .color(imui::color_rgb(230, 230, 230));
+        let content = ui.widget();
+
+        ui.params()
+            .size(UISize::Percents(1.), UISize::Pixels(14.))
+            .parent(Some(content.clone()))
+            .text_align(UITextAlign::Center)
+            .layout(1)
+            .color(black);
+        ui.label("Your vault is locked.");
+        ui.rparams()
+            .size(UISize::Percents(1.), UISize::Pixels(100.));
+        ui.label("someone@somewhere.com");
 
         // white box
-        let mid = {
-            ui.parent(content);
+        ui.params()
+            .parent(Some(content.clone()))
+            .size(UISize::Percents(0.), UISize::Pixels(100.));
+        ui.widget();
+        ui.params()
+            .parent(Some(content.clone()))
+            .size(UISize::Percents(0.5), UISize::Percents(0.5))
+            .color(white)
+            .layout(1);
+        let mid = ui.widget();
 
-            // stupid spacer
-            ui.size(UISize::pct(0.), UISize::px(100.));
-            ui.widget();
-
-            ui.size(UISize::pct(0.5), UISize::pct(0.5));
-            ui.color_rgb(255, 255, 255);
-            ui.layout(1);
-            ui.widget()
-        };
-
-        // button
-        {
-            ui.parent(mid);
-            ui.color(blue);
-            ui.size(UISize::pct(0.6), UISize::px(30.));
-            if ui.button(Some("Click here!")).borrow().clicked() {
-                count += 1;
-            }
-            ui.color_rgb(0, 0, 0);
-            ui.label(format!("You clicked... {} times!", count).as_str());
+        ui.params()
+            .parent(Some(mid.clone()))
+            .size(UISize::Percents(0.6), UISize::Pixels(30.))
+            .layout(1)
+            .color(blue);
+        if ui.button(Some("Click here!")).borrow().clicked() {
+            count += 1;
         }
+        ui.label(format!("Count: {}", count).as_str());
     });
 }

@@ -28,6 +28,50 @@ impl Drawer {
         Drawer { renderer }
     }
 
+    pub fn draw_empty_rect(&mut self, coords: &RectCoords, color: V4f32, line_width: f32) {
+        let mut batch = RenderBatch::new(4);
+        let bounds = [
+            RectCoords {
+                x0: coords.x0,
+                x1: coords.x1,
+                y0: coords.y0,
+                y1: coords.y0 + line_width,
+            },
+            RectCoords {
+                x0: coords.x0,
+                x1: coords.x1,
+                y0: coords.y1,
+                y1: coords.y1 - line_width,
+            },
+            RectCoords {
+                x0: coords.x0,
+                x1: coords.x0 + line_width,
+                y0: coords.y0,
+                y1: coords.y1,
+            },
+            RectCoords {
+                x0: coords.x1,
+                x1: coords.x1,
+                y0: coords.y0,
+                y1: coords.y1 - line_width,
+            },
+        ];
+        for rectbounds in bounds {
+            let rect = Rect2DInst {
+                dst: rectbounds,
+                src: RectCoords {
+                    x0: 0.0,
+                    y0: 0.0,
+                    x1: 0.0,
+                    y1: 0.0,
+                },
+                colors: [color, color, color, color],
+                extra: Extra::new(true),
+            };
+            batch.add_rect(rect);
+        }
+        self.renderer.add_batch(batch);
+    }
     pub fn draw_rect(&mut self, coords: &RectCoords, color: V4f32) {
         let mut batch = RenderBatch::new(1);
         let rect = Rect2DInst {
