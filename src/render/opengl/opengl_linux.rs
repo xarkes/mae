@@ -2,6 +2,8 @@ use x11::glx;
 use x11::glx::__GLXcontextRec;
 use x11::xlib::{self, XVisualInfo};
 
+type GLStringPtr = *const u8;
+
 pub struct GLContextHandle {
     ctx: *mut __GLXcontextRec,
     display: *mut x11::xlib::Display,

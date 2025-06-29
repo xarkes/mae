@@ -1,4 +1,4 @@
-use crate::render::{Extra, Rect2DInst, RectCoords, RenderBatch, Renderer, V4f32};
+use crate::render::{Extra, Rect2DInst, RectCoords, Renderer, V4f32};
 
 pub mod color {
     use crate::render::V4f32;

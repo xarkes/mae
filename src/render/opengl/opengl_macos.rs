@@ -56,6 +56,7 @@ enum NSOpenGLProfile {
 }
 
 type GLContextHandle = *mut AnyObject;
+type GLStringPtr = *const i8;
 
 pub fn ogl_os_create_context(win: &Window) -> *mut AnyObject {
     let class_name = CStr::from_bytes_with_nul(b"NSOpenGLPixelFormat\0").unwrap();

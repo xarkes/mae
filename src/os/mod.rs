@@ -1,17 +1,19 @@
 use crate::imui;
 
-// TODO(xarkes): maybe this would be cleaner, I don't care at the moment
-// #[cfg(target_os = "macos")]
-// mod window_macos;
-// #[cfg(target_os = "macos")]
-// use window_macos::*;
-
 #[cfg(target_os = "macos")]
 include!("macos.rs");
 #[cfg(target_os = "linux")]
 include!("linux.rs");
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+use windows::*;
 
-#[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
+#[cfg(all(
+    not(target_os = "macos"),
+    not(target_os = "linux"),
+    not(target_os = "windows")
+))]
 compile_error!("Support for target OS is not implemented!");
 
 #[derive(PartialEq, Eq)]
@@ -43,4 +45,18 @@ pub struct Window {
     size: (f32, f32),
     pub display: *mut x11::xlib::Display,
     pub win: u64,
+}
+
+#[cfg(target_os = "windows")]
+pub type Window = windows::Window;
+
+#[cfg(target_os = "windows")]
+pub fn timer_init() -> f64 {
+    #[cfg(target_os = "windows")]
+    windows::timer_init()
+}
+#[cfg(target_os = "windows")]
+pub fn timer_value() -> f64 {
+    #[cfg(target_os = "windows")]
+    windows::timer_value()
 }

@@ -2,8 +2,16 @@
 include!("opengl_macos.rs");
 #[cfg(target_os = "linux")]
 include!("opengl_linux.rs");
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+use windows::*;
 
-#[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
+#[cfg(all(
+    not(target_os = "macos"),
+    not(target_os = "linux"),
+    not(target_os = "windows")
+))]
 compile_error!("OpenGL not implemented for target OS!");
 
 extern crate gl;
@@ -27,11 +35,6 @@ static ATTRIBS_OUT: [(u32, &str); 1] = [(0, "final_color")];
 
 static RECT_VERTEX_SHADER: &'static str = include_str!("./vertex.glsl");
 static RECT_FRAGMENT_SHADER: &'static str = include_str!("./fragment.glsl");
-
-#[cfg(target_os = "macos")]
-type GLStringPtr = *const i8;
-#[cfg(target_os = "linux")]
-type GLStringPtr = *const u8;
 
 pub struct GLContext {
     width: f32,
@@ -329,6 +332,8 @@ fn link_program(vs: GLuint, fs: GLuint) -> GLuint {
 }
 
 #[cfg(not(target_os = "macos"))]
+use gl::types::GLsizei;
+#[cfg(not(target_os = "macos"))]
 extern "system" fn gl_debug_func(
     src: GLenum,
     _type: GLenum,
@@ -340,7 +345,7 @@ extern "system" fn gl_debug_func(
 ) {
     let decoded;
     unsafe {
-        decoded = std::ffi::CStr::from_ptr(message as *const u8)
+        decoded = std::ffi::CStr::from_ptr(message as GLStringPtr)
             .to_str()
             .expect("<decode error>");
     }
