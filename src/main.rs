@@ -60,6 +60,7 @@ fn main() {
             .size(UISize::Percents(0.6), UISize::Pixels(30.))
             .layout(1)
             .color(blue);
+        ui.line_edit(None);
         if ui.button(Some("Click here!")).borrow().clicked() {
             count += 1;
         }

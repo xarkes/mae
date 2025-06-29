@@ -334,23 +334,31 @@ impl IMUI {
         self.draw_bounds(&widget.borrow());
         widget
     }
+    pub fn line_edit(&mut self, hint: Option<&str>) -> Rc<RefCell<UIWidget>> {
+        // TODO(xarkes): finish drawing and all -> I hope it can be cool
+        let le = self.create_ui_widget(UIWidgetFlag::MouseClickable as u64);
+        let bg_color = color_rgb(200, 200, 200);
+        self.drawer.draw_rect(&le.borrow().bounds, bg_color);
+        self.draw_bounds(&le.borrow());
+        le
+    }
     pub fn button(&mut self, label: Option<&str>) -> Rc<RefCell<UIWidget>> {
         let button = self.create_ui_widget(UIWidgetFlag::MouseClickable as u64);
         {
             let uibox = button.borrow();
-            let mut bg_color = self.params.color;
-            let mut draw_off = 0.;
-            if uibox.hover() {
-                bg_color = V4f32 {
+            let bg_color = match uibox.hover() {
+                false => self.params.color,
+                true => V4f32 {
                     r: self.params.color.r * 1.1,
                     g: self.params.color.g * 1.1,
                     b: self.params.color.b * 1.1,
                     a: self.params.color.a,
-                };
-            }
-            if uibox.click() {
-                draw_off = 1.;
-            }
+                },
+            };
+            let draw_off = match uibox.click() {
+                false => 0.,
+                true => 1.,
+            };
             self.drawer.draw_rect(
                 &RectCoords {
                     x0: uibox.bounds.x0 + draw_off,
