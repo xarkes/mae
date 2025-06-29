@@ -159,7 +159,7 @@ impl IMUI {
         self.debug = true;
     }
     pub fn eventloop(&mut self, mut drawfunction: impl FnMut(&mut IMUI)) {
-        let display_fps = true;
+        let display_fps = self.debug;
         let freq = os::timer_init();
         let mut time = 0f64;
         let mut start = os::timer_value();
@@ -309,7 +309,7 @@ impl IMUI {
             // TODO(xarkes): Have them put in a specific batch? i.e. makes sure nothing draws on top?
             self.drawer
                 .draw_empty_rect(&widget.bounds, color_rgb(255, 0, 0), 1.);
-            let txt = format!("{}px", widget.bounds.x1 - widget.bounds.x0);
+            let txt = format!("{:.2}px", widget.bounds.x1 - widget.bounds.x0);
             let font_size = 12.;
             let y = match widget.bounds.y0 < font_size {
                 true => widget.bounds.y0 + font_size,

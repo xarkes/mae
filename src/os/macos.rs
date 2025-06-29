@@ -124,7 +124,7 @@ define_class!(
 
         #[unsafe(method(windowDidResize:))]
         fn did_resize(&self, _notification: &NSNotification) {
-            // TODO(xarkes): Should we send an event to notify the renderer of some update?
+            // TODO(xarkes): we may have to implement our own resize handling due to the way MacOS handles it :') - TL;DR the sendEvent() when a mouse click is in a resize area will run its own eventloop to wait until we release the mouse button. More details here:https://github.com/rust-windowing/winit/issues/219
         }
     }
 
@@ -191,37 +191,30 @@ impl Window {
                     true,
                 );
                 if let Some(ev) = event {
+                    // xarkes: translate the OS event into a more generic event
+                    let new_ev = match ev.r#type() {
+                        NSEventType::MouseMoved => Some(OSEvent {
+                            ty: OSEventType::MouseMove,
+                            key: OSKey::LeftMouseButton,
+                            pos: self.translate_loc(ev.locationInWindow()),
+                        }),
+                        NSEventType::LeftMouseDown => Some(OSEvent {
+                            ty: OSEventType::Press,
+                            key: OSKey::LeftMouseButton,
+                            pos: self.translate_loc(ev.locationInWindow()),
+                        }),
+                        NSEventType::LeftMouseUp => Some(OSEvent {
+                            ty: OSEventType::Release,
+                            key: OSKey::LeftMouseButton,
+                            pos: self.translate_loc(ev.locationInWindow()),
+                        }),
+                        _ => None,
+                    };
                     // xarkes: send the event to the NSApplication
                     app.sendEvent(&ev);
-                    // xarkes: translate the OS event into a more generic event
-                    let new_ev: OSEvent;
-                    match ev.r#type() {
-                        NSEventType::MouseMoved => {
-                            new_ev = OSEvent {
-                                ty: OSEventType::MouseMove,
-                                key: OSKey::LeftMouseButton,
-                                pos: self.translate_loc(ev.locationInWindow()),
-                            }
-                        }
-                        NSEventType::LeftMouseDown => {
-                            new_ev = OSEvent {
-                                ty: OSEventType::Press,
-                                key: OSKey::LeftMouseButton,
-                                pos: self.translate_loc(ev.locationInWindow()),
-                            }
-                        }
-                        NSEventType::LeftMouseUp => {
-                            new_ev = OSEvent {
-                                ty: OSEventType::Release,
-                                key: OSKey::LeftMouseButton,
-                                pos: self.translate_loc(ev.locationInWindow()),
-                            }
-                        }
-                        _ => {
-                            continue;
-                        }
+                    if let Some(new_ev) = new_ev {
+                        events.push(new_ev);
                     }
-                    events.push(new_ev);
                 } else {
                     break;
                 }
@@ -231,7 +224,6 @@ impl Window {
     }
 }
 
-// XXX(xarkes): Not window related, but lazy to add another file
 #[repr(C)]
 struct MachTimeBaseInfoT {
     denom: u32,

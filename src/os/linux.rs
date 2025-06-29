@@ -116,7 +116,6 @@ impl Window {
     }
 }
 
-// XXX(xarkes): Not window related, but lazy to add another file. Rename window_linux to os_linux?
 #[repr(C)]
 struct Timespec {
     tv_sec: u64,

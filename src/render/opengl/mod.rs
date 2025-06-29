@@ -224,12 +224,6 @@ impl GLContext {
             // Begin frame
             let mut width = self.width;
             let mut height = self.height;
-            if false {
-                // TODO: It seems it could be window size x2 on MacOS default settings.
-                // I think this could be related to the way it handles DPI or similar.
-                width *= 2.0;
-                height *= 2.0;
-            }
             gl::Clear(gl::COLOR_BUFFER_BIT);
             gl::Uniform2f(
                 gl::GetUniformLocation(
@@ -239,6 +233,13 @@ impl GLContext {
                 width,
                 height,
             );
+            // TODO(xarkes): We need a proper way of detecting dpi and scaling later
+            let highdpi = true;
+            if highdpi {
+                // TODO(xarkes): For now it works to only upgrade the viewport and keep the uniform scaling right in the shader, but is it okay in terms of resolution, will we have scaling artifacts, blurs, ..?
+                width *= 2.0;
+                height *= 2.0;
+            }
             gl::Viewport(0, 0, width as i32, height as i32);
             gl::UseProgram(self.program);
         }
