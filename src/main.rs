@@ -2,7 +2,6 @@ mod draw;
 mod imui;
 mod os;
 mod render;
-mod widgets;
 
 use imui::{IMUI, UISize, UITextAlign};
 

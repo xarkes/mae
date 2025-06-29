@@ -196,7 +196,7 @@ impl IMUI {
 
             // xarkes: render
             {
-                self.drawer.renderer.update();
+                self.drawer.renderer.render_frame();
             }
         }
     }
@@ -212,7 +212,7 @@ impl IMUI {
         };
 
         // xarkes: apply events flags
-        if point_in_rect(&bounds, self.mouse) && w.clickable() {
+        if point_in_rect(&bounds, self.mouse) {
             w.events |= UIWidgetEvent::MouseOver as u64;
         }
         if point_in_rect(&bounds, self.click) && w.clickable() {
@@ -306,9 +306,11 @@ impl IMUI {
     //// UI widgets
     fn draw_bounds(&mut self, widget: &UIWidget) {
         if self.debug {
-            // TODO(xarkes): Have them put in a specific batch? i.e. makes sure nothing draws on top?
-            self.drawer
-                .draw_empty_rect(&widget.bounds, color_rgb(255, 0, 0), 1.);
+            let color = match widget.hover() {
+                true => color_rgb(0, 255, 0),
+                false => color_rgb(255, 0, 0),
+            };
+            self.drawer.draw_empty_rect(&widget.bounds, color, 1., true);
             let txt = format!("{:.2}px", widget.bounds.x1 - widget.bounds.x0);
             let font_size = 12.;
             let y = match widget.bounds.y0 < font_size {

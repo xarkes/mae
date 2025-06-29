@@ -86,7 +86,7 @@ impl RenderBatch {
 pub struct Renderer {
     pub win: Window,
     pub ctx: Box<opengl::GLContext>,
-    pub font_cache: FontCache,
+    pub font_cache: Box<FontCache>,
     batches: Vec<RenderBatch>,
 }
 
@@ -110,13 +110,17 @@ impl Renderer {
                 panic!("Renderer not implemented!");
             }
         };
-        let font_cache = FontCache::new();
+        let font_cache = Box::new(FontCache::new());
         ctx.update_font_texture(font_cache.atlas());
+        // XXX(xarkes): This sucks, make it better
+        let mut batches = Vec::new();
+        batches.push(RenderBatch::new(100));
+        batches.push(RenderBatch::new(100));
         Renderer {
             win,
             ctx,
             font_cache,
-            batches: Vec::new(),
+            batches,
         }
     }
 
@@ -129,13 +133,23 @@ impl Renderer {
         self.ctx.resize(w, h);
     }
 
-    pub fn update(&mut self) {
+    pub fn render_frame(&mut self) {
         self.ctx.begin_frame();
         self.ctx.render(&self.batches);
         self.ctx.end_frame();
+
         self.batches.clear();
+        self.batches.push(RenderBatch::new(100));
+        self.batches.push(RenderBatch::new(100));
     }
 
+    // XXX(xarkes): rework this
+    pub fn current_batch(&mut self) -> &mut RenderBatch {
+        &mut self.batches[0]
+    }
+    pub fn debug_batch(&mut self) -> &mut RenderBatch {
+        &mut self.batches[1]
+    }
     pub fn add_batch(&mut self, batch: RenderBatch) {
         self.batches.push(batch);
     }

@@ -28,8 +28,17 @@ impl Drawer {
         Drawer { renderer }
     }
 
-    pub fn draw_empty_rect(&mut self, coords: &RectCoords, color: V4f32, line_width: f32) {
-        let mut batch = RenderBatch::new(4);
+    pub fn draw_empty_rect(
+        &mut self,
+        coords: &RectCoords,
+        color: V4f32,
+        line_width: f32,
+        debug: bool,
+    ) {
+        let batch = match debug {
+            false => self.renderer.current_batch(),
+            true => self.renderer.debug_batch(),
+        };
         let bounds = [
             RectCoords {
                 x0: coords.x0,
@@ -51,9 +60,9 @@ impl Drawer {
             },
             RectCoords {
                 x0: coords.x1,
-                x1: coords.x1,
+                x1: coords.x1 - line_width,
                 y0: coords.y0,
-                y1: coords.y1 - line_width,
+                y1: coords.y1,
             },
         ];
         for rectbounds in bounds {
@@ -70,10 +79,9 @@ impl Drawer {
             };
             batch.add_rect(rect);
         }
-        self.renderer.add_batch(batch);
     }
     pub fn draw_rect(&mut self, coords: &RectCoords, color: V4f32) {
-        let mut batch = RenderBatch::new(1);
+        let batch = self.renderer.current_batch();
         let rect = Rect2DInst {
             dst: *coords,
             src: RectCoords {
@@ -86,7 +94,6 @@ impl Drawer {
             extra: Extra::new(true),
         };
         batch.add_rect(rect);
-        self.renderer.add_batch(batch);
     }
 
     pub fn draw_text(
@@ -98,8 +105,6 @@ impl Drawer {
         length: usize,
         color: V4f32,
     ) {
-        let mut batch = RenderBatch::new(text.len());
-
         // xarkes: Generate glyph for each string character and update texture if needed
         // This is likely dumb, but that's it for now
         {
@@ -130,31 +135,32 @@ impl Drawer {
             if glyph.is_none() {
                 continue;
             }
-            let glyph = glyph.unwrap();
+            let glyph = *glyph.unwrap();
 
             // xarkes: push a rect instruction for each character
             let w = (glyph.width) as f32;
             let h = (glyph.height) as f32;
             let xpos = x + glyph.xoff;
             let ypos = y + glyph.yoff;
-            batch.add_rect(Rect2DInst {
-                dst: RectCoords {
-                    x0: xpos,
-                    y0: ypos,
-                    x1: xpos + w,
-                    y1: ypos + h,
-                },
-                src: RectCoords {
-                    x0: glyph.x0,
-                    y0: glyph.y0,
-                    x1: glyph.x1,
-                    y1: glyph.y1,
-                },
-                colors: [color, color, color, color],
-                extra: Extra::new(false),
-            });
+            {
+                self.renderer.current_batch().add_rect(Rect2DInst {
+                    dst: RectCoords {
+                        x0: xpos,
+                        y0: ypos,
+                        x1: xpos + w,
+                        y1: ypos + h,
+                    },
+                    src: RectCoords {
+                        x0: glyph.x0,
+                        y0: glyph.y0,
+                        x1: glyph.x1,
+                        y1: glyph.y1,
+                    },
+                    colors: [color, color, color, color],
+                    extra: Extra::new(false),
+                });
+            }
             x += glyph.advance;
         }
-        self.renderer.add_batch(batch);
     }
 }

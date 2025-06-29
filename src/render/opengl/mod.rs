@@ -169,7 +169,7 @@ impl GLContext {
                 height,
             );
             // TODO(xarkes): We need a proper way of detecting dpi and scaling later
-            let highdpi = true;
+            let highdpi = false;
             if highdpi {
                 // TODO(xarkes): For now it works to only upgrade the viewport and keep the uniform scaling right in the shader, but is it okay in terms of resolution, will we have scaling artifacts, blurs, ..?
                 width *= 2.0;
