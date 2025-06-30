@@ -5,7 +5,9 @@ use windows::{
 
 use super::OSEvent;
 
-pub struct Window {}
+pub struct Window {
+    pub handle: HWND
+}
 
 impl Window {
     pub fn new(width: u32, height: u32) -> Self {
@@ -44,7 +46,7 @@ impl Window {
             );
 
             SetWindowDisplayAffinity(win, WDA_MONITOR);
-            Window {}
+            Window {handle: win}
         }
     }
 
@@ -56,7 +58,6 @@ impl Window {
     pub fn get_events(&self) -> Vec<OSEvent> {
         let events = Vec::new();
 
-        // TODO
         let mut message = MSG::default();
         while unsafe { PeekMessageA(&mut message, HWND(0), 0, 0, PM_REMOVE).into() } {
             if message.message == WM_QUIT {
