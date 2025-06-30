@@ -96,6 +96,31 @@ impl Drawer {
         batch.add_rect(rect);
     }
 
+    pub fn get_text_size(&mut self, size: u32, text: &str, length: usize) -> (f32, f32) {
+        // TODO(xarkes): Usually we will call draw_text later on, so we can avoid useless heavy calls by caching what was done in this function
+        let mut should_update = false;
+        let mut width = 0.;
+        let mut height = 0;
+        for (i, c) in text.char_indices() {
+            if i >= length {
+                break;
+            }
+            if c == '\t' {
+                continue;
+            }
+            let (glyph, added) = self.renderer.font_cache.get(c);
+            should_update |= added;
+            if let Some(glyph) = glyph {
+                width += glyph.advance;
+                height = std::cmp::max(height, glyph.height);
+            }
+        }
+        if should_update {
+            self.renderer.update_font_texture();
+        }
+        (width, height as f32)
+    }
+
     pub fn draw_text(
         &mut self,
         x: f32,

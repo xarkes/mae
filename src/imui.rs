@@ -384,11 +384,14 @@ impl IMUI {
     }
     pub fn label(&mut self, label: &str) -> Rc<RefCell<UIWidget>> {
         let widget = self.create_ui_widget(0);
+        let label_width = self.drawer.get_text_size(12, label, label.len()).0;
         self.drawer.draw_text(
             // TODO(xarkes): Text align center requires text api to precompute the text length
             match self.params.text_align {
                 UITextAlign::Left => widget.borrow().bounds.x0,
-                UITextAlign::Center => (widget.borrow().bounds.x1 - widget.borrow().bounds.x0) / 2.,
+                UITextAlign::Center => {
+                    (widget.borrow().bounds.x1 - widget.borrow().bounds.x0) / 2. - label_width / 2.
+                }
             },
             widget.borrow().bounds.y0,
             12,
