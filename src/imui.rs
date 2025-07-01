@@ -35,6 +35,7 @@ pub enum UITextAlign {
     Center,
 }
 
+#[derive(Clone, Copy)]
 pub enum UISize {
     Pixels(f32),
     Percents(f32),
@@ -202,7 +203,6 @@ impl IMUI {
         self.debug = true;
     }
     pub fn eventloop(&mut self, mut drawfunction: impl FnMut(&mut IMUI)) {
-        let display_fps = self.debug;
         let freq = os::timer_init();
         let mut time = 0f64;
         let mut start = os::timer_value();
@@ -223,7 +223,7 @@ impl IMUI {
             self.draw_debug_pane();
 
             // xarkes: draw and update FPS counter
-            if display_fps {
+            if self.debug {
                 let fps = 1f64 / time * 1000f64;
                 let text = format!("{:.2}ms - {}fps", time, fps as u64);
                 let font_size = 12;
@@ -256,18 +256,33 @@ impl IMUI {
         // b) ..?
         self.params
             .position(UIPosition::Fixed(
-                UISize::Pixels(self.size.1 - box_width),
+                UISize::Pixels(self.size.0 - box_width),
                 UISize::Pixels(40.),
             ))
             .parent(self.root.clone())
-            .size(UISize::Pixels(200.), UISize::Pixels(50.))
+            .size(UISize::Pixels(box_width), UISize::Pixels(50.))
             .color(color_rgb(40, 60, 140));
         let uibox = self.widget();
         self.params.reset();
-        self.params.parent(uibox.clone());
+        self.params
+            .parent(uibox.clone())
+            .text_align(UITextAlign::Center);
         self.label("Debugging panel");
-        let osef = false;
-        self.checkbox(&osef);
+
+        // Debug checkbox
+        let mut box_checked = self.debug;
+        self.checkbox(&mut box_checked);
+        if box_checked != self.debug {
+            self.debug = box_checked;
+        }
+        // TODO(xarkes): This sucks, you have to define better alternatives
+        self.params
+            .position(UIPosition::Relative(
+                UISize::Pixels(25.),
+                UISize::Pixels(0.),
+            ))
+            .text_align(UITextAlign::Left);
+        self.label("Show debug hints");
     }
 
     fn create_ui_widget(&mut self, flags: u64) -> UIWidgetRef {
@@ -405,22 +420,49 @@ impl IMUI {
         self.draw_bounds(&widget.borrow());
         widget
     }
-    pub fn checkbox(&mut self, state: &bool) -> UIWidgetRef {
+    pub fn checkbox(&mut self, state: &mut bool) -> UIWidgetRef {
+        // XXX(xarkes): Just a hack for now, think better about this
+        let oldwidth = self.params.width;
+        let oldheight = self.params.height;
+        self.params.width = UISize::Pixels(20.);
+        self.params.height = UISize::Pixels(20.);
         let checkbox = self.create_ui_widget(UIWidgetFlag::MouseClickable as u64);
-        let box_bounds = RectCoords::from_size(
-            checkbox.borrow().bounds.x0,
-            checkbox.borrow().bounds.y0,
-            20.,
-            20.,
-        );
-        self.drawer.draw_rect(&box_bounds, color_rgb(255, 255, 255));
+        self.params.width = oldwidth;
+        self.params.height = oldheight;
+
         self.drawer
-            .draw_empty_rect(&box_bounds, color_rgb(0, 0, 0), 1., false);
+            .draw_rect(&checkbox.borrow().bounds, color_rgb(255, 255, 255));
+        self.drawer
+            .draw_empty_rect(&checkbox.borrow().bounds, color_rgb(0, 0, 0), 1., false);
         if checkbox.borrow().clicked() {
-            let box_bounds =
-                RectCoords::from_size(box_bounds.x0 + 2., box_bounds.y0 + 2., 16., 16.);
-            self.drawer.draw_rect(&box_bounds, color_rgb(255, 255, 255));
+            *state = !*state;
         }
+        if *state {
+            self.drawer.draw_rect(
+                &RectCoords::from_size(
+                    &checkbox.borrow().bounds.x0 + 2.,
+                    &checkbox.borrow().bounds.y0 + 2.,
+                    16.,
+                    16.,
+                ),
+                color_rgb(0, 0, 80),
+            );
+        }
+        if checkbox.borrow().hover() {
+            self.drawer.draw_empty_rect(
+                &RectCoords::from_size(
+                    &checkbox.borrow().bounds.x0 + 1.,
+                    &checkbox.borrow().bounds.y0 + 1.,
+                    18.,
+                    18.,
+                ),
+                // color_rgb(30, 30, 140),
+                color_rgb(255, 30, 140),
+                2.,
+                false,
+            );
+        }
+        self.draw_bounds(&checkbox.borrow());
         checkbox
     }
     pub fn line_edit(&mut self, text_buffer: &String, hint: Option<&str>) -> UIWidgetRef {
@@ -480,14 +522,27 @@ impl IMUI {
         button
     }
     pub fn label(&mut self, label: &str) -> UIWidgetRef {
+        let label_size = self.drawer.get_text_size(12, label, label.len());
+
+        // XXX(xarkes): Just a hack for now, think better about this
+        let oldwidth = self.params.width;
+        let oldheight = self.params.height;
+        self.params.width = UISize::Pixels(label_size.0);
+        self.params.height = UISize::Pixels(self.drawer.renderer.font_cache.line_height(12.));
         let widget = self.create_ui_widget(0);
-        let label_width = self.drawer.get_text_size(12, label, label.len()).0;
+        self.params.width = oldwidth;
+        self.params.height = oldheight;
+
+        let widget_copy = widget.clone();
+        let widget_ref = widget_copy.borrow();
+        let parent_ref = widget_ref.parent.as_ref().unwrap();
+        let parent_bounds = parent_ref.borrow().bounds;
+        // TODO(xarkes): I think the text alignment should be handled by create_ui_widget
         self.drawer.draw_text(
-            // TODO(xarkes): Text align center requires text api to precompute the text length
             match self.params.text_align {
                 UITextAlign::Left => widget.borrow().bounds.x0,
                 UITextAlign::Center => {
-                    (widget.borrow().bounds.x1 - widget.borrow().bounds.x0) / 2. - label_width / 2.
+                    widget.borrow().bounds.x0 + parent_bounds.width() / 2. - label_size.0 / 2.
                 }
             },
             widget.borrow().bounds.y0,

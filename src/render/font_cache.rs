@@ -176,8 +176,7 @@ impl FontCache {
         let font =
             include_bytes!("/usr/share/fonts/adwaita-mono-fonts/AdwaitaMono-Bold.ttf") as &[u8];
         #[cfg(target_os = "windows")]
-        let font =
-            include_bytes!("C:\\Windows\\Fonts\\lucon.ttf") as &[u8];
+        let font = include_bytes!("C:\\Windows\\Fonts\\lucon.ttf") as &[u8];
         // let font = include_bytes!("/tmp/fonts/Inconsolata-Regular.ttf") as &[u8];
         // let font =
         //     include_bytes!("/Users/user/Downloads/Noto_Color_Emoji/NotoColorEmoji-Regular.ttf")
@@ -239,5 +238,12 @@ impl FontCache {
     /// Retrieve the current atlas
     pub fn atlas(&self) -> &Atlas {
         &self.atlas
+    }
+
+    pub fn line_height(&self, font_size: f32) -> f32 {
+        self.font
+            .horizontal_line_metrics(font_size)
+            .expect("font size error")
+            .new_line_size
     }
 }
