@@ -16,56 +16,52 @@ fn main() {
         let white = imui::color_rgb(255, 255, 255);
         let black = imui::color_rgb(0, 0, 0);
 
-        // top bar
-        {
-            ui.params()
-                .layout(0)
-                .parent(Some(root.clone()))
-                .size(UISize::Percents(1.), UISize::Pixels(40.))
-                .color(blue);
-            ui.widget();
-        }
+        // // top bar
+        // {
+        //     ui.params()
+        //         .parent(Some(root.clone()))
+        //         .size(UISize::Percents(1.), UISize::Pixels(40.))
+        //         .color(blue);
+        //     ui.widget();
+        // }
 
-        // main content
-        ui.params()
-            .parent(Some(root.clone()))
-            .size(UISize::Percents(1.), UISize::Percents(1.))
-            .color(imui::color_rgb(230, 230, 230));
-        let content = ui.widget();
+        // // main content
+        // ui.params()
+        //     .parent(Some(root.clone()))
+        //     .size(UISize::Percents(1.), UISize::Percents(1.))
+        //     .color(imui::color_rgb(230, 230, 230));
+        // let content = ui.widget();
 
-        ui.params()
-            .size(UISize::Percents(1.), UISize::Pixels(14.))
-            .parent(Some(content.clone()))
-            .text_align(UITextAlign::Center)
-            .layout(1)
-            .color(black);
-        ui.label("Your vault is locked.");
-        ui.rparams()
-            .size(UISize::Percents(1.), UISize::Pixels(100.));
-        ui.label("someone@somewhere.com");
+        // ui.params()
+        //     .size(UISize::Percents(1.), UISize::Pixels(14.))
+        //     .parent(Some(content.clone()))
+        //     .text_align(UITextAlign::Center)
+        //     .color(black);
+        // ui.label("Your vault is locked.");
+        // ui.rparams()
+        //     .size(UISize::Percents(1.), UISize::Pixels(100.));
+        // ui.label("someone@somewhere.com");
 
-        // white box
-        ui.params()
-            .parent(Some(content.clone()))
-            .size(UISize::Percents(1.), UISize::Pixels(100.))
-            .color(imui::color::NONE);
-        ui.widget();
-        ui.params()
-            .parent(Some(content.clone()))
-            .size(UISize::Percents(0.5), UISize::Percents(0.5))
-            .color(white)
-            .layout(1);
-        let mid = ui.widget();
+        // // white box
+        // ui.params()
+        //     .parent(Some(content.clone()))
+        //     .size(UISize::Percents(1.), UISize::Pixels(100.))
+        //     .color(imui::color::NONE);
+        // ui.widget();
+        // ui.params()
+        //     .parent(Some(content.clone()))
+        //     .size(UISize::Percents(0.5), UISize::Percents(0.5))
+        //     .color(white);
+        // let mid = ui.widget();
 
-        ui.params()
-            .parent(Some(mid.clone()))
-            .size(UISize::Percents(0.6), UISize::Pixels(30.))
-            .layout(1)
-            .color(blue);
-        ui.line_edit(&buffer, None);
-        if ui.button(Some("Click here!")).borrow().clicked() {
-            count += 1;
-        }
-        ui.label(format!("Count: {}", count).as_str());
+        // ui.params()
+        //     .parent(Some(mid.clone()))
+        //     .size(UISize::Percents(0.6), UISize::Pixels(30.))
+        //     .color(blue);
+        // ui.line_edit(&buffer, None);
+        // if ui.button(Some("Click here!")).borrow().clicked() {
+        //     count += 1;
+        // }
+        // ui.label(format!("Count: {}", count).as_str());
     });
 }

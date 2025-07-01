@@ -27,6 +27,12 @@ impl RectCoords {
             y1: y + h,
         }
     }
+    pub fn width(&self) -> f32 {
+        self.x1 - self.x0
+    }
+    pub fn height(&self) -> f32 {
+        self.y1 - self.y0
+    }
 }
 
 #[repr(C)]

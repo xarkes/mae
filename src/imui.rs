@@ -39,10 +39,28 @@ pub enum UISize {
     Pixels(f32),
     Percents(f32),
 }
+impl UISize {
+    pub fn pixels(&self, parent_val: f32) -> f32 {
+        match self {
+            UISize::Pixels(val) => *val,
+            UISize::Percents(val) => val * parent_val,
+        }
+    }
+}
+
+pub enum UIPosition {
+    Relative(UISize, UISize),
+    Fixed(UISize, UISize),
+}
+
+pub enum UILayout {
+    Default,
+}
 
 pub struct UIWidget {
     bounds: RectCoords,
-    last_child: Option<UIWidgetRef>,
+    parent: Option<UIWidgetRef>,
+    children: Vec<UIWidgetRef>,
 
     // event flags
     flags: u64,
@@ -65,17 +83,20 @@ impl UIWidget {
 }
 
 pub struct UIWidgetParams {
-    parent: Option<UIWidgetRef>,
+    default_parent: UIWidgetRef,
+    parent: UIWidgetRef,
     width: UISize,
     height: UISize,
     color: V4f32,
-    layout: u32,
+    position: UIPosition,
+    layout: UILayout,
     text_align: UITextAlign,
 }
 impl UIWidgetParams {
-    pub fn default() -> Self {
+    pub fn new(parent: UIWidgetRef) -> Self {
         UIWidgetParams {
-            parent: None,
+            default_parent: parent.clone(),
+            parent,
             width: UISize::Percents(1.),
             height: UISize::Percents(1.),
             color: V4f32 {
@@ -84,7 +105,8 @@ impl UIWidgetParams {
                 b: 1.,
                 a: 1.,
             },
-            layout: 0,
+            position: UIPosition::Relative(UISize::Pixels(0.), UISize::Pixels(0.)),
+            layout: UILayout::Default,
             text_align: UITextAlign::Left,
         }
     }
@@ -101,7 +123,7 @@ impl UIWidgetParams {
         self.height = h;
         self
     }
-    pub fn parent(&mut self, parent: Option<UIWidgetRef>) -> &mut Self {
+    pub fn parent(&mut self, parent: UIWidgetRef) -> &mut Self {
         self.parent = parent;
         self
     }
@@ -109,7 +131,11 @@ impl UIWidgetParams {
         self.color = color;
         self
     }
-    pub fn layout(&mut self, layout: u32) -> &mut Self {
+    pub fn position(&mut self, pos: UIPosition) -> &mut Self {
+        self.position = pos;
+        self
+    }
+    pub fn layout(&mut self, layout: UILayout) -> &mut Self {
         self.layout = layout;
         self
     }
@@ -118,14 +144,28 @@ impl UIWidgetParams {
         self
     }
     pub fn reset(&mut self) {
-        // TODO(xarkes): This sucks
-        self.parent = UIWidgetParams::default().parent;
-        self.width = UIWidgetParams::default().width;
-        self.height = UIWidgetParams::default().height;
-        self.color = UIWidgetParams::default().color;
-        self.layout = UIWidgetParams::default().layout;
-        self.text_align = UIWidgetParams::default().text_align;
+        self.parent = self.default_parent.clone();
+        self.width = UISize::Percents(1.);
+        self.height = UISize::Percents(1.);
+        self.color = V4f32 {
+            r: 1.,
+            g: 1.,
+            b: 1.,
+            a: 1.,
+        };
+        self.position = UIPosition::Relative(UISize::Pixels(0.), UISize::Pixels(0.));
+        self.layout = UILayout::Default;
+        self.text_align = UITextAlign::Left;
     }
+}
+
+#[derive(Default)]
+struct IMUIEvents {
+    events: Vec<OSEvent>,
+    //// input events cache
+    mouse: Option<Point>,
+    click: Option<Point>,
+    release: Option<Point>,
 }
 
 pub struct IMUI {
@@ -133,13 +173,8 @@ pub struct IMUI {
     pub drawer: Drawer,
     debug: bool,
     size: (f32, f32),
-    events: Vec<OSEvent>,
     params: UIWidgetParams,
-
-    //// input events cache
-    mouse: Option<Point>,
-    click: Option<Point>,
-    release: Option<Point>,
+    event: IMUIEvents,
 }
 impl IMUI {
     pub fn new(w: u32, h: u32) -> Self {
@@ -149,7 +184,8 @@ impl IMUI {
 
         let root = Rc::new(RefCell::new(UIWidget {
             bounds: RectCoords::from_size(0., 0., 1024., 768.),
-            last_child: None,
+            parent: None,
+            children: Vec::new(),
             flags: 0,
             events: 0,
         }));
@@ -158,11 +194,8 @@ impl IMUI {
             drawer,
             debug: false,
             size: (0., 0.),
-            events: Vec::new(),
-            params: UIWidgetParams::default(),
-            mouse: None,
-            click: None,
-            release: None,
+            params: UIWidgetParams::new(root),
+            event: IMUIEvents::default(),
         }
     }
     pub fn debug(&mut self) {
@@ -186,6 +219,9 @@ impl IMUI {
                 drawfunction(self);
             }
 
+            #[cfg(debug_assertions)]
+            self.draw_debug_pane();
+
             // xarkes: draw and update FPS counter
             if display_fps {
                 let fps = 1f64 / time * 1000f64;
@@ -204,9 +240,6 @@ impl IMUI {
                 start = end;
             }
 
-            #[cfg(debug_assertions)]
-            self.draw_debug_pane();
-
             // xarkes: render
             {
                 self.drawer.renderer.render_frame();
@@ -216,16 +249,23 @@ impl IMUI {
 
     #[cfg(debug_assertions)]
     fn draw_debug_pane(&mut self) {
-        // TODO()
         self.params.reset();
+        let box_width = 200.;
+        // TODO(xarkes): Problem: How do we define the height...
+        // a) do a "pre-render" that will compute all layout
+        // b) ..?
         self.params
-            .layout(2)
-            .parent(Some(self.root.clone()))
-            .size(UISize::Pixels(200.), UISize::Pixels(40.))
+            .position(UIPosition::Fixed(
+                UISize::Pixels(self.size.1 - box_width),
+                UISize::Pixels(40.),
+            ))
+            .parent(self.root.clone())
+            .size(UISize::Pixels(200.), UISize::Pixels(50.))
             .color(color_rgb(40, 60, 140));
         let uibox = self.widget();
         self.params.reset();
-        self.params.layout(1).parent(Some(uibox.clone()));
+        self.params.parent(uibox.clone());
+        self.label("Debugging panel");
         let osef = false;
         self.checkbox(&osef);
     }
@@ -234,102 +274,73 @@ impl IMUI {
         // xarkes: apply layout properties and compute bounds
         let bounds = self.compute_layout_bounds();
         let mut w = UIWidget {
+            parent: Some(self.params.parent.clone()),
             bounds,
-            last_child: None,
+            children: Vec::new(),
             flags,
             events: 0,
         };
 
         // xarkes: apply events flags
-        if point_in_rect(&bounds, self.mouse) {
+        if point_in_rect(&w.bounds, self.event.mouse) {
             w.events |= UIWidgetEvent::MouseOver as u64;
         }
-        if point_in_rect(&bounds, self.click) && w.clickable() {
+        if point_in_rect(&w.bounds, self.event.click) && w.clickable() {
             w.events |= UIWidgetEvent::MouseClicked as u64;
-        } else if point_in_rect(&bounds, self.release) && w.clickable() {
+        } else if point_in_rect(&w.bounds, self.event.release) && w.clickable() {
             w.events |= UIWidgetEvent::MouseReleased as u64;
             // xarkes: consume the release so clicked() triggers only once
-            self.release = None;
+            self.event.release = None;
         }
 
-        // xarkes: update parent childs
+        // xarkes: update child and parent relationships
         let childref = Rc::new(RefCell::new(w));
-        self.params.parent.as_mut().unwrap().borrow_mut().last_child = Some(childref.clone());
+        self.params
+            .parent
+            .borrow_mut()
+            .children
+            .push(childref.clone());
         childref
     }
 
     /////////////////////////////////
     //// Styling and layout
     fn compute_layout_bounds(&self) -> RectCoords {
-        // TODO(xarkes): Stop procrastinating and rewrite this shit omg
-        // TODO(xarkes): think of an actual layout algorithm and fix node relationships
-        // in this immediate context we can only rely on previously added nodes
-        let params = &self.params;
-        let parent = params.parent.as_ref().unwrap().borrow();
-        let prev = parent.last_child.clone();
-        let prev_bounds = match prev {
-            None => RectCoords {
-                x0: 0.,
-                y0: 0.,
-                x1: 0.,
-                y1: 0.,
-            },
-            Some(prev) => prev.borrow().bounds,
-        };
-
-        fn uisize_as_px(uisize: &UISize, parent_val: f32) -> f32 {
-            match uisize {
-                UISize::Pixels(val) => *val,
-                UISize::Percents(val) => val * parent_val,
+        let parent = self.params.parent.borrow();
+        let previous = parent.children.last();
+        let (x, y) = match &self.params.position {
+            UIPosition::Relative(x, y) => {
+                let (mx, my) = match previous {
+                    Some(previous) => {
+                        let bounds = previous.borrow().bounds;
+                        // layout LTR_TopToBottom
+                        (
+                            x.pixels(parent.bounds.x0),
+                            y.pixels(parent.bounds.y0) + bounds.height(),
+                        )
+                    }
+                    None => (x.pixels(parent.bounds.x0), y.pixels(parent.bounds.y0)),
+                };
+                (parent.bounds.x0 + mx, parent.bounds.y0 + my)
             }
-        }
-
-        let parent_width = parent.bounds.x1 - parent.bounds.x0;
-        let parent_height = parent.bounds.y1 - parent.bounds.y0;
-        let mut rect = match params.layout {
-            0 => {
-                // default
-                let w = uisize_as_px(&params.width, parent_width);
-                let h = uisize_as_px(&params.height, parent_height);
-                RectCoords::from_size(prev_bounds.x0, prev_bounds.y1, w, h)
-            }
-            1 => {
-                // centered
-                let w = uisize_as_px(&params.width, parent_width);
-                let h = uisize_as_px(&params.height, parent_height);
-                let x = parent.bounds.x0 + (parent_width - w) / 2.0;
-                let y = parent.bounds.y0 + prev_bounds.y1;
-                RectCoords::from_size(x, y, w, h)
-            }
-            2 => {
-                // float
-                let w = uisize_as_px(&params.width, parent_width);
-                let h = uisize_as_px(&params.height, parent_height);
-                let x = parent.bounds.x1 - w;
-                let y = parent.bounds.y0;
-                RectCoords::from_size(x, y, w, h)
-            }
-            _ => {
-                panic!("not handled");
+            UIPosition::Fixed(x, y) => {
+                (x.pixels(parent.bounds.x0), y.pixels(parent.bounds.height()))
             }
         };
 
-        // xarkes: Adjust rectangle to be in bounds of screen
-        // TODO(xarkes): Replace this into asserts and make the layout algorithm solid if possible
-        // I guess the challenge here is that you cannot know before drawing the required space
-        // or whatever (since it's immediate mode)
-        if rect.x0 < 0. {
-            rect.x0 = 0.;
-        }
-        if rect.x1 > self.size.0 {
-            rect.x1 = self.size.0;
-        }
-        if rect.y0 < 0. {
-            rect.y0 = 0.;
-        }
-        if rect.y1 > self.size.1 {
-            rect.y1 = self.size.1;
-        }
+        let w = self.params.width.pixels(parent.bounds.width());
+        let h = self.params.height.pixels(parent.bounds.height());
+        let rect = RectCoords::from_size(x, y, w, h);
+
+        // xarkes: assert that bounds are properly computed
+        debug_assert!(rect.x0 >= 0.);
+        debug_assert!(rect.y0 >= 0.);
+        debug_assert!(rect.x0 <= self.size.0);
+        debug_assert!(rect.y0 <= self.size.1);
+        debug_assert!(rect.x1 >= 0.);
+        debug_assert!(rect.y1 >= 0.);
+        debug_assert!(rect.x1 <= self.size.0);
+        debug_assert!(rect.y1 <= self.size.1);
         rect
     }
     pub fn params<'a>(&'a mut self) -> &'a mut UIWidgetParams {
@@ -354,35 +365,37 @@ impl IMUI {
             };
             self.drawer
                 .draw_empty_rect(&widget.bounds, color, border_width, true);
-            let txt = format!("{:.2}px", widget.bounds.x1 - widget.bounds.x0);
-            let len = self.drawer.get_text_size(12, txt.as_str(), txt.len());
-            let font_size = 12.;
-            let y = match widget.bounds.y0 < font_size {
-                true => widget.bounds.y0 + font_size,
-                false => widget.bounds.y0 - font_size,
-            };
-            self.drawer.draw_text(
-                widget.bounds.x0 + (widget.bounds.x1 - widget.bounds.x0 - len.0) / 2.,
-                y,
-                12 as u32,
-                txt.as_str(),
-                txt.len(),
-                color,
-            );
-            let txt = format!("{:.2}px", widget.bounds.y1 - widget.bounds.y0);
-            let len = self.drawer.get_text_size(12, txt.as_str(), txt.len());
-            let x = match widget.bounds.x0 < len.0 {
-                true => widget.bounds.x0 + border_width,
-                false => widget.bounds.x0 - len.0,
-            };
-            self.drawer.draw_text(
-                x,
-                widget.bounds.y0 + (widget.bounds.y1 - widget.bounds.y0) / 2. - len.1,
-                12 as u32,
-                txt.as_str(),
-                txt.len(),
-                color,
-            );
+            if widget.hover() {
+                let txt = format!("{:.2}px", widget.bounds.x1 - widget.bounds.x0);
+                let len = self.drawer.get_text_size(12, txt.as_str(), txt.len());
+                let font_size = 12.;
+                let y = match widget.bounds.y0 < font_size {
+                    true => widget.bounds.y0 + font_size,
+                    false => widget.bounds.y0 - font_size,
+                };
+                self.drawer.draw_text(
+                    widget.bounds.x0 + (widget.bounds.x1 - widget.bounds.x0 - len.0) / 2.,
+                    y,
+                    12 as u32,
+                    txt.as_str(),
+                    txt.len(),
+                    color,
+                );
+                let txt = format!("{:.2}px", widget.bounds.y1 - widget.bounds.y0);
+                let len = self.drawer.get_text_size(12, txt.as_str(), txt.len());
+                let x = match widget.bounds.x0 < len.0 {
+                    true => widget.bounds.x0 + border_width,
+                    false => widget.bounds.x0 - len.0,
+                };
+                self.drawer.draw_text(
+                    x,
+                    widget.bounds.y0 + (widget.bounds.y1 - widget.bounds.y0) / 2. - len.1,
+                    12 as u32,
+                    txt.as_str(),
+                    txt.len(),
+                    color,
+                );
+            }
         }
     }
     pub fn widget(&mut self) -> UIWidgetRef {
@@ -397,15 +410,15 @@ impl IMUI {
         let box_bounds = RectCoords::from_size(
             checkbox.borrow().bounds.x0,
             checkbox.borrow().bounds.y0,
-            30.,
-            30.,
+            20.,
+            20.,
         );
         self.drawer.draw_rect(&box_bounds, color_rgb(255, 255, 255));
         self.drawer
             .draw_empty_rect(&box_bounds, color_rgb(0, 0, 0), 1., false);
         if checkbox.borrow().clicked() {
             let box_bounds =
-                RectCoords::from_size(box_bounds.x0 + 2., box_bounds.y0 + 2., 26., 26.);
+                RectCoords::from_size(box_bounds.x0 + 2., box_bounds.y0 + 2., 16., 16.);
             self.drawer.draw_rect(&box_bounds, color_rgb(255, 255, 255));
         }
         checkbox
@@ -490,27 +503,28 @@ impl IMUI {
     /////////////////////////////////
     //// Events related functions
     fn consume_events(&mut self) {
-        for ev in &self.events {
+        for ev in &self.event.events {
             if ev.ty == OSEventType::MouseMove {
-                self.mouse = Some(ev.pos);
+                self.event.mouse = Some(ev.pos);
             } else if ev.ty == OSEventType::Press && ev.key == OSKey::LeftMouseButton {
-                self.click = Some(ev.pos);
+                self.event.click = Some(ev.pos);
             } else if ev.ty == OSEventType::Release && ev.key == OSKey::LeftMouseButton {
-                self.click = None;
-                self.release = Some(ev.pos);
+                self.event.click = None;
+                self.event.release = Some(ev.pos);
             }
         }
     }
     pub fn get_events(&mut self) {
-        self.events = self.drawer.renderer.win.get_events();
+        self.event.events = self.drawer.renderer.win.get_events();
         self.consume_events();
     }
     pub fn resize(&mut self) -> Point {
         self.size = self.drawer.renderer.win.get_size();
         self.drawer.renderer.resize(self.size.0, self.size.1);
         let root = Rc::new(RefCell::new(UIWidget {
-            bounds: RectCoords::from_size(0., 0., self.size.0, self.size.1),
-            last_child: None,
+            bounds: RectCoords::from_size(0., 0., 1024., 768.),
+            parent: None,
+            children: Vec::new(),
             flags: 0,
             events: 0,
         }));
