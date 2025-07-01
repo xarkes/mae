@@ -6,7 +6,17 @@ use crate::{
     render::{self, RectCoords, V4f32},
 };
 
+pub mod color {
+    pub const NONE: crate::render::V4f32 = crate::render::V4f32 {
+        r: 0.,
+        g: 0.,
+        b: 0.,
+        a: 0.,
+    };
+}
+
 pub(crate) type Point = (f32, f32);
+type UIWidgetRef = Rc<RefCell<UIWidget>>;
 
 #[repr(u64)]
 enum UIWidgetFlag {
@@ -32,7 +42,7 @@ pub enum UISize {
 
 pub struct UIWidget {
     bounds: RectCoords,
-    last_child: Option<Rc<RefCell<UIWidget>>>,
+    last_child: Option<UIWidgetRef>,
 
     // event flags
     flags: u64,
@@ -55,7 +65,7 @@ impl UIWidget {
 }
 
 pub struct UIWidgetParams {
-    parent: Option<Rc<RefCell<UIWidget>>>,
+    parent: Option<UIWidgetRef>,
     width: UISize,
     height: UISize,
     color: V4f32,
@@ -91,7 +101,7 @@ impl UIWidgetParams {
         self.height = h;
         self
     }
-    pub fn parent(&mut self, parent: Option<Rc<RefCell<UIWidget>>>) -> &mut Self {
+    pub fn parent(&mut self, parent: Option<UIWidgetRef>) -> &mut Self {
         self.parent = parent;
         self
     }
@@ -119,7 +129,7 @@ impl UIWidgetParams {
 }
 
 pub struct IMUI {
-    pub root: Rc<RefCell<UIWidget>>,
+    pub root: UIWidgetRef,
     pub drawer: Drawer,
     debug: bool,
     size: (f32, f32),
@@ -194,6 +204,9 @@ impl IMUI {
                 start = end;
             }
 
+            #[cfg(debug_assertions)]
+            self.draw_debug_pane();
+
             // xarkes: render
             {
                 self.drawer.renderer.render_frame();
@@ -201,7 +214,23 @@ impl IMUI {
         }
     }
 
-    fn create_ui_widget(&mut self, flags: u64) -> Rc<RefCell<UIWidget>> {
+    #[cfg(debug_assertions)]
+    fn draw_debug_pane(&mut self) {
+        // TODO()
+        self.params.reset();
+        self.params
+            .layout(2)
+            .parent(Some(self.root.clone()))
+            .size(UISize::Pixels(200.), UISize::Pixels(40.))
+            .color(color_rgb(40, 60, 140));
+        let uibox = self.widget();
+        self.params.reset();
+        self.params.layout(1).parent(Some(uibox.clone()));
+        let osef = false;
+        self.checkbox(&osef);
+    }
+
+    fn create_ui_widget(&mut self, flags: u64) -> UIWidgetRef {
         // xarkes: apply layout properties and compute bounds
         let bounds = self.compute_layout_bounds();
         let mut w = UIWidget {
@@ -232,6 +261,7 @@ impl IMUI {
     /////////////////////////////////
     //// Styling and layout
     fn compute_layout_bounds(&self) -> RectCoords {
+        // TODO(xarkes): Stop procrastinating and rewrite this shit omg
         // TODO(xarkes): think of an actual layout algorithm and fix node relationships
         // in this immediate context we can only rely on previously added nodes
         let params = &self.params;
@@ -269,6 +299,14 @@ impl IMUI {
                 let h = uisize_as_px(&params.height, parent_height);
                 let x = parent.bounds.x0 + (parent_width - w) / 2.0;
                 let y = parent.bounds.y0 + prev_bounds.y1;
+                RectCoords::from_size(x, y, w, h)
+            }
+            2 => {
+                // float
+                let w = uisize_as_px(&params.width, parent_width);
+                let h = uisize_as_px(&params.height, parent_height);
+                let x = parent.bounds.x1 - w;
+                let y = parent.bounds.y0;
                 RectCoords::from_size(x, y, w, h)
             }
             _ => {
@@ -310,39 +348,85 @@ impl IMUI {
                 true => color_rgb(0, 255, 0),
                 false => color_rgb(255, 0, 0),
             };
-            self.drawer.draw_empty_rect(&widget.bounds, color, 1., true);
+            let border_width = match widget.hover() {
+                true => 3.,
+                false => 1.,
+            };
+            self.drawer
+                .draw_empty_rect(&widget.bounds, color, border_width, true);
             let txt = format!("{:.2}px", widget.bounds.x1 - widget.bounds.x0);
+            let len = self.drawer.get_text_size(12, txt.as_str(), txt.len());
             let font_size = 12.;
             let y = match widget.bounds.y0 < font_size {
                 true => widget.bounds.y0 + font_size,
                 false => widget.bounds.y0 - font_size,
             };
             self.drawer.draw_text(
-                widget.bounds.x0,
+                widget.bounds.x0 + (widget.bounds.x1 - widget.bounds.x0 - len.0) / 2.,
                 y,
                 12 as u32,
                 txt.as_str(),
                 txt.len(),
-                color_rgb(255, 0, 0),
-            )
+                color,
+            );
+            let txt = format!("{:.2}px", widget.bounds.y1 - widget.bounds.y0);
+            let len = self.drawer.get_text_size(12, txt.as_str(), txt.len());
+            let x = match widget.bounds.x0 < len.0 {
+                true => widget.bounds.x0 + border_width,
+                false => widget.bounds.x0 - len.0,
+            };
+            self.drawer.draw_text(
+                x,
+                widget.bounds.y0 + (widget.bounds.y1 - widget.bounds.y0) / 2. - len.1,
+                12 as u32,
+                txt.as_str(),
+                txt.len(),
+                color,
+            );
         }
     }
-    pub fn widget(&mut self) -> Rc<RefCell<UIWidget>> {
+    pub fn widget(&mut self) -> UIWidgetRef {
         let widget = self.create_ui_widget(0);
         self.drawer
             .draw_rect(&widget.borrow().bounds, self.params.color);
         self.draw_bounds(&widget.borrow());
         widget
     }
-    pub fn line_edit(&mut self, hint: Option<&str>) -> Rc<RefCell<UIWidget>> {
+    pub fn checkbox(&mut self, state: &bool) -> UIWidgetRef {
+        let checkbox = self.create_ui_widget(UIWidgetFlag::MouseClickable as u64);
+        let box_bounds = RectCoords::from_size(
+            checkbox.borrow().bounds.x0,
+            checkbox.borrow().bounds.y0,
+            30.,
+            30.,
+        );
+        self.drawer.draw_rect(&box_bounds, color_rgb(255, 255, 255));
+        self.drawer
+            .draw_empty_rect(&box_bounds, color_rgb(0, 0, 0), 1., false);
+        if checkbox.borrow().clicked() {
+            let box_bounds =
+                RectCoords::from_size(box_bounds.x0 + 2., box_bounds.y0 + 2., 26., 26.);
+            self.drawer.draw_rect(&box_bounds, color_rgb(255, 255, 255));
+        }
+        checkbox
+    }
+    pub fn line_edit(&mut self, text_buffer: &String, hint: Option<&str>) -> UIWidgetRef {
         // TODO(xarkes): finish drawing and all -> I hope it can be cool
         let le = self.create_ui_widget(UIWidgetFlag::MouseClickable as u64);
         let bg_color = color_rgb(200, 200, 200);
         self.drawer.draw_rect(&le.borrow().bounds, bg_color);
+        self.drawer.draw_text(
+            le.borrow().bounds.x0,
+            le.borrow().bounds.y0,
+            12,
+            text_buffer.as_str(),
+            text_buffer.len(),
+            color_rgb(0, 0, 0),
+        );
         self.draw_bounds(&le.borrow());
         le
     }
-    pub fn button(&mut self, label: Option<&str>) -> Rc<RefCell<UIWidget>> {
+    pub fn button(&mut self, label: Option<&str>) -> UIWidgetRef {
         let button = self.create_ui_widget(UIWidgetFlag::MouseClickable as u64);
         {
             let uibox = button.borrow();
@@ -382,7 +466,7 @@ impl IMUI {
         self.draw_bounds(&button.borrow());
         button
     }
-    pub fn label(&mut self, label: &str) -> Rc<RefCell<UIWidget>> {
+    pub fn label(&mut self, label: &str) -> UIWidgetRef {
         let widget = self.create_ui_widget(0);
         let label_width = self.drawer.get_text_size(12, label, label.len()).0;
         self.drawer.draw_text(

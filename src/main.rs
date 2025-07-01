@@ -9,6 +9,7 @@ fn main() {
     let mut ui = IMUI::new(1024, 768);
     ui.debug();
     let mut count = 0;
+    let mut buffer = String::from("Bonjour");
     ui.eventloop(|ui| {
         let root = ui.root.clone();
         let blue = imui::color_rgb(61, 78, 219);
@@ -46,7 +47,8 @@ fn main() {
         // white box
         ui.params()
             .parent(Some(content.clone()))
-            .size(UISize::Percents(0.), UISize::Pixels(100.));
+            .size(UISize::Percents(1.), UISize::Pixels(100.))
+            .color(imui::color::NONE);
         ui.widget();
         ui.params()
             .parent(Some(content.clone()))
@@ -60,7 +62,7 @@ fn main() {
             .size(UISize::Percents(0.6), UISize::Pixels(30.))
             .layout(1)
             .color(blue);
-        ui.line_edit(None);
+        ui.line_edit(&buffer, None);
         if ui.button(Some("Click here!")).borrow().clicked() {
             count += 1;
         }
