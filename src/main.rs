@@ -3,65 +3,154 @@ mod imui;
 mod os;
 mod render;
 
-use imui::{IMUI, UISize, UITextAlign};
+use render::V4f32;
+
+use imui::IMUI;
+use notify::{RecursiveMode, Watcher, event::DataChange};
+use std::{
+    fs,
+    path::Path,
+    sync::{Arc, Mutex},
+};
+
+struct Style {
+    text_color: &'static str,
+}
+const DEFAULT_STYLE: Style = Style { text_color: "#fff" };
+
+type Color = V4f32;
+impl Color {
+    pub fn from_text(text: &str) -> Self {
+        if text.len() < 4 {
+            Color {
+                r: 1.,
+                g: 1.,
+                b: 1.,
+                a: 1.,
+            }
+        } else if text.len() == 4 && text.as_bytes()[0] == b'#' {
+            let bytes = text.as_bytes();
+            let mut vals: [f32; 3] = [0., 0., 0.];
+            for i in 0..3 {
+                let b = bytes[1 + i];
+                let mut val = 0;
+                if b >= b'0' && b <= b'9' {
+                    val = b - b'0';
+                } else if b >= b'a' && b <= b'f' {
+                    val = b - b'a' + 10;
+                } else if b >= b'A' && b <= b'F' {
+                    val = b - b'A' + 10;
+                }
+                vals[i] = val as f32 / 16.;
+            }
+            Color {
+                r: vals[0],
+                g: vals[1],
+                b: vals[2],
+                a: 1.,
+            }
+        } else {
+            Color {
+                r: 1.,
+                g: 1.,
+                b: 1.,
+                a: 1.,
+            }
+        }
+    }
+}
+
+enum XMLTag {
+    Label((String, Color)),
+}
+
+struct UIFile {
+    filename: String,
+    tags: Vec<XMLTag>,
+}
+
+impl UIFile {
+    pub fn new(filename: &str) -> Self {
+        UIFile {
+            filename: String::from(filename),
+            tags: Vec::new(),
+        }
+    }
+    pub fn parse(&mut self) {
+        self.tags.clear();
+        let data = fs::read_to_string(&self.filename).expect("Cannot read file");
+        match roxmltree::Document::parse(&data) {
+            Ok(doc) => {
+                for node in doc.descendants() {
+                    if !node.is_element() {
+                        continue;
+                    }
+                    if node.has_tag_name("label") {
+                        if let Some(text) = node.text() {
+                            self.tags.push(XMLTag::Label((
+                                String::from(text),
+                                Color::from_text(
+                                    node.attribute("color").unwrap_or(DEFAULT_STYLE.text_color),
+                                ),
+                            )));
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                println!("Error: {}", e);
+            }
+        };
+    }
+    pub fn to_imui(&self, ui: &mut IMUI) {
+        let root = ui.root.clone();
+        ui.params().parent(root);
+
+        for tag in &self.tags {
+            match tag {
+                XMLTag::Label((label, color)) => {
+                    ui.rparams().color(*color);
+                    ui.label(&label);
+                }
+            }
+        }
+    }
+}
 
 fn main() {
+    // xarkes: parse file
+    let filename = "./ui.xml";
+    let uifile = Arc::new(Mutex::new(UIFile::new(filename)));
+    uifile.lock().unwrap().parse();
+    let cloned_uifile = Arc::clone(&uifile);
+
+    // xarkes: activate io watcher
+    let mut watcher =
+        notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+            match res {
+                Ok(event) => {
+                    // println!("event: {:?}", event);
+                    match event.kind {
+                        notify::EventKind::Modify(notify::event::ModifyKind::Data(
+                            DataChange::Content,
+                        )) => {
+                            cloned_uifile.lock().unwrap().parse();
+                        }
+                        _ => {}
+                    }
+                }
+                Err(e) => println!("watch error: {:?}", e),
+            }
+        })
+        .expect("Could not create watcher");
+    watcher
+        .watch(Path::new(filename), RecursiveMode::Recursive)
+        .expect("Watch failed");
+
+    // xarkes: initialize UI and print as parsing happens
     let mut ui = IMUI::new(1024, 768);
-    ui.debug();
-    let mut count = 0;
-    let mut buffer = String::from("Bonjour");
     ui.eventloop(|ui| {
-        let root = ui.root.clone();
-        let blue = imui::color_rgb(61, 78, 219);
-        let white = imui::color_rgb(255, 255, 255);
-        let black = imui::color_rgb(0, 0, 0);
-
-        // // top bar
-        // {
-        //     ui.params()
-        //         .parent(Some(root.clone()))
-        //         .size(UISize::Percents(1.), UISize::Pixels(40.))
-        //         .color(blue);
-        //     ui.widget();
-        // }
-
-        // // main content
-        // ui.params()
-        //     .parent(Some(root.clone()))
-        //     .size(UISize::Percents(1.), UISize::Percents(1.))
-        //     .color(imui::color_rgb(230, 230, 230));
-        // let content = ui.widget();
-
-        // ui.params()
-        //     .size(UISize::Percents(1.), UISize::Pixels(14.))
-        //     .parent(Some(content.clone()))
-        //     .text_align(UITextAlign::Center)
-        //     .color(black);
-        // ui.label("Your vault is locked.");
-        // ui.rparams()
-        //     .size(UISize::Percents(1.), UISize::Pixels(100.));
-        // ui.label("someone@somewhere.com");
-
-        // // white box
-        // ui.params()
-        //     .parent(Some(content.clone()))
-        //     .size(UISize::Percents(1.), UISize::Pixels(100.))
-        //     .color(imui::color::NONE);
-        // ui.widget();
-        // ui.params()
-        //     .parent(Some(content.clone()))
-        //     .size(UISize::Percents(0.5), UISize::Percents(0.5))
-        //     .color(white);
-        // let mid = ui.widget();
-
-        // ui.params()
-        //     .parent(Some(mid.clone()))
-        //     .size(UISize::Percents(0.6), UISize::Pixels(30.))
-        //     .color(blue);
-        // ui.line_edit(&buffer, None);
-        // if ui.button(Some("Click here!")).borrow().clicked() {
-        //     count += 1;
-        // }
-        // ui.label(format!("Count: {}", count).as_str());
+        ui.params();
+        uifile.lock().unwrap().to_imui(ui);
     });
 }

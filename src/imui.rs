@@ -169,10 +169,28 @@ struct IMUIEvents {
     release: Option<Point>,
 }
 
+#[cfg(debug_assertions)]
+struct IMUIDebug {
+    fps: bool,
+    hints: bool,
+    target: Option<UIWidgetRef>,
+}
+#[cfg(debug_assertions)]
+impl IMUIDebug {
+    pub fn default() -> Self {
+        IMUIDebug {
+            fps: true,
+            hints: false,
+            target: None,
+        }
+    }
+}
+
 pub struct IMUI {
     pub root: UIWidgetRef,
     pub drawer: Drawer,
-    debug: bool,
+    #[cfg(debug_assertions)]
+    debug: IMUIDebug,
     size: (f32, f32),
     params: UIWidgetParams,
     event: IMUIEvents,
@@ -193,14 +211,12 @@ impl IMUI {
         IMUI {
             root: root.clone(),
             drawer,
-            debug: false,
+            #[cfg(debug_assertions)]
+            debug: IMUIDebug::default(),
             size: (0., 0.),
             params: UIWidgetParams::new(root),
             event: IMUIEvents::default(),
         }
-    }
-    pub fn debug(&mut self) {
-        self.debug = true;
     }
     pub fn eventloop(&mut self, mut drawfunction: impl FnMut(&mut IMUI)) {
         let freq = os::timer_init();
@@ -219,11 +235,12 @@ impl IMUI {
                 drawfunction(self);
             }
 
-            #[cfg(debug_assertions)]
-            self.draw_debug_pane();
+            // #[cfg(debug_assertions)]
+            // self.draw_debug_pane();
 
             // xarkes: draw and update FPS counter
-            if self.debug {
+            #[cfg(debug_assertions)]
+            if self.debug.fps {
                 let fps = 1f64 / time * 1000f64;
                 let text = format!("{:.2}ms - {}fps", time, fps as u64);
                 let font_size = 12;
@@ -260,7 +277,7 @@ impl IMUI {
                 UISize::Pixels(40.),
             ))
             .parent(self.root.clone())
-            .size(UISize::Pixels(box_width), UISize::Pixels(50.))
+            .size(UISize::Pixels(box_width), UISize::Pixels(80.))
             .color(color_rgb(40, 60, 140));
         let uibox = self.widget();
         self.params.reset();
@@ -270,19 +287,52 @@ impl IMUI {
         self.label("Debugging panel");
 
         // Debug checkbox
-        let mut box_checked = self.debug;
+        let mut box_checked = self.debug.hints;
         self.checkbox(&mut box_checked);
-        if box_checked != self.debug {
-            self.debug = box_checked;
+        if box_checked != self.debug.hints {
+            self.debug.hints = box_checked;
         }
         // TODO(xarkes): This sucks, you have to define better alternatives
         self.params
             .position(UIPosition::Relative(
                 UISize::Pixels(25.),
-                UISize::Pixels(0.),
+                UISize::Pixels(-20.),
             ))
             .text_align(UITextAlign::Left);
         self.label("Show debug hints");
+
+        // FPS checkbox
+        let mut box_checked = self.debug.fps;
+        self.params
+            .parent(uibox.clone())
+            .position(UIPosition::Relative(UISize::Pixels(0.), UISize::Pixels(0.)));
+        self.checkbox(&mut box_checked);
+        if box_checked != self.debug.fps {
+            self.debug.fps = box_checked;
+        }
+        // TODO(xarkes): This sucks, you have to define better alternatives
+        self.params
+            .position(UIPosition::Relative(
+                UISize::Pixels(25.),
+                UISize::Pixels(-20.),
+            ))
+            .text_align(UITextAlign::Left);
+        self.label("Show FPS");
+
+        // Target element
+        self.params
+            .position(UIPosition::Relative(UISize::Pixels(0.), UISize::Pixels(4.)));
+        if let Some(target) = &self.debug.target {
+            // XXX(xarkes): this is stupid, you wont get any update on the element as it is recreated each time...
+            let txt = format!(
+                "{}x{}",
+                target.borrow().bounds.width(),
+                target.borrow().bounds.height()
+            );
+            self.label(txt.as_str());
+        } else {
+            self.label("<No element selected>");
+        }
     }
 
     fn create_ui_widget(&mut self, flags: u64) -> UIWidgetRef {
@@ -315,6 +365,11 @@ impl IMUI {
             .borrow_mut()
             .children
             .push(childref.clone());
+
+        #[cfg(debug_assertions)]
+        if point_in_rect(&childref.borrow().bounds, self.event.click) {
+            self.debug.target = Some(childref.clone());
+        }
         childref
     }
 
@@ -327,11 +382,11 @@ impl IMUI {
             UIPosition::Relative(x, y) => {
                 let (mx, my) = match previous {
                     Some(previous) => {
-                        let bounds = previous.borrow().bounds;
+                        let prev_child_bounds = previous.borrow().bounds;
                         // layout LTR_TopToBottom
                         (
                             x.pixels(parent.bounds.x0),
-                            y.pixels(parent.bounds.y0) + bounds.height(),
+                            y.pixels(parent.bounds.y0) + (prev_child_bounds.y1 - parent.bounds.y0),
                         )
                     }
                     None => (x.pixels(parent.bounds.x0), y.pixels(parent.bounds.y0)),
@@ -369,7 +424,12 @@ impl IMUI {
     /////////////////////////////////
     //// UI widgets
     fn draw_bounds(&mut self, widget: &UIWidget) {
-        if self.debug {
+        #[cfg(debug_assertions)]
+        self.draw_bounds_internal(widget);
+    }
+    #[cfg(debug_assertions)]
+    fn draw_bounds_internal(&mut self, widget: &UIWidget) {
+        if self.debug.hints {
             let color = match widget.hover() {
                 true => color_rgb(0, 255, 0),
                 false => color_rgb(255, 0, 0),
