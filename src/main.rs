@@ -13,10 +13,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-struct Style {
-    text_color: &'static str,
-}
-const DEFAULT_STYLE: Style = Style { text_color: "#fff" };
+use mae_macros::rac_code;
 
 type Color = V4f32;
 impl Color {
@@ -60,8 +57,25 @@ impl Color {
     }
 }
 
+// TODO: Maybe use a DeriveMacro that will apply to each enum value
+// and allow you to use it at runtime as well as string with e.g. implementing two different functions
+// basically the macro should take the enum values name and params and maybe we can have some logic to just put it all together
+// like ui.<val_name>(...)
+// using a properly designed drawing API
 enum XMLTag {
-    Label((String, Color)),
+    Label((String, Option<Color>)),
+}
+impl XMLTag {
+    pub fn to_imui(&self, ui: &mut IMUI) {
+        match self {
+            XMLTag::Label((label, color)) => {
+                rac_code!(
+                    // ui.rparams().color(*color);
+                    ui.label(&label);
+                );
+            }
+        }
+    }
 }
 
 struct UIFile {
@@ -89,9 +103,10 @@ impl UIFile {
                         if let Some(text) = node.text() {
                             self.tags.push(XMLTag::Label((
                                 String::from(text),
-                                Color::from_text(
-                                    node.attribute("color").unwrap_or(DEFAULT_STYLE.text_color),
-                                ),
+                                match node.attribute("color") {
+                                    Some(color) => Some(Color::from_text(color)),
+                                    None => None,
+                                },
                             )));
                         }
                     }
@@ -107,13 +122,24 @@ impl UIFile {
         ui.params().parent(root);
 
         for tag in &self.tags {
-            match tag {
-                XMLTag::Label((label, color)) => {
-                    ui.rparams().color(*color);
-                    ui.label(&label);
-                }
-            }
+            tag.to_imui(ui);
         }
+    }
+
+    pub fn to_rust(&self) -> String {
+        let start = "
+        fn main() {
+          let mut ui = IMUI::new(1024, 768);
+          ui.eventloop(|ui| {
+            let root = ui.root.clone();
+            ui.params().parent(root);\n";
+        let mut content = String::from(start);
+        for tag in &self.tags {
+            rac_code!(tag);
+            // content.push_str("// TODO: Can you push the actual code? :)\n");
+        }
+        content.push_str("} }");
+        content
     }
 }
 
@@ -122,6 +148,7 @@ fn main() {
     let filename = "./ui.xml";
     let uifile = Arc::new(Mutex::new(UIFile::new(filename)));
     uifile.lock().unwrap().parse();
+    println!("{}", uifile.lock().unwrap().to_rust());
     let cloned_uifile = Arc::clone(&uifile);
 
     // xarkes: activate io watcher

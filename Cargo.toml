@@ -9,6 +9,7 @@ opengl = ["dep:gl"]
 
 [dependencies]
 fontdue = "0.9.3"
+mae-macros = { version = "*", path = "./mae_macros" }
 gl = { version = "*", optional = true }
 notify = { version = "8.0.0", optional = false }
 roxmltree = { version = "0.20.0", optional = false }
