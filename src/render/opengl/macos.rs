@@ -1,4 +1,5 @@
 extern crate objc2;
+use crate::os::Window;
 use objc2::msg_send;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject};
@@ -55,10 +56,10 @@ enum NSOpenGLProfile {
     // Version4_1Core = 0x4100,
 }
 
-type GLContextHandle = *mut AnyObject;
-type GLStringPtr = *const i8;
+pub type GLContextHandle = *mut AnyObject;
+pub type GLStringPtr = *const i8;
 
-pub fn ogl_os_create_context(win: &Window) -> *mut AnyObject {
+pub fn ogl_create_context(win: &Window) -> *mut AnyObject {
     let class_name = CStr::from_bytes_with_nul(b"NSOpenGLPixelFormat\0").unwrap();
     let class_name_ctx = CStr::from_bytes_with_nul(b"NSOpenGLContext\0").unwrap();
     let attrs = [
@@ -132,19 +133,19 @@ pub fn ogl_os_create_context(win: &Window) -> *mut AnyObject {
     ctx
 }
 
-pub fn ogl_os_resize(ctx: &GLContextHandle) {
+pub fn ogl_resize(ctx: &GLContextHandle) {
     unsafe {
         let _: () = msg_send![*ctx, update];
     }
 }
 
-pub fn ogl_os_swapbuffers(ctx: &GLContextHandle) {
+pub fn ogl_swapbuffers(ctx: &GLContextHandle) {
     unsafe {
         let _: () = msg_send![*ctx, flushBuffer];
     }
 }
 
-pub fn ogl_os_toggle_vsync(ctx: &GLContextHandle, enable: bool) {
+pub fn ogl_toggle_vsync(ctx: &GLContextHandle, enable: bool) {
     unsafe {
         let val = match enable {
             true => 1i32,

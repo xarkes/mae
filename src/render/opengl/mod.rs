@@ -1,7 +1,13 @@
 #[cfg(target_os = "macos")]
-include!("opengl_macos.rs");
+mod macos;
+#[cfg(target_os = "macos")]
+use macos as os_impl;
+
 #[cfg(target_os = "linux")]
-include!("opengl_linux.rs");
+mod linux;
+#[cfg(target_os = "linux")]
+use linux as os_impl;
+
 #[cfg(target_os = "windows")]
 mod windows;
 #[cfg(target_os = "windows")]
@@ -39,7 +45,7 @@ static RECT_FRAGMENT_SHADER: &'static str = include_str!("./fragment.glsl");
 pub struct GLContext {
     width: f32,
     height: f32,
-    ctx: GLContextHandle,
+    ctx: os_impl::GLContextHandle,
     program: u32,
     vao: u32,
     vbo: u32,
@@ -48,12 +54,12 @@ pub struct GLContext {
 
 impl GLContext {
     pub fn new(win: &Window) -> Self {
-        let ctx = ogl_os_create_context(win);
+        let ctx = os_impl::ogl_create_context(win);
         // SAFETY(xarkes): The pointers come back from OpenGL library.
         // We also assume the GetString function was resolved earlier, if not it will simply result in a null deref.
         unsafe {
-            let vendor = gl::GetString(gl::VENDOR) as GLStringPtr;
-            let version = gl::GetString(gl::VERSION) as GLStringPtr;
+            let vendor = gl::GetString(gl::VENDOR) as os_impl::GLStringPtr;
+            let version = gl::GetString(gl::VERSION) as os_impl::GLStringPtr;
             if vendor != std::ptr::null_mut() && version != std::ptr::null_mut() {
                 let vendorstr = std::ffi::CStr::from_ptr(vendor).to_str().expect("<err>");
                 let versionstr = std::ffi::CStr::from_ptr(version).to_str().expect("<err>");
@@ -95,7 +101,7 @@ impl GLContext {
             gl::ClearColor(0., 0., 0., 0.);
 
             // xarkes: disable VSync
-            ogl_os_toggle_vsync(&ctx, false);
+            os_impl::ogl_toggle_vsync(&ctx, false);
         }
 
         // xarkes: enable gl debugging
@@ -154,7 +160,7 @@ impl GLContext {
     pub fn resize(&mut self, w: f32, h: f32) {
         self.width = w;
         self.height = h;
-        ogl_os_resize(&self.ctx);
+        os_impl::ogl_resize(&self.ctx);
     }
 
     pub fn begin_frame(&mut self) {
@@ -184,7 +190,7 @@ impl GLContext {
     }
 
     pub fn end_frame(&mut self) {
-        ogl_os_swapbuffers(&self.ctx);
+        os_impl::ogl_swapbuffers(&self.ctx);
     }
 
     pub fn render(&self, batches: &Vec<super::RenderBatch>) {

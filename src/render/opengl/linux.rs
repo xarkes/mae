@@ -1,3 +1,4 @@
+use crate::os::Window;
 use x11::glx;
 use x11::glx::__GLXcontextRec;
 use x11::xlib::{self, XVisualInfo};
@@ -18,7 +19,7 @@ type GLXCreateContextAttribsARBProc = unsafe extern "C" fn(
     _0: *const i32,
 ) -> *mut __GLXcontextRec;
 
-pub fn ogl_os_create_context(win: &Window) -> GLContextHandle {
+pub fn ogl_create_context(win: &Window) -> GLContextHandle {
     let glcontext;
     unsafe {
         // XXX: We may be using Wayland
@@ -138,15 +139,15 @@ pub fn ogl_os_create_context(win: &Window) -> GLContextHandle {
     }
 }
 
-pub fn ogl_os_resize(ctx: &GLContextHandle) {
+pub fn ogl_resize(ctx: &GLContextHandle) {
     // TODO
 }
-pub fn ogl_os_swapbuffers(ctx: &GLContextHandle) {
+pub fn ogl_swapbuffers(ctx: &GLContextHandle) {
     unsafe {
         glx::glXSwapBuffers(ctx.display, ctx.win);
     }
 }
-pub fn ogl_os_toggle_vsync(ctx: &GLContextHandle, enable: bool) {
+pub fn ogl_toggle_vsync(ctx: &GLContextHandle, enable: bool) {
     let val = match enable {
         true => 1i32,
         false => 0i32,

@@ -11,7 +11,7 @@ use windows::core::PCSTR;
 pub type GLStringPtr = *const i8;
 pub struct GLContextHandle {}
 
-pub fn ogl_os_create_context(win: &Window) -> GLContextHandle {
+pub fn ogl_create_context(win: &Window) -> GLContextHandle {
     let device_context = unsafe { GetDC(win.handle) };
     let mut pixel_format_desc = PIXELFORMATDESCRIPTOR::default();
     pixel_format_desc.nSize = std::mem::size_of::<PIXELFORMATDESCRIPTOR>() as u16;
@@ -47,12 +47,12 @@ pub fn ogl_os_create_context(win: &Window) -> GLContextHandle {
     GLContextHandle {}
 }
 
-pub fn ogl_os_resize(ctx: &GLContextHandle) {
+pub fn ogl_resize(ctx: &GLContextHandle) {
     // TODO(xarkes)
 }
-pub fn ogl_os_swapbuffers(ctx: &GLContextHandle) {
+pub fn ogl_swapbuffers(ctx: &GLContextHandle) {
     // TODO(xarkes)
 }
-pub fn ogl_os_toggle_vsync(ctx: &GLContextHandle, enable: bool) {
+pub fn ogl_toggle_vsync(ctx: &GLContextHandle, enable: bool) {
     // TODO(xarkes)
 }
