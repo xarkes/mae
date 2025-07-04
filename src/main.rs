@@ -13,8 +13,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use mae_macros::rac_code;
-
 type Color = V4f32;
 impl Color {
     pub fn from_text(text: &str) -> Self {
@@ -62,21 +60,24 @@ impl Color {
 // basically the macro should take the enum values name and params and maybe we can have some logic to just put it all together
 // like ui.<val_name>(...)
 // using a properly designed drawing API
+use mae_macros::RACEnum;
+#[derive(RACEnum)]
 enum XMLTag {
-    Label((String, Option<Color>)),
+    // Label(String, Option<Color>),
+    Label(String),
+    // Button(String),
+    Widget,
 }
-impl XMLTag {
-    pub fn to_imui(&self, ui: &mut IMUI) {
-        match self {
-            XMLTag::Label((label, color)) => {
-                rac_code!(
-                    // ui.rparams().color(*color);
-                    ui.label(&label);
-                );
-            }
-        }
-    }
-}
+// impl XMLTag {
+//     pub fn to_imui(&self, ui: &mut IMUI) {
+//         match self {
+//             XMLTag::Label((label, color)) => {
+//                 // ui.rparams().color(*color);
+//                 ui.label(&label);
+//             }
+//         }
+//     }
+// }
 
 struct UIFile {
     filename: String,
@@ -101,13 +102,13 @@ impl UIFile {
                     }
                     if node.has_tag_name("label") {
                         if let Some(text) = node.text() {
-                            self.tags.push(XMLTag::Label((
+                            self.tags.push(XMLTag::Label(
                                 String::from(text),
-                                match node.attribute("color") {
-                                    Some(color) => Some(Color::from_text(color)),
-                                    None => None,
-                                },
-                            )));
+                                // match node.attribute("color") {
+                                //     Some(color) => Some(Color::from_text(color)),
+                                //     None => None,
+                                // },
+                            ));
                         }
                     }
                 }
@@ -135,8 +136,7 @@ impl UIFile {
             ui.params().parent(root);\n";
         let mut content = String::from(start);
         for tag in &self.tags {
-            rac_code!(tag);
-            // content.push_str("// TODO: Can you push the actual code? :)\n");
+            content.push_str(tag.to_rust().as_str());
         }
         content.push_str("} }");
         content
