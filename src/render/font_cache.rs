@@ -177,6 +177,8 @@ impl FontCache {
             include_bytes!("/usr/share/fonts/adwaita-mono-fonts/AdwaitaMono-Bold.ttf") as &[u8];
         #[cfg(target_os = "windows")]
         let font = include_bytes!("C:\\Windows\\Fonts\\lucon.ttf") as &[u8];
+        #[cfg(target_os = "android")]
+        let font = include_bytes!("/System/Library/Fonts/Menlo.ttc") as &[u8];
         // let font = include_bytes!("/tmp/fonts/Inconsolata-Regular.ttf") as &[u8];
         // let font =
         //     include_bytes!("/Users/user/Downloads/Noto_Color_Emoji/NotoColorEmoji-Regular.ttf")

@@ -1,7 +1,8 @@
 #[cfg(all(
     not(target_os = "macos"),
     not(target_os = "linux"),
-    not(target_os = "windows")
+    not(target_os = "windows"),
+    not(target_os = "android")
 ))]
 compile_error!("Support for targeted OS is not implemented!",);
 
@@ -18,7 +19,22 @@ use linux as os_impl;
 #[cfg(target_os = "windows")]
 mod windows;
 #[cfg(target_os = "windows")]
-use windows::*;
+use windows as os_impl;
+
+#[cfg(target_os = "android")]
+mod android {
+    use crate::os::Window;
+    pub struct GLContextHandle {}
+    pub type GLStringPtr = *const u8;
+    pub fn ogl_create_context(win: &Window) -> GLContextHandle {
+        GLContextHandle {}
+    }
+    pub fn ogl_toggle_vsync(ctx: &GLContextHandle, toggle: bool) {}
+    pub fn ogl_resize(ctx: &GLContextHandle) {}
+    pub fn ogl_swapbuffers(ctx: &GLContextHandle) {}
+}
+#[cfg(target_os = "android")]
+use android as os_impl;
 
 extern crate gl;
 use crate::os::Window;
@@ -351,7 +367,7 @@ extern "system" fn gl_debug_func(
 ) {
     let decoded;
     unsafe {
-        decoded = std::ffi::CStr::from_ptr(message as GLStringPtr)
+        decoded = std::ffi::CStr::from_ptr(message as os_impl::GLStringPtr)
             .to_str()
             .expect("<decode error>");
     }
