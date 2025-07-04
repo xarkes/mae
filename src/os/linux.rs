@@ -1,5 +1,13 @@
 extern crate x11;
 
+use super::{OSEvent, OSEventType, OSKey};
+
+pub struct Window {
+    size: (f32, f32),
+    pub display: *mut x11::xlib::Display,
+    pub win: u64,
+}
+
 fn create_window(width: u32, height: u32) -> (*mut x11::xlib::Display, u64) {
     unsafe {
         let display = x11::xlib::XOpenDisplay(std::ptr::null());

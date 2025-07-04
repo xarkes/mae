@@ -183,6 +183,7 @@ impl UIFile {
                 println!("Error: {}", e);
             }
         };
+        println!("{}", self.to_rust());
     }
     pub fn to_imui(&self, ui: &mut IMUI) {
         let root = ui.root.clone();
@@ -222,6 +223,7 @@ fn main() {
 // - TODO: Important: continuer de jouer avec le bundler d'interface pour voir les limitations sur le systeme auto generatif, etc. je pense en particulier au code dynamique
 // - TODO: Important: etudier la question de la compilation a la volee pour le code dynamique
 // - TODO: Problematiques d'API sur la facon dont on passe les arguments pour le style de chaque widget (comment etre simple d'utilisation et performant ?)
+// - TODO: Portage mobile Android iOS, quels challenges ?
 //
 //
 // Objectif final: Pouvoir faire une demo de creation d'interface belle (style par defaut) et rapide (systeme de layout simple + systeme auto generatif)
@@ -231,7 +233,6 @@ fn main() {
     let filename = "./ui.xml";
     let uifile = Arc::new(Mutex::new(UIFile::new(filename)));
     uifile.lock().unwrap().parse();
-    println!("{}", uifile.lock().unwrap().to_rust());
     let cloned_uifile = Arc::clone(&uifile);
 
     // xarkes: activate io watcher
@@ -245,7 +246,6 @@ fn main() {
                             DataChange::Content,
                         )) => {
                             cloned_uifile.lock().unwrap().parse();
-                            println!("{}", cloned_uifile.lock().unwrap().to_rust());
                         }
                         _ => {}
                     }

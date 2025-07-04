@@ -1,13 +1,19 @@
 use crate::imui;
 
 #[cfg(target_os = "macos")]
-include!("macos.rs");
+mod macos;
+#[cfg(target_os = "macos")]
+use macos as os_impl;
+
 #[cfg(target_os = "linux")]
-include!("linux.rs");
+mod linux;
+#[cfg(target_os = "linux")]
+use linux as os_impl;
+
 #[cfg(target_os = "windows")]
 mod windows;
 #[cfg(target_os = "windows")]
-use windows::*;
+use windows as os_impl;
 
 #[cfg(all(
     not(target_os = "macos"),
@@ -32,31 +38,11 @@ pub struct OSEvent {
     pub pos: imui::Point,
 }
 
-// TODO: declare trait to retrieve view/display depending on OS
-// + declare window base as base structure for shared properties (homemade inheritance)
-#[cfg(target_os = "macos")]
-pub struct Window {
-    // app: Retained<NSApplication>,
-    // window: OnceCell<Retained<NSWindow>>,
-    pub view: OnceCell<Retained<NSView>>,
-}
-#[cfg(target_os = "linux")]
-pub struct Window {
-    size: (f32, f32),
-    pub display: *mut x11::xlib::Display,
-    pub win: u64,
-}
+pub type Window = os_impl::Window;
 
-#[cfg(target_os = "windows")]
-pub type Window = windows::Window;
-
-#[cfg(target_os = "windows")]
 pub fn timer_init() -> f64 {
-    #[cfg(target_os = "windows")]
-    windows::timer_init()
+    os_impl::timer_init()
 }
-#[cfg(target_os = "windows")]
-pub fn timer_value() -> f64 {
-    #[cfg(target_os = "windows")]
-    windows::timer_value()
+pub fn timer_value() -> u64 {
+    os_impl::timer_value()
 }

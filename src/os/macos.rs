@@ -1,6 +1,6 @@
 extern crate objc2;
 
-//#![deny(unsafe_op_in_unsafe_fn)]
+use super::{OSEvent, OSEventType, OSKey};
 use std::cell::OnceCell;
 
 use objc2::{
@@ -23,6 +23,10 @@ struct AppDelegateIvars {
     view: OnceCell<Retained<NSView>>,
     width: u32,
     height: u32,
+}
+
+pub struct Window {
+    pub view: OnceCell<Retained<NSView>>,
 }
 
 define_class!(
