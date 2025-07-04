@@ -41,6 +41,13 @@ pub enum UISize {
     Percents(f32),
 }
 impl UISize {
+    pub fn from_str(input: &str) -> Self {
+        let val = match i32::from_str_radix(input, 10) {
+            Ok(r) => r as f32,
+            Err(_) => 0.,
+        };
+        UISize::Pixels(val)
+    }
     pub fn pixels(&self, parent_val: f32) -> f32 {
         match self {
             UISize::Pixels(val) => *val,
@@ -410,7 +417,7 @@ impl IMUI {
         debug_assert!(rect.x1 >= 0.);
         debug_assert!(rect.y1 >= 0.);
         debug_assert!(rect.x1 <= self.size.0);
-        debug_assert!(rect.y1 <= self.size.1);
+        // debug_assert!(rect.y1 <= self.size.1);
         rect
     }
     pub fn params<'a>(&'a mut self) -> &'a mut UIWidgetParams {

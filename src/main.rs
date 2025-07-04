@@ -5,7 +5,7 @@ mod render;
 
 use render::V4f32;
 
-use imui::IMUI;
+use imui::{IMUI, UISize};
 use notify::{RecursiveMode, Watcher, event::DataChange};
 use std::{
     fs,
@@ -60,24 +60,67 @@ impl Color {
 // basically the macro should take the enum values name and params and maybe we can have some logic to just put it all together
 // like ui.<val_name>(...)
 // using a properly designed drawing API
-use mae_macros::RACEnum;
-#[derive(RACEnum)]
+// use mae_macros::RACEnum;
+// #[derive(RACEnum)]
 enum XMLTag {
-    // Label(String, Option<Color>),
-    Label(String),
-    // Button(String),
+    Label(String, Option<Color>),
+    Button(
+        Option<String>,
+        Option<Color>,
+        Option<UISize>,
+        Option<UISize>,
+    ),
     Widget,
 }
-// impl XMLTag {
-//     pub fn to_imui(&self, ui: &mut IMUI) {
-//         match self {
-//             XMLTag::Label((label, color)) => {
-//                 // ui.rparams().color(*color);
-//                 ui.label(&label);
-//             }
-//         }
-//     }
-// }
+impl XMLTag {
+    pub fn to_imui(&self, ui: &mut IMUI) {
+        match self {
+            XMLTag::Label(label, color) => {
+                if let Some(color) = color {
+                    ui.rparams().color(*color);
+                }
+                ui.label(&label);
+            }
+            XMLTag::Button(label, color, width, height) => {
+                if let Some(color) = color {
+                    ui.rparams().color(*color);
+                }
+                let label = match label {
+                    Some(txt) => Some(txt.as_str()),
+                    None => None,
+                };
+                if let Some(width) = width {
+                    ui.rparams().width(*width);
+                }
+                if let Some(height) = height {
+                    ui.rparams().height(*height);
+                }
+                ui.button(label);
+            }
+            _ => {}
+        }
+    }
+
+    pub fn to_rust(&self) -> String {
+        let mut output = String::new();
+        match self {
+            XMLTag::Label(label, color) => {
+                if let Some(color) = color {
+                    output.push_str(
+                        format!(
+                            "ui.rparams().color(V4f32{{r: {}, g: {}, b: {}, a: {}}});\n",
+                            color.r, color.g, color.b, color.a
+                        )
+                        .as_str(),
+                    );
+                }
+                output.push_str(format!("ui.label(\"{}\");\n", label.as_str()).as_str());
+            }
+            _ => {}
+        }
+        output
+    }
+}
 
 struct UIFile {
     filename: String,
@@ -104,12 +147,35 @@ impl UIFile {
                         if let Some(text) = node.text() {
                             self.tags.push(XMLTag::Label(
                                 String::from(text),
-                                // match node.attribute("color") {
-                                //     Some(color) => Some(Color::from_text(color)),
-                                //     None => None,
-                                // },
+                                match node.attribute("color") {
+                                    Some(color) => Some(Color::from_text(color)),
+                                    None => None,
+                                },
                             ));
                         }
+                    }
+                    if node.has_tag_name("button") {
+                        if let Some(text) = node.text() {}
+                        let width = match node.attribute("width") {
+                            Some(width) => Some(UISize::from_str(width)),
+                            None => None,
+                        };
+                        let height = match node.attribute("height") {
+                            Some(height) => Some(UISize::from_str(height)),
+                            None => None,
+                        };
+                        self.tags.push(XMLTag::Button(
+                            match node.text() {
+                                Some(text) => Some(String::from(text)),
+                                None => None,
+                            },
+                            match node.attribute("color") {
+                                Some(color) => Some(Color::from_text(color)),
+                                None => None,
+                            },
+                            width,
+                            height,
+                        ));
                     }
                 }
             }
@@ -129,19 +195,36 @@ impl UIFile {
 
     pub fn to_rust(&self) -> String {
         let start = "
-        fn main() {
-          let mut ui = IMUI::new(1024, 768);
-          ui.eventloop(|ui| {
-            let root = ui.root.clone();
-            ui.params().parent(root);\n";
+use imui::IMUI;
+use imui::render::V4f32;
+
+fn main() {
+  let mut ui = IMUI::new(1024, 768);
+  ui.eventloop(|ui| {
+    let root = ui.root.clone();
+    ui.params().parent(root);\n\n";
         let mut content = String::from(start);
         for tag in &self.tags {
             content.push_str(tag.to_rust().as_str());
         }
-        content.push_str("} }");
+        content.push_str("\n  }\n}");
         content
     }
 }
+
+//
+// Petit recap 04/07
+// - faire un systeme auto generatif, le code utilise au runtime doit savoir se representer en string a l'identique
+//   -> le but est d'avoir aucune divergence entre le code du runtime dev, et le code genere et bundle pour l'utilisateur final
+// - etudier et implementer un systeme de layout utile et performant
+//   -> idealement il devrait permettre d'obtenir un resultat d'une seule et unique facon, sinon j'imagine que ca signifie que tu as de la redondance ? (peut-etre pas e.g. margin et padding peuvent permettre d'obtenir le meme resultat dans certains cas, mais sont-ils redondants ? pas vraiment)
+// - implementer un style par defaut
+// - TODO: Important: continuer de jouer avec le bundler d'interface pour voir les limitations sur le systeme auto generatif, etc. je pense en particulier au code dynamique
+// - TODO: Important: etudier la question de la compilation a la volee pour le code dynamique
+// - TODO: Problematiques d'API sur la facon dont on passe les arguments pour le style de chaque widget (comment etre simple d'utilisation et performant ?)
+//
+//
+// Objectif final: Pouvoir faire une demo de creation d'interface belle (style par defaut) et rapide (systeme de layout simple + systeme auto generatif)
 
 fn main() {
     // xarkes: parse file
@@ -162,6 +245,7 @@ fn main() {
                             DataChange::Content,
                         )) => {
                             cloned_uifile.lock().unwrap().parse();
+                            println!("{}", cloned_uifile.lock().unwrap().to_rust());
                         }
                         _ => {}
                     }
