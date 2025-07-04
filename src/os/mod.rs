@@ -1,5 +1,12 @@
 use crate::imui;
 
+#[cfg(all(
+    not(target_os = "macos"),
+    not(target_os = "linux"),
+    not(target_os = "windows")
+))]
+compile_error!("Support for targeted OS is not implemented!",);
+
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
@@ -14,13 +21,6 @@ use linux as os_impl;
 mod windows;
 #[cfg(target_os = "windows")]
 use windows as os_impl;
-
-#[cfg(all(
-    not(target_os = "macos"),
-    not(target_os = "linux"),
-    not(target_os = "windows")
-))]
-compile_error!("Support for target OS is not implemented!");
 
 #[derive(PartialEq, Eq)]
 pub enum OSEventType {
