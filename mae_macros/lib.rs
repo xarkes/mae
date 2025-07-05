@@ -1,9 +1,8 @@
 extern crate proc_macro;
-use std::str::FromStr;
 
 use proc_macro::TokenStream;
 use quote::{ToTokens, quote};
-use syn::{DeriveInput, ExprMacro, Ident, parse_macro_input, parse_quote};
+use syn::{DeriveInput, Ident, parse_macro_input};
 
 /// Runtime And Compilation Enum
 /// Attempt to generate functions that will call the UI API during runtime and generate

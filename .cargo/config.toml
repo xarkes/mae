@@ -1,0 +1,4 @@
+# /Users/user/Library/Android/sdk/ndk/27.0.12077973/build/tools/make_standalone_toolchain.py --api 26 --arch arm64 --install-dir NDK/arm64
+[target.aarch64-linux-android]
+#ar = "./NDK/arm64/bin/aarch64-linux-android-ar"
+linker = "./NDK/arm64/bin/aarch64-linux-android-clang"

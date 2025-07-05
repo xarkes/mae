@@ -3,6 +3,9 @@ name = "mae"
 version = "0.0.1"
 edition = "2024"
 
+[lib]
+crate-type = ["dylib"]
+
 [features]
 default = ["opengl"]
 opengl = ["dep:gl"]
@@ -31,6 +34,9 @@ features = [
   "Win32_System_LibraryLoader",
   "Win32_UI_WindowsAndMessaging"
 ]
+
+[target.'cfg(target_os="android")'.dependencies]
+jni = { version = "0.21.1", default-features = false }
 
 [profile.release]
 lto = true
