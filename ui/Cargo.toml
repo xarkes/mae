@@ -3,9 +3,6 @@ name = "mae"
 version = "0.0.1"
 edition = "2024"
 
-[lib]
-crate-type = ["dylib"]
-
 [features]
 default = ["opengl"]
 opengl = ["dep:gl"]
@@ -37,8 +34,8 @@ features = [
 
 [target.'cfg(target_os="android")'.dependencies]
 log = "0.4"
-android_logger = "0.13"
-android-activity = { version = "*", features = ["native-activity"] }
+android_logger = "0.15"
+android-activity = { version = "0.6", features = ["game-activity"] }
 
 
 [profile.release]
