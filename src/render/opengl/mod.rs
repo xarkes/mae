@@ -27,6 +27,7 @@ mod android {
     pub struct GLContextHandle {}
     pub type GLStringPtr = *const u8;
     pub fn ogl_create_context(win: &Window) -> GLContextHandle {
+        // gl::load_with(|symbol| std::ptr::null());
         GLContextHandle {}
     }
     pub fn ogl_toggle_vsync(ctx: &GLContextHandle, toggle: bool) {}
