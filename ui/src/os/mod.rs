@@ -14,29 +14,7 @@ compile_error!("Support for targeted OS is not implemented!",);
 mod os_impl;
 
 #[cfg(target_os = "android")]
-mod android {
-    use super::OSEvent;
-    use android_activity::AndroidApp;
-    pub struct Window {
-        pub app: AndroidApp,
-    }
-    impl Window {
-        pub fn get_size(&self) -> (f32, f32) {
-            // XXX: We have to find a better API to support Android
-            (0., 0.)
-        }
-        pub fn get_events(&self) -> Vec<OSEvent> {
-            let events = Vec::new();
-            events
-        }
-    }
-    pub fn timer_init() -> f64 {
-        1.
-    }
-    pub fn timer_value() -> u64 {
-        1
-    }
-}
+mod android;
 #[cfg(target_os = "android")]
 use android as os_impl;
 
