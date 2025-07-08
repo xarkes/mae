@@ -1,7 +1,4 @@
-#version 300 es
-
 // input variables: Vertex to Phragment
-precision mediump float;
 in vec2 v2p_tex_coords;
 in vec4 v2p_tint;
 in float v2p_omit_texture;

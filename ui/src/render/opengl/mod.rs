@@ -267,6 +267,13 @@ fn compile_shader(src: &str, ty: GLenum) -> GLuint {
         if shader == 0 {
             panic!("Shader allocation failed!");
         }
+
+        // xarkes: little hack to support GLES, works for now
+        #[cfg(target_os = "android")]
+        let src = String::from("#version 300 es\nprecision mediump float;\n") + src;
+        #[cfg(not(target_os = "android"))]
+        let src = String::from("#version 330 core\n") + src;
+
         // Attempt to compile the shader
         let c_str = std::ffi::CString::new(src.as_bytes()).unwrap();
         gl::ShaderSource(shader, 1, &c_str.as_ptr(), std::ptr::null());

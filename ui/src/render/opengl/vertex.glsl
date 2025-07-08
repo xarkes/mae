@@ -1,7 +1,4 @@
-#version 300 es
-
 // input variables: Content to Vertex
-precision mediump float;
 in vec4 c2v_dst_rect;
 in vec4 c2v_src_rect;
 in vec4 c2v_color_0;
