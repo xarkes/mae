@@ -142,7 +142,7 @@ mod android {
                 None => std::ptr::null(),
             }
         });
-        // log::debug!("Context: {:?}", egl.get_current_context());
+
         GLContextHandle {
             egl,
             display,
@@ -150,7 +150,18 @@ mod android {
         }
     }
     pub fn ogl_toggle_vsync(ctx: &GLContextHandle, toggle: bool) {}
-    pub fn ogl_resize(ctx: &GLContextHandle) {}
+    pub fn ogl_resize(ctx: &GLContextHandle) -> (f32, f32) {
+        let width = ctx
+            .egl
+            .query_surface(ctx.display, ctx.surface, khronos_egl::WIDTH)
+            .unwrap();
+        let height = ctx
+            .egl
+            .query_surface(ctx.display, ctx.surface, khronos_egl::HEIGHT)
+            .unwrap();
+        log::debug!("{}x{}", width, height);
+        (width as f32, height as f32)
+    }
     pub fn ogl_swapbuffers(ctx: &GLContextHandle) {
         ctx.egl.swap_buffers(ctx.display, ctx.surface);
     }
@@ -308,6 +319,11 @@ impl GLContext {
         self.width = w;
         self.height = h;
         os_impl::ogl_resize(&self.ctx);
+        // TODO: Find a better way
+        #[cfg(target_os = "android")]
+        {
+            (self.width, self.height) = os_impl::ogl_resize(&self.ctx);
+        }
     }
 
     pub fn begin_frame(&mut self) {

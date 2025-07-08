@@ -22,7 +22,8 @@ mod android {
     }
     impl Window {
         pub fn get_size(&self) -> (f32, f32) {
-            (1024., 768.)
+            // XXX: We have to find a better API to support Android
+            (0., 0.)
         }
         pub fn get_events(&self) -> Vec<OSEvent> {
             let events = Vec::new();

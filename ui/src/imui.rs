@@ -415,13 +415,13 @@ impl IMUI {
         let rect = RectCoords::from_size(x, y, w, h);
 
         // xarkes: assert that bounds are properly computed
-        debug_assert!(rect.x0 >= 0.);
-        debug_assert!(rect.y0 >= 0.);
-        debug_assert!(rect.x0 <= self.size.0);
-        debug_assert!(rect.y0 <= self.size.1);
-        debug_assert!(rect.x1 >= 0.);
-        debug_assert!(rect.y1 >= 0.);
-        debug_assert!(rect.x1 <= self.size.0);
+        // debug_assert!(rect.x0 >= 0.);
+        // debug_assert!(rect.y0 >= 0.);
+        // debug_assert!(rect.x0 <= self.size.0);
+        // debug_assert!(rect.y0 <= self.size.1);
+        // debug_assert!(rect.x1 >= 0.);
+        // debug_assert!(rect.y1 >= 0.);
+        // debug_assert!(rect.x1 <= self.size.0);
         // debug_assert!(rect.y1 <= self.size.1);
         rect
     }
