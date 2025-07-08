@@ -16,11 +16,11 @@ mod os_impl;
 #[cfg(target_os = "android")]
 mod android {
     use super::OSEvent;
-    pub struct Window {}
+    use android_activity::AndroidApp;
+    pub struct Window {
+        pub app: AndroidApp,
+    }
     impl Window {
-        pub fn new(width: u32, height: u32) -> Self {
-            Window {}
-        }
         pub fn get_size(&self) -> (f32, f32) {
             (1024., 768.)
         }

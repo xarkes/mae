@@ -96,10 +96,12 @@ pub struct Renderer {
     batches: Vec<RenderBatch>,
 }
 
+use log;
 impl Renderer {
     pub fn new(win: Window) -> Self {
         // TODO(xarkes): Can we have this at compile time rather than runtime?
         // debug_assert!(std::mem::size_of::<Rect2DInst>() == 4 * 4 * 3);
+        log::debug!("render new");
         let mut available_renderers = Vec::new();
         if cfg!(feature = "opengl") {
             available_renderers.push("opengl");

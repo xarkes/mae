@@ -202,9 +202,14 @@ pub struct IMUI {
     params: UIWidgetParams,
     event: IMUIEvents,
 }
+use log;
 impl IMUI {
+    #[cfg(not(target_os = "android"))]
     pub fn new(w: u32, h: u32) -> Self {
         let window = os::Window::new(w, h);
+        IMUI::mobile(window)
+    }
+    pub fn mobile(window: os::Window) -> Self {
         let renderer = render::Renderer::new(window);
         let drawer = draw::Drawer::new(renderer);
 

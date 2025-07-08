@@ -1,6 +1,7 @@
-#version 330 core
+#version 300 es
 
 // input variables: Vertex to Phragment
+precision mediump float;
 in vec2 v2p_tex_coords;
 in vec4 v2p_tint;
 in float v2p_omit_texture;
@@ -11,9 +12,9 @@ uniform sampler2D text;
 
 void main()
 {
-  vec4 sample = vec4(1.0, 1.0, 1.0, 1.0);
-  if (v2p_omit_texture < 1) {
-      sample = vec4(1.0, 1.0, 1.0, texture(text, v2p_tex_coords).r);
+  vec4 bsample = vec4(1.0, 1.0, 1.0, 1.0);
+  if (v2p_omit_texture < 1.) {
+      bsample = vec4(1.0, 1.0, 1.0, texture(text, v2p_tex_coords).r);
   }
-  final_color = v2p_tint * sample;
+  final_color = v2p_tint * bsample;
 }

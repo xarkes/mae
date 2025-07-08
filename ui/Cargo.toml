@@ -3,6 +3,9 @@ name = "mae"
 version = "0.0.1"
 edition = "2024"
 
+[lib]
+name = "mae"
+
 [features]
 default = ["opengl"]
 opengl = ["dep:gl"]
@@ -36,6 +39,8 @@ features = [
 log = "0.4"
 android_logger = "0.15"
 android-activity = { version = "0.6", features = ["game-activity"] }
+khronos-egl = { version = "6.0.0", features = ["dynamic"] }
+libloading = { version = "*" }
 
 
 [profile.release]

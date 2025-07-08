@@ -4,133 +4,224 @@ use android_activity::{
 };
 use log::info;
 
+use mae::imui::color_rgb;
+use mae::imui::UISize;
+use mae::imui::UITextAlign;
+use mae::imui::IMUI;
+use mae::os;
+
 #[no_mangle]
 fn android_main(app: AndroidApp) {
-    android_logger::init_once(android_logger::Config::default().with_min_level(log::Level::Info));
+    // TODO: Rename library name from 'main' to something catchable in the logs
+    android_logger::init_once(
+        android_logger::Config::default()
+            .with_max_level(log::LevelFilter::Trace)
+            .with_tag("xark.es.mae"),
+    );
+    log::debug!("android_main");
 
     let mut quit = false;
     let mut redraw_pending = true;
     let mut native_window: Option<ndk::native_window::NativeWindow> = None;
 
-    let mut combining_accent = None;
+    // let mut combining_accent = None;
 
-    while !quit {
+    let mut ui = None;
+    while ui.is_none() {
         app.poll_events(
-            Some(std::time::Duration::from_secs(1)), /* timeout */
-            |event| {
-                match event {
-                    PollEvent::Wake => {
-                        info!("Early wake up");
-                    }
-                    PollEvent::Timeout => {
-                        info!("Timed out");
-                        // Real app would probably rely on vblank sync via graphics API...
-                        redraw_pending = true;
-                    }
-                    PollEvent::Main(main_event) => {
-                        info!("Main event: {:?}", main_event);
-                        match main_event {
-                            MainEvent::SaveState { saver, .. } => {
-                                saver.store("foo://bar".as_bytes());
-                            }
-                            MainEvent::Pause => {}
-                            MainEvent::Resume { loader, .. } => {
-                                if let Some(state) = loader.load() {
-                                    if let Ok(uri) = String::from_utf8(state) {
-                                        info!("Resumed with saved state = {uri:#?}");
-                                    }
-                                }
-                            }
-                            MainEvent::InitWindow { .. } => {
-                                native_window = app.native_window();
-                                redraw_pending = true;
-                            }
-                            MainEvent::TerminateWindow { .. } => {
-                                native_window = None;
-                            }
-                            MainEvent::WindowResized { .. } => {
-                                redraw_pending = true;
-                            }
-                            MainEvent::RedrawNeeded { .. } => {
-                                redraw_pending = true;
-                            }
-                            MainEvent::InputAvailable { .. } => {
-                                redraw_pending = true;
-                            }
-                            MainEvent::ConfigChanged { .. } => {
-                                info!("Config Changed: {:#?}", app.config());
-                            }
-                            MainEvent::LowMemory => {}
-
-                            MainEvent::Destroy => quit = true,
-                            _ => { /* ... */ }
-                        }
+            Some(std::time::Duration::from_secs(1)),
+            |event| match event {
+                PollEvent::Main(main_event) => match main_event {
+                    MainEvent::InitWindow { .. } => {
+                        native_window = app.native_window();
+                        ui = Some(IMUI::mobile(mae::os::Window { app: app.clone() }));
                     }
                     _ => {}
-                }
-
-                if redraw_pending {
-                    if let Some(native_window) = &native_window {
-                        redraw_pending = false;
-
-                        // Handle input, via a lending iterator
-                        match app.input_events_iter() {
-                            Ok(mut iter) => loop {
-                                info!("Checking for next input event...");
-                                if !iter.next(|event| {
-                                    match event {
-                                        InputEvent::KeyEvent(key_event) => {
-                                            let combined_key_char = character_map_and_combine_key(
-                                                &app,
-                                                key_event,
-                                                &mut combining_accent,
-                                            );
-                                            info!("KeyEvent: combined key: {combined_key_char:?}")
-                                        }
-                                        InputEvent::MotionEvent(motion_event) => {
-                                            println!("action = {:?}", motion_event.action());
-                                            match motion_event.action() {
-                                                MotionAction::Up => {
-                                                    let pointer = motion_event.pointer_index();
-                                                    let pointer =
-                                                        motion_event.pointer_at_index(pointer);
-                                                    let x = pointer.x();
-                                                    let y = pointer.y();
-
-                                                    println!("POINTER UP {x}, {y}");
-                                                    if x < 200.0 && y < 200.0 {
-                                                        println!("Requesting to show keyboard");
-                                                        app.show_soft_input(true);
-                                                    }
-                                                }
-                                                _ => {}
-                                            }
-                                        }
-                                        InputEvent::TextEvent(state) => {
-                                            info!("Input Method State: {state:?}");
-                                        }
-                                        _ => {}
-                                    }
-
-                                    info!("Input Event: {event:?}");
-                                    InputStatus::Unhandled
-                                }) {
-                                    info!("No more input available");
-                                    break;
-                                }
-                            },
-                            Err(err) => {
-                                log::error!("Failed to get input events iterator: {err:?}");
-                            }
-                        }
-
-                        info!("Render...");
-                        dummy_render(native_window);
-                    }
-                }
+                },
+                _ => {}
             },
         );
     }
+
+    log::debug!("UI initialized?");
+    let mut ui = ui.unwrap();
+
+    let mut count = 0;
+    let mut buffer = String::from("Bonjour");
+    ui.eventloop(|ui| {
+        let root = ui.root.clone();
+        let blue = color_rgb(61, 78, 219);
+        let white = color_rgb(255, 255, 255);
+        let black = color_rgb(0, 0, 0);
+
+        // top bar
+        {
+            ui.params()
+                .parent(root.clone())
+                .size(UISize::Percents(1.), UISize::Pixels(40.))
+                .color(blue);
+            ui.widget();
+        }
+
+        // main content
+        ui.params()
+            .parent(root.clone())
+            .size(UISize::Percents(1.), UISize::Percents(1.))
+            .color(color_rgb(230, 230, 230));
+        let content = ui.widget();
+
+        ui.params()
+            .size(UISize::Percents(1.), UISize::Pixels(14.))
+            .parent(content.clone())
+            .text_align(UITextAlign::Center)
+            .color(black);
+        ui.label("Your vault is locked.");
+        ui.rparams()
+            .size(UISize::Percents(1.), UISize::Pixels(100.));
+        ui.label("someone@somewhere.com");
+
+        // white box
+        ui.params()
+            .parent(content.clone())
+            .size(UISize::Percents(1.), UISize::Pixels(100.))
+            .color(mae::imui::color::NONE);
+        ui.widget();
+        ui.params()
+            .parent(content.clone())
+            .size(UISize::Percents(0.5), UISize::Percents(0.5))
+            .color(white);
+        let mid = ui.widget();
+
+        ui.params()
+            .parent(mid.clone())
+            .size(UISize::Percents(0.6), UISize::Pixels(30.))
+            .color(blue);
+        ui.line_edit(&buffer, None);
+        if ui.button(Some("Click here!")).borrow().clicked() {
+            count += 1;
+        }
+        ui.label(format!("Count: {}", count).as_str());
+    });
+
+    // while !quit {
+    //     app.poll_events(
+    //         Some(std::time::Duration::from_secs(1)), /* timeout */
+    //         |event| {
+    //             match event {
+    //                 PollEvent::Wake => {
+    //                     info!("Early wake up");
+    //                 }
+    //                 PollEvent::Timeout => {
+    //                     info!("Timed out");
+    //                     // Real app would probably rely on vblank sync via graphics API...
+    //                     redraw_pending = true;
+    //                 }
+    //                 PollEvent::Main(main_event) => {
+    //                     info!("Main event: {:?}", main_event);
+    //                     match main_event {
+    //                         MainEvent::SaveState { saver, .. } => {
+    //                             saver.store("foo://bar".as_bytes());
+    //                         }
+    //                         MainEvent::Pause => {}
+    //                         MainEvent::Resume { loader, .. } => {
+    //                             if let Some(state) = loader.load() {
+    //                                 if let Ok(uri) = String::from_utf8(state) {
+    //                                     info!("Resumed with saved state = {uri:#?}");
+    //                                 }
+    //                             }
+    //                         }
+    //                         MainEvent::InitWindow { .. } => {
+    //                             native_window = app.native_window();
+    //                             // NOTE(xarkes): ATM we initialize IMUI here because ogl_create_context relies on an existing native_window
+    //                             ui = Some(IMUI::mobile(mae::os::Window { app: app.clone() }));
+    //                             redraw_pending = true;
+    //                         }
+    //                         MainEvent::TerminateWindow { .. } => {
+    //                             native_window = None;
+    //                         }
+    //                         MainEvent::WindowResized { .. } => {
+    //                             redraw_pending = true;
+    //                         }
+    //                         MainEvent::RedrawNeeded { .. } => {
+    //                             redraw_pending = true;
+    //                         }
+    //                         MainEvent::InputAvailable { .. } => {
+    //                             redraw_pending = true;
+    //                         }
+    //                         MainEvent::ConfigChanged { .. } => {
+    //                             info!("Config Changed: {:#?}", app.config());
+    //                         }
+    //                         MainEvent::LowMemory => {}
+
+    //                         MainEvent::Destroy => quit = true,
+    //                         _ => { /* ... */ }
+    //                     }
+    //                 }
+    //                 _ => {}
+    //             }
+
+    //             if redraw_pending {
+    //                 if let Some(native_window) = &native_window {
+    //                     redraw_pending = false;
+
+    //                     // Handle input, via a lending iterator
+    //                     match app.input_events_iter() {
+    //                         Ok(mut iter) => loop {
+    //                             info!("Checking for next input event...");
+    //                             if !iter.next(|event| {
+    //                                 match event {
+    //                                     InputEvent::KeyEvent(key_event) => {
+    //                                         let combined_key_char = character_map_and_combine_key(
+    //                                             &app,
+    //                                             key_event,
+    //                                             &mut combining_accent,
+    //                                         );
+    //                                         info!("KeyEvent: combined key: {combined_key_char:?}")
+    //                                     }
+    //                                     InputEvent::MotionEvent(motion_event) => {
+    //                                         println!("action = {:?}", motion_event.action());
+    //                                         match motion_event.action() {
+    //                                             MotionAction::Up => {
+    //                                                 let pointer = motion_event.pointer_index();
+    //                                                 let pointer =
+    //                                                     motion_event.pointer_at_index(pointer);
+    //                                                 let x = pointer.x();
+    //                                                 let y = pointer.y();
+
+    //                                                 println!("POINTER UP {x}, {y}");
+    //                                                 if x < 200.0 && y < 200.0 {
+    //                                                     println!("Requesting to show keyboard");
+    //                                                     app.show_soft_input(true);
+    //                                                 }
+    //                                             }
+    //                                             _ => {}
+    //                                         }
+    //                                     }
+    //                                     InputEvent::TextEvent(state) => {
+    //                                         info!("Input Method State: {state:?}");
+    //                                     }
+    //                                     _ => {}
+    //                                 }
+
+    //                                 info!("Input Event: {event:?}");
+    //                                 InputStatus::Unhandled
+    //                             }) {
+    //                                 info!("No more input available");
+    //                                 break;
+    //                             }
+    //                         },
+    //                         Err(err) => {
+    //                             log::error!("Failed to get input events iterator: {err:?}");
+    //                         }
+    //                     }
+
+    //                     info!("Render...");
+    //                     dummy_render(native_window);
+    //                 }
+    //             }
+    //         },
+    //     );
+    // }
 }
 
 /// Tries to map the `key_event` to a `KeyMapChar` containing a unicode character or dead key accent
@@ -200,24 +291,24 @@ fn character_map_and_combine_key(
     }
 }
 
-/// Post a NOP frame to the window
-///
-/// Since this is a bare minimum test app we don't depend
-/// on any GPU graphics APIs but we do need to at least
-/// convince Android that we're drawing something and are
-/// responsive, otherwise it will stop delivering input
-/// events to us.
-fn dummy_render(native_window: &ndk::native_window::NativeWindow) {
-    unsafe {
-        let mut buf: ndk_sys::ANativeWindow_Buffer = std::mem::zeroed();
-        let mut rect: ndk_sys::ARect = std::mem::zeroed();
-        ndk_sys::ANativeWindow_lock(
-            native_window.ptr().as_ptr() as _,
-            &mut buf as _,
-            &mut rect as _,
-        );
-        // Note: we don't try and touch the buffer since that
-        // also requires us to handle various buffer formats
-        ndk_sys::ANativeWindow_unlockAndPost(native_window.ptr().as_ptr() as _);
-    }
-}
+// /// Post a NOP frame to the window
+// ///
+// /// Since this is a bare minimum test app we don't depend
+// /// on any GPU graphics APIs but we do need to at least
+// /// convince Android that we're drawing something and are
+// /// responsive, otherwise it will stop delivering input
+// /// events to us.
+// fn dummy_render(native_window: &ndk::native_window::NativeWindow) {
+//     unsafe {
+//         let mut buf: ndk_sys::ANativeWindow_Buffer = std::mem::zeroed();
+//         let mut rect: ndk_sys::ARect = std::mem::zeroed();
+//         ndk_sys::ANativeWindow_lock(
+//             native_window.ptr().as_ptr() as _,
+//             &mut buf as _,
+//             &mut rect as _,
+//         );
+//         // Note: we don't try and touch the buffer since that
+//         // also requires us to handle various buffer formats
+//         ndk_sys::ANativeWindow_unlockAndPost(native_window.ptr().as_ptr() as _);
+//     }
+// }
