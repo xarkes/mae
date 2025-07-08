@@ -123,7 +123,9 @@ pub fn ogl_create_context(win: &Window) -> GLContextHandle {
         surface,
     }
 }
-pub fn ogl_toggle_vsync(ctx: &GLContextHandle, toggle: bool) {}
+pub fn ogl_toggle_vsync(ctx: &GLContextHandle, toggle: bool) {
+    // TODO(xarkes)
+}
 pub fn ogl_resize(ctx: &GLContextHandle) -> (f32, f32) {
     let width = ctx
         .egl
@@ -133,7 +135,8 @@ pub fn ogl_resize(ctx: &GLContextHandle) -> (f32, f32) {
         .egl
         .query_surface(ctx.display, ctx.surface, khronos_egl::HEIGHT)
         .unwrap();
-    log::debug!("{}x{}", width, height);
+    // XXX(xarkes): On Android this seems to be called twice, rework the window creation and "resize" logic
+    // log::debug!("{}x{}", width, height);
     (width as f32, height as f32)
 }
 pub fn ogl_swapbuffers(ctx: &GLContextHandle) {

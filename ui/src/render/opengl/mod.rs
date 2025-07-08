@@ -162,7 +162,7 @@ impl GLContext {
         self.width = w;
         self.height = h;
         os_impl::ogl_resize(&self.ctx);
-        // TODO: Find a better way
+        // TODO(xarkes): This is just a hack, find a better way
         #[cfg(target_os = "android")]
         {
             (self.width, self.height) = os_impl::ogl_resize(&self.ctx);
@@ -183,7 +183,7 @@ impl GLContext {
                 width,
                 height,
             );
-            // TODO(xarkes): We need a proper way of detecting dpi and scaling later
+            // TODO(xarkes): We need a proper way of detecting dpi and scaling later (on MacOS this is per screen, so it should be updated when the window is being moved around)
             let highdpi = false;
             if highdpi {
                 // TODO(xarkes): For now it works to only upgrade the viewport and keep the uniform scaling right in the shader, but is it okay in terms of resolution, will we have scaling artifacts, blurs, ..?

@@ -1,5 +1,8 @@
 use std::{cell::RefCell, rc::Rc};
 
+#[cfg(target_os = "android")]
+use android_activity::AndroidApp;
+
 use crate::{
     draw::{self, Drawer},
     os::{self, OSEvent, OSEventType, OSKey},
@@ -202,14 +205,22 @@ pub struct IMUI {
     params: UIWidgetParams,
     event: IMUIEvents,
 }
-use log;
 impl IMUI {
     #[cfg(not(target_os = "android"))]
     pub fn new(w: u32, h: u32) -> Self {
         let window = os::Window::new(w, h);
-        IMUI::mobile(window)
+        IMUI::new_body(window)
     }
-    pub fn mobile(window: os::Window) -> Self {
+    #[cfg(target_os = "android")]
+    pub fn android(app: AndroidApp) -> Self {
+        let win = os::Window::new(app);
+
+        // xarkes: wait for InitWindow to initialize the renderer
+        win.wait_for_native_window();
+
+        IMUI::new_body(win)
+    }
+    fn new_body(window: os::Window) -> Self {
         let renderer = render::Renderer::new(window);
         let drawer = draw::Drawer::new(renderer);
 

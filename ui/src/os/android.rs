@@ -80,6 +80,26 @@ fn character_map_and_combine_key(
 }
 
 impl Window {
+    pub fn new(app: AndroidApp) -> Self {
+        Window { app }
+    }
+    pub fn wait_for_native_window(&self) {
+        let mut native_window = None;
+        while native_window.is_none() {
+            self.app.poll_events(
+                Some(std::time::Duration::from_secs(1)),
+                |event| match event {
+                    PollEvent::Main(main_event) => match main_event {
+                        MainEvent::InitWindow { .. } => {
+                            native_window = self.app.native_window();
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                },
+            );
+        }
+    }
     pub fn get_size(&self) -> (f32, f32) {
         // XXX: We have to find a better API to support Android
         (0., 0.)
@@ -92,15 +112,14 @@ impl Window {
         let mut redraw_pending = false;
 
         self.app.poll_events(
-            // Some(std::time::Duration::from_secs(1)), /* timeout */
-            None,
+            Some(std::time::Duration::from_secs(0)), /* timeout */
+            // None,
             |event| {
                 match event {
                     PollEvent::Wake => {
                         info!("Early wake up");
                     }
                     PollEvent::Timeout => {
-                        info!("Timed out");
                         // Real app would probably rely on vblank sync via graphics API...
                         redraw_pending = true;
                     }
@@ -121,6 +140,7 @@ impl Window {
                             MainEvent::InitWindow { .. } => {
                                 // XXX: This event is not handled here
                                 // ui = Some(IMUI::mobile(mae::os::Window { app: app.clone() }));
+                                info!("InitWindow!");
                                 redraw_pending = true;
                             }
                             MainEvent::TerminateWindow { .. } => {
@@ -153,7 +173,6 @@ impl Window {
                     // Handle input, via a lending iterator
                     match self.app.input_events_iter() {
                         Ok(mut iter) => loop {
-                            info!("Checking for next input event...");
                             if !iter.next(|event| {
                                 match event {
                                     InputEvent::KeyEvent(key_event) => {
@@ -192,7 +211,6 @@ impl Window {
                                 info!("Input Event: {event:?}");
                                 InputStatus::Unhandled
                             }) {
-                                info!("No more input available");
                                 break;
                             }
                         },
