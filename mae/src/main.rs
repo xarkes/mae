@@ -18,7 +18,7 @@ fn main() {
         // top bar
         {
             ui.params()
-                .parent(Some(root.clone()))
+                .parent(root.clone())
                 .size(UISize::Percents(1.), UISize::Pixels(40.))
                 .color(blue);
             ui.widget();
@@ -26,14 +26,14 @@ fn main() {
 
         // main content
         ui.params()
-            .parent(Some(root.clone()))
+            .parent(root.clone())
             .size(UISize::Percents(1.), UISize::Percents(1.))
             .color(imui::color_rgb(230, 230, 230));
         let content = ui.widget();
 
         ui.params()
             .size(UISize::Percents(1.), UISize::Pixels(14.))
-            .parent(Some(content.clone()))
+            .parent(content.clone())
             .text_align(UITextAlign::Center)
             .color(black);
         ui.label("Your vault is locked.");
@@ -43,18 +43,18 @@ fn main() {
 
         // white box
         ui.params()
-            .parent(Some(content.clone()))
+            .parent(content.clone())
             .size(UISize::Percents(1.), UISize::Pixels(100.))
             .color(imui::color::NONE);
         ui.widget();
         ui.params()
-            .parent(Some(content.clone()))
+            .parent(content.clone())
             .size(UISize::Percents(0.5), UISize::Percents(0.5))
             .color(white);
         let mid = ui.widget();
 
         ui.params()
-            .parent(Some(mid.clone()))
+            .parent(mid.clone())
             .size(UISize::Percents(0.6), UISize::Pixels(30.))
             .color(blue);
         ui.line_edit(&buffer, None);

@@ -1,0 +1,10 @@
+[package]
+name = "devapp"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+mae = { version = "*", path = "../mae" }
+roxmltree = { version = "0.20.0", optional = false }
+notify = { version = "8.0.0", optional = false }
+

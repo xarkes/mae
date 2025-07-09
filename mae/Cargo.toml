@@ -14,8 +14,6 @@ opengl = ["dep:gl"]
 fontdue = "0.9.3"
 mae-macros = { version = "*", path = "./mae_macros" }
 gl = { version = "*", optional = true }
-notify = { version = "8.0.0", optional = false }
-roxmltree = { version = "0.20.0", optional = false }
 log = "0.4"
 
 [target.'cfg(target_os="linux")'.dependencies]

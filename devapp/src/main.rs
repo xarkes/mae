@@ -1,59 +1,10 @@
-mod draw;
-mod imui;
-mod os;
-mod render;
-
-use render::V4f32;
-
-use imui::{IMUI, UISize};
+use mae::imui::{Color, IMUI, UISize};
 use notify::{RecursiveMode, Watcher, event::DataChange};
 use std::{
     fs,
     path::Path,
     sync::{Arc, Mutex},
 };
-
-type Color = V4f32;
-impl Color {
-    pub fn from_text(text: &str) -> Self {
-        if text.len() < 4 {
-            Color {
-                r: 1.,
-                g: 1.,
-                b: 1.,
-                a: 1.,
-            }
-        } else if text.len() == 4 && text.as_bytes()[0] == b'#' {
-            let bytes = text.as_bytes();
-            let mut vals: [f32; 3] = [0., 0., 0.];
-            for i in 0..3 {
-                let b = bytes[1 + i];
-                let mut val = 0;
-                if b >= b'0' && b <= b'9' {
-                    val = b - b'0';
-                } else if b >= b'a' && b <= b'f' {
-                    val = b - b'a' + 10;
-                } else if b >= b'A' && b <= b'F' {
-                    val = b - b'A' + 10;
-                }
-                vals[i] = val as f32 / 16.;
-            }
-            Color {
-                r: vals[0],
-                g: vals[1],
-                b: vals[2],
-                a: 1.,
-            }
-        } else {
-            Color {
-                r: 1.,
-                g: 1.,
-                b: 1.,
-                a: 1.,
-            }
-        }
-    }
-}
 
 // TODO: Maybe use a DeriveMacro that will apply to each enum value
 // and allow you to use it at runtime as well as string with e.g. implementing two different functions
