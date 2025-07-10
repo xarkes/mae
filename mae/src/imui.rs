@@ -2,10 +2,11 @@ use std::{cell::RefCell, rc::Rc};
 
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;
+use gl::COLOR;
 
 use crate::{
     draw::{self, Drawer},
-    os::{self, OSEvent, OSEventType, OSKey},
+    os::{self, OSEvent, OSEventType, OSKey, OSKeyCode},
     render::{self, RectCoords, V4f32},
 };
 
@@ -238,6 +239,12 @@ impl IMUIDebug {
     }
 }
 
+struct IMUITextInputState {
+    focus: String,
+    buffer: Rc<RefCell<String>>,
+    idx: usize,
+}
+
 pub struct IMUI {
     pub root: UIWidgetRef,
     pub drawer: Drawer,
@@ -246,6 +253,7 @@ pub struct IMUI {
     size: (f32, f32),
     params: UIWidgetParams,
     event: IMUIEvents,
+    text_input_state: Option<IMUITextInputState>,
 }
 impl IMUI {
     #[cfg(not(target_os = "android"))]
@@ -281,6 +289,7 @@ impl IMUI {
             size: (0., 0.),
             params: UIWidgetParams::new(root),
             event: IMUIEvents::default(),
+            text_input_state: None,
         }
     }
     pub fn eventloop(&mut self, mut drawfunction: impl FnMut(&mut IMUI)) {
@@ -300,8 +309,8 @@ impl IMUI {
                 drawfunction(self);
             }
 
-            // #[cfg(debug_assertions)]
-            // self.draw_debug_pane();
+            #[cfg(debug_assertions)]
+            self.draw_debug_pane();
 
             // xarkes: draw and update FPS counter
             #[cfg(debug_assertions)]
@@ -432,6 +441,8 @@ impl IMUI {
             .push(childref.clone());
 
         #[cfg(debug_assertions)]
+        self.draw_bounds(&childref.borrow());
+        #[cfg(debug_assertions)]
         if point_in_rect(&childref.borrow().bounds, self.event.click) {
             self.debug.target = Some(childref.clone());
         }
@@ -488,12 +499,8 @@ impl IMUI {
 
     /////////////////////////////////
     //// UI widgets
-    fn draw_bounds(&mut self, widget: &UIWidget) {
-        #[cfg(debug_assertions)]
-        self.draw_bounds_internal(widget);
-    }
     #[cfg(debug_assertions)]
-    fn draw_bounds_internal(&mut self, widget: &UIWidget) {
+    fn draw_bounds(&mut self, widget: &UIWidget) {
         if self.debug.hints {
             let color = match widget.hover() {
                 true => color_rgb(0, 255, 0),
@@ -590,21 +597,54 @@ impl IMUI {
         self.draw_bounds(&checkbox.borrow());
         checkbox
     }
-    pub fn line_edit(&mut self, text_buffer: &String, hint: Option<&str>) -> UIWidgetRef {
-        // TODO(xarkes): finish drawing and all -> I hope it can be cool
-        let le = self.create_ui_widget(UIWidgetFlag::MouseClickable as u64);
+    pub fn line_edit(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIWidgetRef {
+        let widget = self.create_ui_widget(UIWidgetFlag::MouseClickable as u64);
+        let font_size = 12.;
+        // XXX: Only support monospace font atm, should add compute method
+        let char_width = 7.;
+        if widget.borrow().clicked() {
+            // xarkes: update the text input global state
+            let idx =
+                ((self.event.mouse.unwrap().0 - widget.borrow().bounds.x0) / (char_width)) as usize;
+            let idx = std::cmp::min(idx, text_buffer.borrow().len());
+            self.text_input_state = Some(IMUITextInputState {
+                focus: String::from(id),
+                buffer: text_buffer.clone(),
+                idx,
+            });
+        }
+
+        // background
         let bg_color = color_rgb(200, 200, 200);
-        self.drawer.draw_rect(&le.borrow().bounds, bg_color);
+        self.drawer.draw_rect(&widget.borrow().bounds, bg_color);
+
+        // text
         self.drawer.draw_text(
-            le.borrow().bounds.x0,
-            le.borrow().bounds.y0,
+            widget.borrow().bounds.x0,
+            widget.borrow().bounds.y0,
             12,
-            text_buffer.as_str(),
-            text_buffer.len(),
+            text_buffer.borrow().as_str(),
+            text_buffer.borrow().len(),
             color_rgb(0, 0, 0),
         );
-        self.draw_bounds(&le.borrow());
-        le
+
+        // cursor
+        let show_cursor = match &self.text_input_state {
+            Some(state) => state.focus.eq(id),
+            None => false,
+        };
+        if show_cursor {
+            // XXX: We assume here monospace font
+            let cursorx = widget.borrow().bounds.x0
+                + char_width * self.text_input_state.as_ref().unwrap().idx as f32;
+            let cursory = widget.borrow().bounds.y0;
+            self.drawer.draw_rect(
+                &RectCoords::from_size(cursorx, cursory, 2., font_size + 4.),
+                Color::from_text("#111"),
+            );
+        }
+
+        widget
     }
     pub fn button(&mut self, label: Option<&str>) -> UIWidgetRef {
         let button = self.create_ui_widget(UIWidgetFlag::MouseClickable as u64);
@@ -685,12 +725,55 @@ impl IMUI {
     fn consume_events(&mut self) {
         for ev in &self.event.events {
             if ev.ty == OSEventType::MouseMove {
-                self.event.mouse = Some(ev.pos);
+                self.event.mouse = ev.pos;
             } else if ev.ty == OSEventType::Press && ev.key == OSKey::LeftMouseButton {
-                self.event.click = Some(ev.pos);
+                self.event.click = ev.pos;
+                // xarkes: when there is a click anywhere, reset the text input global state
+                // if the click happens to be on something clickable, then the widget will handle it,
+                // if not this resets the current state
+                self.text_input_state = None;
             } else if ev.ty == OSEventType::Release && ev.key == OSKey::LeftMouseButton {
                 self.event.click = None;
-                self.event.release = Some(ev.pos);
+                self.event.release = ev.pos;
+            }
+
+            // xarkes: consume global keyboard events
+            if ev.ty == OSEventType::Press {
+                // if ev.key >= OSKey::KeyA && ev.key <= OSKey::KeyZ {}
+                if let Some(textinput) = self.text_input_state.as_mut() {
+                    match &ev.key {
+                        OSKey::Keyboard(keycode) => {
+                            println!("Keypress: {:?}", keycode);
+                            match keycode {
+                                OSKeyCode::KeyBackspace => {
+                                    if textinput.idx > 0 {
+                                        textinput.idx -= 1;
+                                        textinput.buffer.borrow_mut().remove(textinput.idx);
+                                    }
+                                }
+                                OSKeyCode::KeyLeftArrow => {
+                                    if textinput.idx > 0 {
+                                        textinput.idx -= 1;
+                                    }
+                                }
+                                OSKeyCode::KeyRightArrow => {
+                                    if textinput.idx < textinput.buffer.borrow().len() {
+                                        textinput.idx += 1;
+                                    }
+                                }
+                                OSKeyCode::KeyEnter => {}
+                                _ => {
+                                    textinput.buffer.borrow_mut().insert_str(
+                                        textinput.idx,
+                                        ev.chars.as_ref().unwrap().as_str(),
+                                    );
+                                    textinput.idx += 1;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
             }
         }
     }
@@ -701,14 +784,17 @@ impl IMUI {
     pub fn resize(&mut self) -> Point {
         self.size = self.drawer.renderer.win.get_size();
         self.drawer.renderer.resize(self.size.0, self.size.1);
-        let root = Rc::new(RefCell::new(UIWidget {
-            bounds: RectCoords::from_size(0., 0., 1024., 768.),
-            parent: None,
-            children: Vec::new(),
-            flags: 0,
-            events: 0,
-        }));
-        self.root = root;
+        // let root = Rc::new(RefCell::new(UIWidget {
+        //     bounds: RectCoords::from_size(0., 0., self.size.0, self.size.1),
+        //     parent: None,
+        //     children: Vec::new(),
+        //     flags: 0,
+        //     events: 0,
+        // }));
+        // self.root = root;
+        self.root.borrow_mut().bounds.x1 = self.size.0;
+        self.root.borrow_mut().bounds.y1 = self.size.1;
+        self.root.borrow_mut().children = Vec::new();
         self.size
     }
 }

@@ -3,12 +3,14 @@ mod imui;
 mod os;
 mod render;
 
+use std::{cell::RefCell, rc::Rc};
+
 use imui::{IMUI, UISize, UITextAlign};
 
 fn main() {
     let mut ui = IMUI::new(1024, 768);
     let mut count = 0;
-    let mut buffer = String::from("Bonjour");
+    let buffer = Rc::new(RefCell::new(String::from("Bonjour")));
     ui.eventloop(|ui| {
         let root = ui.root.clone();
         let blue = imui::color_rgb(61, 78, 219);
@@ -45,6 +47,10 @@ fn main() {
         ui.params()
             .parent(content.clone())
             .size(UISize::Percents(1.), UISize::Pixels(100.))
+            .position(imui::UIPosition::Relative(
+                UISize::Pixels(500.),
+                UISize::Pixels(0.0),
+            ))
             .color(imui::color::NONE);
         ui.widget();
         ui.params()
@@ -57,7 +63,7 @@ fn main() {
             .parent(mid.clone())
             .size(UISize::Percents(0.6), UISize::Pixels(30.))
             .color(blue);
-        ui.line_edit(&buffer, None);
+        ui.line_edit(buffer.clone(), "le0");
         if ui.button(Some("Click here!")).borrow().clicked() {
             count += 1;
         }

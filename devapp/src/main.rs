@@ -175,9 +175,10 @@ fn main() {
 // - TODO: Important: etudier la question de la compilation a la volee pour le code dynamique
 // - TODO: Problematiques d'API sur la facon dont on passe les arguments pour le style de chaque widget (comment etre simple d'utilisation et performant ?)
 // - TODO: Portage mobile Android iOS, quels challenges ?
-//   - ANDROID
-//     - utilisation de game-activity_static.a et MainActivity extends GameActivity -> sucks car il manque des symboles C++ lors du runtime
-//     - utilisation de
+//   - Premier draw Android OK, besoin de supporter les clics etc.
+// - TODO: Important: systeme d'animations
+// - TODO: Important: accessibility + localization/globalization
+// - TODO: Important: proper DPI handling: le texte sur Android est juste trop petit + suppression de UISize::Pixels() a remplacer par EM ou equivalent qui veut bien dire que le dpi est pris en compte
 //
 //
 // Objectif final: Pouvoir faire une demo de creation d'interface belle (style par defaut) et rapide (systeme de layout simple + systeme auto generatif)
