@@ -45,6 +45,11 @@ pub struct GLContext {
     font_texture: u32,
 }
 
+// XXX(xarkes): I just allocate a 4MB buffer at the moment, but I don't know if that's right
+// Did this while developping my text edit which ate more than that, given the slow framerate
+// I'm pretty sure we lack some optimizations :D
+const GL_BUFFER_SIZE: isize = 4 * 1024 * 1024;
+
 impl GLContext {
     pub fn new(win: &Window) -> Self {
         let ctx = os_impl::ogl_create_context(win);
@@ -91,7 +96,7 @@ impl GLContext {
             gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
             gl::BufferData(
                 gl::ARRAY_BUFFER,
-                64 * 1024,
+                GL_BUFFER_SIZE,
                 std::ptr::null(),
                 gl::DYNAMIC_DRAW,
             );
@@ -220,9 +225,14 @@ impl GLContext {
                 );
             }
             off += batch.bytes_count;
-            if off > 64 * 1024 {
+            if off > GL_BUFFER_SIZE {
                 // TODO(xarkes): We will likely need bigger buffers at some point
-                println!("WARNING: Buffer is too small! Handle this!");
+                println!(
+                    "FATAL: Buffer is too small! Handle this! {}/{} ({}%)",
+                    off,
+                    GL_BUFFER_SIZE,
+                    off * 100 / (GL_BUFFER_SIZE)
+                );
             }
 
             // xarkes: bind input attributes

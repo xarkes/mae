@@ -50,6 +50,34 @@ impl Color {
                 b: vals[2],
                 a: 1.,
             }
+        } else if text.len() == 7 && text.as_bytes()[0] == b'#' {
+            let bytes = text.as_bytes();
+            let mut vals: [f32; 3] = [0., 0., 0.];
+            for i in 0..3 {
+                let mut val = 0;
+                for j in 0..2 {
+                    let b = bytes[1 + i * 2 + j];
+                    let v;
+                    if b >= b'0' && b <= b'9' {
+                        v = b - b'0';
+                    } else if b >= b'a' && b <= b'f' {
+                        v = b - b'a' + 10;
+                    } else if b >= b'A' && b <= b'F' {
+                        v = b - b'A' + 10;
+                    } else {
+                        v = 0;
+                    }
+                    let v = (1 << (1 - j as u8) * 4) * v;
+                    val += v;
+                }
+                vals[i] = val as f32 / 256.;
+            }
+            Color {
+                r: vals[0],
+                g: vals[1],
+                b: vals[2],
+                a: 1.,
+            }
         } else {
             Color {
                 r: 1.,
@@ -243,6 +271,7 @@ struct IMUITextInputState {
     focus: String,
     buffer: Rc<RefCell<String>>,
     idx: usize,
+    multiline: bool,
 }
 
 pub struct IMUI {
@@ -549,7 +578,6 @@ impl IMUI {
         let widget = self.create_ui_widget(0);
         self.drawer
             .draw_rect(&widget.borrow().bounds, self.params.color);
-        self.draw_bounds(&widget.borrow());
         widget
     }
     pub fn checkbox(&mut self, state: &mut bool) -> UIWidgetRef {
@@ -594,10 +622,22 @@ impl IMUI {
                 false,
             );
         }
-        self.draw_bounds(&checkbox.borrow());
         checkbox
     }
     pub fn line_edit(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIWidgetRef {
+        let multiline = false;
+        self.text_edit_impl(text_buffer, id, multiline)
+    }
+    pub fn textarea(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIWidgetRef {
+        let multiline = true;
+        self.text_edit_impl(text_buffer, id, multiline)
+    }
+    fn text_edit_impl(
+        &mut self,
+        text_buffer: Rc<RefCell<String>>,
+        id: &str,
+        multiline: bool,
+    ) -> UIWidgetRef {
         let widget = self.create_ui_widget(UIWidgetFlag::MouseClickable as u64);
         let font_size = 12.;
         // XXX: Only support monospace font atm, should add compute method
@@ -611,6 +651,7 @@ impl IMUI {
                 focus: String::from(id),
                 buffer: text_buffer.clone(),
                 idx,
+                multiline,
             });
         }
 
@@ -619,14 +660,37 @@ impl IMUI {
         self.drawer.draw_rect(&widget.borrow().bounds, bg_color);
 
         // text
-        self.drawer.draw_text(
-            widget.borrow().bounds.x0,
-            widget.borrow().bounds.y0,
-            12,
-            text_buffer.borrow().as_str(),
-            text_buffer.borrow().len(),
-            color_rgb(0, 0, 0),
-        );
+        if multiline {
+            const SHOW_LINE_NUMBERS: bool = true;
+
+            let mut y = widget.borrow().bounds.y0;
+            for line in text_buffer.borrow().lines() {
+                // if SHOW_LINE_NUMBERS {
+                // self.drawer.draw_text()
+                // }
+                self.drawer.draw_text(
+                    widget.borrow().bounds.x0,
+                    y,
+                    12,
+                    line,
+                    line.len(),
+                    color_rgb(0, 0, 0),
+                );
+                y += 14.;
+                if y >= widget.borrow().bounds.y1 {
+                    break;
+                }
+            }
+        } else {
+            self.drawer.draw_text(
+                widget.borrow().bounds.x0,
+                widget.borrow().bounds.y0,
+                12,
+                text_buffer.borrow().as_str(),
+                text_buffer.borrow().len(),
+                color_rgb(0, 0, 0),
+            );
+        }
 
         // cursor
         let show_cursor = match &self.text_input_state {
@@ -683,7 +747,6 @@ impl IMUI {
                 );
             }
         }
-        self.draw_bounds(&button.borrow());
         button
     }
     pub fn label(&mut self, label: &str) -> UIWidgetRef {
@@ -716,7 +779,6 @@ impl IMUI {
             label.len(),
             self.params.color,
         );
-        self.draw_bounds(&widget.borrow());
         widget
     }
 
@@ -742,35 +804,42 @@ impl IMUI {
                 // if ev.key >= OSKey::KeyA && ev.key <= OSKey::KeyZ {}
                 if let Some(textinput) = self.text_input_state.as_mut() {
                     match &ev.key {
-                        OSKey::Keyboard(keycode) => {
-                            println!("Keypress: {:?}", keycode);
-                            match keycode {
-                                OSKeyCode::KeyBackspace => {
-                                    if textinput.idx > 0 {
-                                        textinput.idx -= 1;
-                                        textinput.buffer.borrow_mut().remove(textinput.idx);
-                                    }
+                        OSKey::Keyboard(keycode) => match keycode {
+                            OSKeyCode::KeyBackspace => {
+                                if textinput.idx > 0 {
+                                    textinput.idx -= 1;
+                                    textinput.buffer.borrow_mut().remove(textinput.idx);
                                 }
-                                OSKeyCode::KeyLeftArrow => {
-                                    if textinput.idx > 0 {
-                                        textinput.idx -= 1;
-                                    }
+                            }
+                            OSKeyCode::KeyLeftArrow => {
+                                if textinput.idx > 0 {
+                                    textinput.idx -= 1;
                                 }
-                                OSKeyCode::KeyRightArrow => {
-                                    if textinput.idx < textinput.buffer.borrow().len() {
-                                        textinput.idx += 1;
-                                    }
-                                }
-                                OSKeyCode::KeyEnter => {}
-                                _ => {
-                                    textinput.buffer.borrow_mut().insert_str(
-                                        textinput.idx,
-                                        ev.chars.as_ref().unwrap().as_str(),
-                                    );
+                            }
+                            OSKeyCode::KeyRightArrow => {
+                                if textinput.idx < textinput.buffer.borrow().len() {
                                     textinput.idx += 1;
                                 }
                             }
-                        }
+                            OSKeyCode::KeyDownArrow => {}
+                            OSKeyCode::KeyUpArrow => {}
+                            OSKeyCode::KeyEnter => {
+                                if textinput.multiline {
+                                    textinput
+                                        .buffer
+                                        .borrow_mut()
+                                        .insert_str(textinput.idx, "\n");
+                                    textinput.idx += 1;
+                                }
+                            }
+                            _ => {
+                                textinput
+                                    .buffer
+                                    .borrow_mut()
+                                    .insert_str(textinput.idx, ev.chars.as_ref().unwrap().as_str());
+                                textinput.idx += 1;
+                            }
+                        },
                         _ => {}
                     }
                 }

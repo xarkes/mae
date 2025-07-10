@@ -5,12 +5,13 @@ mod render;
 
 use std::{cell::RefCell, rc::Rc};
 
-use imui::{IMUI, UISize, UITextAlign};
+use imui::{Color, IMUI, UISize, UITextAlign};
 
 fn main() {
     let mut ui = IMUI::new(1024, 768);
     let mut count = 0;
     let buffer = Rc::new(RefCell::new(String::from("Bonjour")));
+    let buffer2 = Rc::new(RefCell::new(String::from("Bonjour")));
     ui.eventloop(|ui| {
         let root = ui.root.clone();
         let blue = imui::color_rgb(61, 78, 219);
@@ -68,5 +69,6 @@ fn main() {
             count += 1;
         }
         ui.label(format!("Count: {}", count).as_str());
+        ui.line_edit(buffer2.clone(), "le1");
     });
 }

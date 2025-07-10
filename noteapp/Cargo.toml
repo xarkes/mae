@@ -1,0 +1,8 @@
+[package]
+name = "noteapp"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+mae = { version = "*", path = "../mae" }
+
