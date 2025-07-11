@@ -83,7 +83,8 @@ impl Window {
                         ev = OSEvent {
                             ty: OSEventType::MouseMove,
                             key: OSKey::LeftMouseButton,
-                            pos: (event.motion.x as f32, event.motion.y as f32),
+                            pos: Some((event.motion.x as f32, event.motion.y as f32)),
+                            chars: None,
                         };
                     }
                     x11::xlib::ButtonPress => {
@@ -93,10 +94,11 @@ impl Window {
                                 1 => OSKey::LeftMouseButton,
                                 _ => {
                                     println!("Unhandled mouse press!");
-                                    OSKey::Unknown
+                                    OSKey::LeftMouseButton
                                 }
                             },
-                            pos: (event.button.x as f32, event.button.y as f32),
+                            pos: Some((event.button.x as f32, event.button.y as f32)),
+                            chars: None,
                         };
                     }
                     x11::xlib::ButtonRelease => {
@@ -106,10 +108,11 @@ impl Window {
                                 1 => OSKey::LeftMouseButton,
                                 _ => {
                                     println!("Unhandled mouse press!");
-                                    OSKey::Unknown
+                                    OSKey::LeftMouseButton
                                 }
                             },
-                            pos: (event.button.x as f32, event.button.y as f32),
+                            pos: Some((event.button.x as f32, event.button.y as f32)),
+                            chars: None,
                         };
                     }
                     _ => {

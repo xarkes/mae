@@ -261,7 +261,7 @@ pub fn timer_value() -> u64 {
 }
 
 fn macos_keycode_to_oskey(keycode: u16) -> OSKey {
-    // TODO: Support keys with non latin layouts
+    // TODO: Support keys with non latin layouts?
     match keycode {
         0x00 => OSKey::Keyboard(OSKeyCode::KeyA),
         0x01 => OSKey::Keyboard(OSKeyCode::KeyS),

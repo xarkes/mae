@@ -173,8 +173,7 @@ impl FontCache {
         #[cfg(target_os = "macos")]
         let font = include_bytes!("/System/Library/Fonts/Menlo.ttc") as &[u8];
         #[cfg(target_os = "linux")]
-        let font =
-            include_bytes!("/usr/share/fonts/adwaita-mono-fonts/AdwaitaMono-Bold.ttf") as &[u8];
+        let font = include_bytes!("/usr/share/fonts/noto/NotoSansMono-Regular.ttf") as &[u8];
         #[cfg(target_os = "windows")]
         let font = include_bytes!("C:\\Windows\\Fonts\\lucon.ttf") as &[u8];
         #[cfg(target_os = "android")]
