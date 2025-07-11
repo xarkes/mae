@@ -1,6 +1,8 @@
-mod font_cache;
+pub mod font_cache;
 #[cfg(feature = "opengl")]
 mod opengl;
+
+use std::{cell::RefCell, rc::Rc};
 
 use crate::os::Window;
 use font_cache::FontCache;
@@ -92,7 +94,7 @@ impl RenderBatch {
 pub struct Renderer {
     pub win: Window,
     pub ctx: Box<opengl::GLContext>,
-    pub font_cache: Box<FontCache>,
+    pub font_cache: Rc<RefCell<FontCache>>,
     batches: Vec<RenderBatch>,
 }
 
@@ -118,8 +120,8 @@ impl Renderer {
                 panic!("Renderer not implemented!");
             }
         };
-        let font_cache = Box::new(FontCache::new());
-        ctx.update_font_texture(font_cache.atlas());
+        let font_cache = Rc::new(RefCell::new(FontCache::new()));
+        ctx.update_font_texture(font_cache.borrow().atlas());
         // XXX(xarkes): This sucks, make it better
         let mut batches = Vec::new();
         batches.push(RenderBatch::new(100));
@@ -133,8 +135,8 @@ impl Renderer {
     }
 
     pub fn update_font_texture(&mut self) {
-        let atlas = self.font_cache.atlas();
-        self.ctx.update_font_texture(atlas);
+        let fc = self.font_cache.borrow();
+        self.ctx.update_font_texture(fc.atlas());
     }
 
     pub fn resize(&mut self, w: f32, h: f32) {

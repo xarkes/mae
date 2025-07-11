@@ -242,6 +242,46 @@ impl FontCache {
         &self.atlas
     }
 
+    /// Returns the nearest valid cursor position given one.
+    pub fn get_cursor_position(&mut self, size: u32, text: &str, cursorx: f32) -> (f32, usize) {
+        let mut length = 0.;
+        let mut idx = 0;
+        for c in text.chars() {
+            let (glyph, _) = self.get(c);
+            if let Some(glyph) = glyph {
+                if cursorx > length + glyph.advance / 2. {
+                    length += glyph.advance;
+                } else {
+                    break;
+                }
+            }
+            idx += 1;
+        }
+        (length, idx)
+    }
+
+    pub fn get_text_size(&mut self, size: u32, text: &str, length: usize) -> (bool, f32, f32) {
+        // TODO(xarkes): Usually we will call draw_text later on, so we can avoid useless heavy calls by caching what was done in this function
+        let mut should_update = false;
+        let mut width = 0.;
+        let mut height = 0;
+        for (i, c) in text.char_indices() {
+            if i >= length {
+                break;
+            }
+            if c == '\t' {
+                continue;
+            }
+            let (glyph, added) = self.get(c);
+            should_update |= added;
+            if let Some(glyph) = glyph {
+                width += glyph.advance;
+                height = std::cmp::max(height, glyph.height);
+            }
+        }
+        (should_update, width, height as f32)
+    }
+
     pub fn line_height(&self, font_size: f32) -> f32 {
         self.font
             .horizontal_line_metrics(font_size)

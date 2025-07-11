@@ -2,12 +2,11 @@ use std::{cell::RefCell, rc::Rc};
 
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;
-use gl::COLOR;
 
 use crate::{
     draw::{self, Drawer},
     os::{self, OSEvent, OSEventType, OSKey, OSKeyCode},
-    render::{self, RectCoords, V4f32},
+    render::{self, RectCoords, V4f32, font_cache::FontCache},
 };
 
 pub mod color {
@@ -271,7 +270,140 @@ struct IMUITextInputState {
     focus: String,
     buffer: Rc<RefCell<String>>,
     idx: usize,
+    cursor_x: f32,
+    cursor_y: f32,
     multiline: bool,
+    font_cache: Rc<RefCell<FontCache>>,
+}
+impl IMUITextInputState {
+    pub fn compute_valid_cursor_loc(
+        &mut self,
+        bounds: &RectCoords,
+        text_buffer: &String,
+        font_size: f32,
+        point: Point,
+    ) {
+        let relative_x = point.0 - bounds.x0;
+        let relative_y = point.1 - bounds.y0;
+        if relative_x < 0. || relative_y < 0. {
+            return;
+        }
+
+        // xarkes: first, get the corresponding line
+        let line_height = self.font_cache.borrow().line_height(font_size);
+        let line_number = (relative_y / line_height) as usize;
+        let cursor_y = line_height * line_number as f32;
+
+        // xarkes: get the line's length and set final cursor position
+        let lines = text_buffer.lines();
+        let mut buffer_idx = 0;
+        let mut cursor_x = 0.;
+        for (i, line) in lines.enumerate() {
+            if i < line_number {
+                buffer_idx += line.len() + 1; // XXX: Are we sure this line.len() counts \r on Windows?
+                continue;
+            }
+            let idx;
+            (cursor_x, idx) = self.font_cache.borrow_mut().get_cursor_position(
+                font_size as u32,
+                line,
+                relative_x,
+            );
+            buffer_idx += idx;
+            break;
+        }
+
+        self.idx = buffer_idx;
+        self.cursor_x = cursor_x;
+        self.cursor_y = cursor_y;
+    }
+    pub fn new(
+        id: String,
+        font_cache: Rc<RefCell<FontCache>>,
+        text_buffer: Rc<RefCell<String>>,
+        multiline: bool,
+    ) -> Self {
+        IMUITextInputState {
+            focus: String::from(id),
+            buffer: text_buffer.clone(),
+            idx: 0,
+            cursor_x: 0.,
+            cursor_y: 0.,
+            multiline,
+            font_cache,
+        }
+    }
+    fn update_cursor_loc(&mut self, idx: usize) {
+        self.idx = idx;
+        let buf = self.buffer.borrow();
+        let mut curidx = 0;
+        let font_size = 12.; // XXX
+        let mut fc = self.font_cache.borrow_mut();
+        for (lineidx, line) in buf.lines().enumerate() {
+            if self.idx <= curidx + line.len() {
+                // this is current line, compute proper x
+                let mut length = 0.;
+                for (i, c) in line.chars().enumerate() {
+                    let (glyph, _) = fc.get(c);
+                    if let Some(glyph) = glyph {
+                        if curidx + i < self.idx {
+                            length += glyph.advance;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                // update whole state
+                self.cursor_x = length;
+                self.cursor_y = fc.line_height(font_size) * lineidx as f32;
+                break;
+            }
+            curidx += line.len() + 1; // +1 for '\n'
+        }
+    }
+    pub fn handle_event(&mut self, key: &OSKey, chars: &Option<String>) {
+        match key {
+            OSKey::Keyboard(keycode) => match keycode {
+                OSKeyCode::KeyBackspace => {
+                    if self.idx > 0 {
+                        self.buffer.borrow_mut().remove(self.idx);
+                        self.update_cursor_loc(self.idx - 1);
+                    }
+                }
+                OSKeyCode::KeyLeftArrow => {
+                    if self.idx > 0 {
+                        self.update_cursor_loc(self.idx - 1);
+                    }
+                }
+                OSKeyCode::KeyRightArrow => {
+                    if self.idx < self.buffer.borrow().len() {
+                        self.update_cursor_loc(self.idx + 1);
+                    }
+                }
+                OSKeyCode::KeyDownArrow => {
+                    if self.multiline {
+                        // TODO(xarkes): todo implement me
+                        // let newidx =
+                        // self.idx = newidx;
+                    }
+                }
+                OSKeyCode::KeyUpArrow => {}
+                OSKeyCode::KeyEnter => {
+                    if self.multiline {
+                        self.buffer.borrow_mut().insert_str(self.idx, "\n");
+                        self.update_cursor_loc(self.idx + 1);
+                    }
+                }
+                _ => {
+                    self.buffer
+                        .borrow_mut()
+                        .insert_str(self.idx, chars.as_ref().unwrap().as_str());
+                    self.update_cursor_loc(self.idx + 1);
+                }
+            },
+            _ => {}
+        }
+    }
 }
 
 pub struct IMUI {
@@ -640,19 +772,22 @@ impl IMUI {
     ) -> UIWidgetRef {
         let widget = self.create_ui_widget(UIWidgetFlag::MouseClickable as u64);
         let font_size = 12.;
-        // XXX: Only support monospace font atm, should add compute method
-        let char_width = 7.;
         if widget.borrow().clicked() {
+            debug_assert!(self.event.mouse.is_some());
             // xarkes: update the text input global state
-            let idx =
-                ((self.event.mouse.unwrap().0 - widget.borrow().bounds.x0) / (char_width)) as usize;
-            let idx = std::cmp::min(idx, text_buffer.borrow().len());
-            self.text_input_state = Some(IMUITextInputState {
-                focus: String::from(id),
-                buffer: text_buffer.clone(),
-                idx,
+            let mut state = IMUITextInputState::new(
+                String::from(id),
+                self.drawer.renderer.font_cache.clone(),
+                text_buffer.clone(),
                 multiline,
-            });
+            );
+            state.compute_valid_cursor_loc(
+                &widget.borrow().bounds,
+                &text_buffer.borrow(),
+                font_size,
+                self.event.mouse.unwrap(),
+            );
+            self.text_input_state = Some(state);
         }
 
         // background
@@ -661,21 +796,25 @@ impl IMUI {
 
         // text
         if multiline {
-            const SHOW_LINE_NUMBERS: bool = true;
+            const SHOW_LINE_NUMBERS: bool = false;
 
             let mut y = widget.borrow().bounds.y0;
-            for line in text_buffer.borrow().lines() {
-                // if SHOW_LINE_NUMBERS {
-                // self.drawer.draw_text()
-                // }
-                self.drawer.draw_text(
-                    widget.borrow().bounds.x0,
-                    y,
-                    12,
-                    line,
-                    line.len(),
-                    color_rgb(0, 0, 0),
-                );
+            for (i, line) in text_buffer.borrow().lines().enumerate() {
+                let mut x = widget.borrow().bounds.x0;
+                let linenum = format!("{}", i + 1);
+                if SHOW_LINE_NUMBERS {
+                    self.drawer.draw_text(
+                        widget.borrow().bounds.x0,
+                        y,
+                        12,
+                        linenum.as_str(),
+                        linenum.len(),
+                        color_rgb(0, 0, 0),
+                    );
+                    x = widget.borrow().bounds.x0 + 24.;
+                }
+                self.drawer
+                    .draw_text(x, y, 12, line, line.len(), color_rgb(0, 0, 0));
                 y += 14.;
                 if y >= widget.borrow().bounds.y1 {
                     break;
@@ -699,9 +838,10 @@ impl IMUI {
         };
         if show_cursor {
             // XXX: We assume here monospace font
-            let cursorx = widget.borrow().bounds.x0
-                + char_width * self.text_input_state.as_ref().unwrap().idx as f32;
-            let cursory = widget.borrow().bounds.y0;
+            let cursorx =
+                widget.borrow().bounds.x0 + self.text_input_state.as_ref().unwrap().cursor_x;
+            let cursory =
+                widget.borrow().bounds.y0 + self.text_input_state.as_ref().unwrap().cursor_y;
             self.drawer.draw_rect(
                 &RectCoords::from_size(cursorx, cursory, 2., font_size + 4.),
                 Color::from_text("#111"),
@@ -756,7 +896,8 @@ impl IMUI {
         let oldwidth = self.params.width;
         let oldheight = self.params.height;
         self.params.width = UISize::Pixels(label_size.0);
-        self.params.height = UISize::Pixels(self.drawer.renderer.font_cache.line_height(12.));
+        self.params.height =
+            UISize::Pixels(self.drawer.renderer.font_cache.borrow().line_height(12.));
         let widget = self.create_ui_widget(0);
         self.params.width = oldwidth;
         self.params.height = oldheight;
@@ -790,6 +931,8 @@ impl IMUI {
                 self.event.mouse = ev.pos;
             } else if ev.ty == OSEventType::Press && ev.key == OSKey::LeftMouseButton {
                 self.event.click = ev.pos;
+                self.event.mouse = ev.pos; // Handles when a click happens before the mouse is moved
+
                 // xarkes: when there is a click anywhere, reset the text input global state
                 // if the click happens to be on something clickable, then the widget will handle it,
                 // if not this resets the current state
@@ -801,49 +944,12 @@ impl IMUI {
 
             // xarkes: consume global keyboard events
             if ev.ty == OSEventType::Press {
-                // if ev.key >= OSKey::KeyA && ev.key <= OSKey::KeyZ {}
                 if let Some(textinput) = self.text_input_state.as_mut() {
-                    match &ev.key {
-                        OSKey::Keyboard(keycode) => match keycode {
-                            OSKeyCode::KeyBackspace => {
-                                if textinput.idx > 0 {
-                                    textinput.idx -= 1;
-                                    textinput.buffer.borrow_mut().remove(textinput.idx);
-                                }
-                            }
-                            OSKeyCode::KeyLeftArrow => {
-                                if textinput.idx > 0 {
-                                    textinput.idx -= 1;
-                                }
-                            }
-                            OSKeyCode::KeyRightArrow => {
-                                if textinput.idx < textinput.buffer.borrow().len() {
-                                    textinput.idx += 1;
-                                }
-                            }
-                            OSKeyCode::KeyDownArrow => {}
-                            OSKeyCode::KeyUpArrow => {}
-                            OSKeyCode::KeyEnter => {
-                                if textinput.multiline {
-                                    textinput
-                                        .buffer
-                                        .borrow_mut()
-                                        .insert_str(textinput.idx, "\n");
-                                    textinput.idx += 1;
-                                }
-                            }
-                            _ => {
-                                textinput
-                                    .buffer
-                                    .borrow_mut()
-                                    .insert_str(textinput.idx, ev.chars.as_ref().unwrap().as_str());
-                                textinput.idx += 1;
-                            }
-                        },
-                        _ => {}
-                    }
+                    textinput.handle_event(&ev.key, &ev.chars);
                 }
             }
+
+            // TODO(xarkes): we may want to propagate the event back to the OS window when the application did not consume them
         }
     }
     pub fn get_events(&mut self) {
