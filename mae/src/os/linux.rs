@@ -137,7 +137,7 @@ unsafe extern "C" {
 }
 pub fn timer_init() -> f64 {
     // xarkes: no init required with current implem on Linux
-    1.
+    1_000_000_000_000.
 }
 pub fn timer_value() -> u64 {
     let CLOCK_MONOTONIC_RAW = 4;

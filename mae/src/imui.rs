@@ -815,7 +815,12 @@ impl IMUI {
                 }
                 self.drawer
                     .draw_text(x, y, 12, line, line.len(), color_rgb(0, 0, 0));
-                y += 14.;
+                y += self
+                    .drawer
+                    .renderer
+                    .font_cache
+                    .borrow()
+                    .line_height(font_size);
                 if y >= widget.borrow().bounds.y1 {
                     break;
                 }

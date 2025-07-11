@@ -18,6 +18,7 @@ type GLXCreateContextAttribsARBProc = unsafe extern "C" fn(
     _1: i32,
     _0: *const i32,
 ) -> *mut __GLXcontextRec;
+type GLXSwapIntervalMESA = unsafe extern "C" fn(_0: i32);
 
 pub fn ogl_create_context(win: &Window) -> GLContextHandle {
     let glcontext;
@@ -88,40 +89,6 @@ pub fn ogl_create_context(win: &Window) -> GLContextHandle {
         let vi = glx::glXGetVisualFromFBConfig(win.display, fbc);
         println!("{:?}", vi);
 
-        // xarkes: we don't support < ~3.3 for now
-        #[cfg(target_os = "none/todo")]
-        {
-            #[allow(non_snake_case)]
-            let glxCreateContextAttribs = glx::glXGetProcAddressARB(
-                std::ffi::CString::new("glXCreateContextAttribsARB")
-                    .unwrap()
-                    .as_ptr(),
-            );
-            if glxCreateContextAttribs.is_none() {
-                println!(
-                    "Could not load glXCreateContextAttribsARB! Is your OpenGL version too old?"
-                );
-                glcontext = glx::glXCreateContext(win.display, vi, std::ptr::null_mut(), 1);
-            } else {
-                #[allow(non_snake_case)]
-                let glxCreateContextAttribs: GLXCreateContextAttribsARBProc =
-                    std::mem::transmute(glxCreateContextAttribs.unwrap());
-                let attribs = [
-                    //glx::arb::GLX_CONTEXT_MAJOR_VERSION_ARB,
-                    // 1,
-                    // glx::arb::GLX_CONTEXT_MINOR_VERSION_ARB,
-                    // 1,
-                    0,
-                ];
-                glcontext = glxCreateContextAttribs(
-                    win.display as *const std::ffi::c_void,
-                    vi as *const std::ffi::c_void,
-                    std::ptr::null_mut(),
-                    1,
-                    0 as *const i32, // &attribs as *const i32,
-                );
-            }
-        }
         glcontext = glx::glXCreateContext(win.display, vi, std::ptr::null_mut(), 1);
         if glcontext.is_null() {
             panic!("GLContext creation failed!");
@@ -152,5 +119,18 @@ pub fn ogl_toggle_vsync(ctx: &GLContextHandle, enable: bool) {
         true => 1i32,
         false => 0i32,
     };
-    unsafe { xlib::XSync(ctx.display, val) };
+    unsafe {
+        let glx_swap_interval_mesa = glx::glXGetProcAddress(
+            std::ffi::CString::new("glXSwapIntervalMESA")
+                .unwrap()
+                .as_ptr() as *const u8,
+        );
+        if let Some(func) = glx_swap_interval_mesa {
+            let swapIntervalFunc: GLXSwapIntervalMESA = std::mem::transmute(func);
+            swapIntervalFunc(val);
+        } else {
+            println!("vsync toggle failure");
+        }
+    }
+    // unsafe { xlib::XSync(ctx.display, val) };
 }
