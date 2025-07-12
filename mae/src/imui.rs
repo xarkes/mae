@@ -366,7 +366,7 @@ impl IMUITextInputState {
             OSKey::Keyboard(keycode) => match keycode {
                 OSKeyCode::KeyBackspace => {
                     if self.idx > 0 {
-                        self.buffer.borrow_mut().remove(self.idx);
+                        self.buffer.borrow_mut().remove(self.idx - 1);
                         self.update_cursor_loc(self.idx - 1);
                     }
                 }
@@ -383,8 +383,6 @@ impl IMUITextInputState {
                 OSKeyCode::KeyDownArrow => {
                     if self.multiline {
                         // TODO(xarkes): todo implement me
-                        // let newidx =
-                        // self.idx = newidx;
                     }
                 }
                 OSKeyCode::KeyUpArrow => {}

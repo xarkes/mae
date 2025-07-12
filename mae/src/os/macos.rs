@@ -362,6 +362,7 @@ fn macos_keycode_to_oskey(keycode: u16) -> OSKey {
         0x6A => OSKey::Keyboard(OSKeyCode::KeyF16),
         0x6B => OSKey::Keyboard(OSKeyCode::KeyF14),
         0x6D => OSKey::Keyboard(OSKeyCode::KeyF10),
+        0x6E => OSKey::Keyboard(OSKeyCode::KeyMenu),
         0x6F => OSKey::Keyboard(OSKeyCode::KeyF12),
         0x71 => OSKey::Keyboard(OSKeyCode::KeyF15),
         // 0x72 => OSKey::Keyboard(OSKeyCode::KeyHelp),
@@ -377,6 +378,9 @@ fn macos_keycode_to_oskey(keycode: u16) -> OSKey {
         0x7C => OSKey::Keyboard(OSKeyCode::KeyRightArrow),
         0x7D => OSKey::Keyboard(OSKeyCode::KeyDownArrow),
         0x7E => OSKey::Keyboard(OSKeyCode::KeyUpArrow),
-        _ => OSKey::LeftMouseButton, // XXX: This is wrong
+        _ => {
+            println!("Warning: keyboard key not handled: {:?}", keycode);
+            OSKey::Keyboard(OSKeyCode::KeyA)
+        }
     }
 }

@@ -23,7 +23,7 @@ type GLXSwapIntervalMESA = unsafe extern "C" fn(_0: i32);
 pub fn ogl_create_context(win: &Window) -> GLContextHandle {
     let glcontext;
     unsafe {
-        // XXX: We may be using Wayland
+        // TODO(xarkes): Support native wayland
         let screen = x11::xlib::XDefaultScreen(win.display);
         let visual_attribs = vec![
             glx::GLX_X_RENDERABLE,
