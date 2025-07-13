@@ -237,7 +237,7 @@ fn x11_keysym_to_oskey(keysym: u32) -> OSKey {
         // x11::keysym::XK_plus => OSKey::Keyboard(OSKeyCode::KeyEqual),
         x11::keysym::XK_comma => OSKey::Keyboard(OSKeyCode::KeyComma),
         x11::keysym::XK_minus => OSKey::Keyboard(OSKeyCode::KeyMinus),
-        // x11::keysym::XK_period => OSKey::Keyboard(OSKeyCode::),
+        x11::keysym::XK_period => OSKey::Keyboard(OSKeyCode::KeyPeriod),
         x11::keysym::XK_slash => OSKey::Keyboard(OSKeyCode::KeySlash),
         x11::keysym::XK_0 => OSKey::Keyboard(OSKeyCode::Key0),
         x11::keysym::XK_1 => OSKey::Keyboard(OSKeyCode::Key1),
