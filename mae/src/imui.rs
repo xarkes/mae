@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;
@@ -93,7 +93,9 @@ type UIWidgetRef = Rc<RefCell<UIWidget>>;
 
 #[repr(u64)]
 enum UIWidgetFlag {
-    MouseClickable = 1u64,
+    Clickable = 1u64,
+    Draggable = 2u64 + 1, // Draggable implies clickable
+    Resizable = 4u64 + 1, // Resizable implies clickable
 }
 
 #[repr(u64)]
@@ -131,11 +133,12 @@ impl UISize {
 
 pub enum UIPosition {
     Relative(UISize, UISize),
-    Fixed(UISize, UISize),
+    // Fixed(UISize, UISize),
 }
 
 pub enum UILayout {
     Default,
+    Absolute,
 }
 
 pub struct UIWidget {
@@ -159,7 +162,13 @@ impl UIWidget {
     }
 
     fn clickable(&self) -> bool {
-        (self.flags & UIWidgetFlag::MouseClickable as u64) > 0
+        (self.flags & UIWidgetFlag::Clickable as u64) == UIWidgetFlag::Clickable as u64
+    }
+    fn draggable(&self) -> bool {
+        (self.flags & UIWidgetFlag::Draggable as u64) == UIWidgetFlag::Draggable as u64
+    }
+    fn resizable(&self) -> bool {
+        (self.flags & UIWidgetFlag::Resizable as u64) == UIWidgetFlag::Resizable as u64
     }
 }
 
@@ -172,6 +181,7 @@ pub struct UIWidgetParams {
     position: UIPosition,
     layout: UILayout,
     text_align: UITextAlign,
+    flags: u64,
 }
 impl UIWidgetParams {
     pub fn new(parent: UIWidgetRef) -> Self {
@@ -189,11 +199,16 @@ impl UIWidgetParams {
             position: UIPosition::Relative(UISize::Pixels(0.), UISize::Pixels(0.)),
             layout: UILayout::Default,
             text_align: UITextAlign::Left,
+            flags: 0,
         }
     }
     pub fn size(&mut self, w: UISize, h: UISize) -> &mut Self {
         self.width(w);
         self.height(h);
+        self
+    }
+    pub fn flags(&mut self, flags: u64) -> &mut Self {
+        self.flags = flags;
         self
     }
     pub fn width(&mut self, w: UISize) -> &mut Self {
@@ -247,6 +262,9 @@ struct IMUIEvents {
     mouse: Option<Point>,
     click: Option<Point>,
     release: Option<Point>,
+
+    drag_pos: Option<Point>,
+    drag_cache: HashMap<String, Point>,
 }
 
 #[cfg(debug_assertions)]
@@ -552,74 +570,74 @@ impl IMUI {
     fn draw_debug_pane(&mut self) {
         self.params.reset();
         let box_width = 200.;
-        // TODO(xarkes): Problem: How do we define the height...
-        // a) do a "pre-render" that will compute all layout
-        // b) ..?
         self.params
-            .position(UIPosition::Fixed(
-                UISize::Pixels(self.size.0 - box_width),
-                UISize::Pixels(40.),
-            ))
+            // .position(UIPosition::Fixed(
+            //     UISize::Pixels(self.size.0 - box_width),
+            //     UISize::Pixels(40.),
+            // ))
             .parent(self.root.clone())
             .size(UISize::Pixels(box_width), UISize::Pixels(80.))
+            .flags(UIWidgetFlag::Draggable as u64 | UIWidgetFlag::Resizable as u64)
             .color(color_rgb(40, 60, 140));
-        let uibox = self.widget();
-        self.params.reset();
-        self.params
-            .parent(uibox.clone())
-            .text_align(UITextAlign::Center);
-        self.label("Debugging panel");
+        let id = format!("{}:{}", file!(), line!());
+        self.container(id, |ui, parent| {
+            ui.params.reset();
+            ui.params
+                .parent(parent.clone())
+                .text_align(UITextAlign::Center);
+            ui.label("Debugging panel");
 
-        // Debug checkbox
-        let mut box_checked = self.debug.hints;
-        self.checkbox(&mut box_checked);
-        if box_checked != self.debug.hints {
-            self.debug.hints = box_checked;
-        }
-        // TODO(xarkes): This sucks, you have to define better alternatives
-        self.params
-            .position(UIPosition::Relative(
-                UISize::Pixels(25.),
-                UISize::Pixels(-20.),
-            ))
-            .text_align(UITextAlign::Left);
-        self.label("Show debug hints");
+            // Debug checkbox
+            let mut box_checked = ui.debug.hints;
+            ui.checkbox(&mut box_checked);
+            if box_checked != ui.debug.hints {
+                ui.debug.hints = box_checked;
+            }
+            // TODO(xarkes): This sucks, you have to define better alternatives
+            ui.params
+                .position(UIPosition::Relative(
+                    UISize::Pixels(25.),
+                    UISize::Pixels(-20.),
+                ))
+                .text_align(UITextAlign::Left);
+            ui.label("Show debug hints");
 
-        // FPS checkbox
-        let mut box_checked = self.debug.fps;
-        self.params
-            .parent(uibox.clone())
-            .position(UIPosition::Relative(UISize::Pixels(0.), UISize::Pixels(0.)));
-        self.checkbox(&mut box_checked);
-        if box_checked != self.debug.fps {
-            self.debug.fps = box_checked;
-        }
-        // TODO(xarkes): This sucks, you have to define better alternatives
-        self.params
-            .position(UIPosition::Relative(
-                UISize::Pixels(25.),
-                UISize::Pixels(-20.),
-            ))
-            .text_align(UITextAlign::Left);
-        self.label("Show FPS");
+            // FPS checkbox
+            let mut box_checked = ui.debug.fps;
+            ui.params
+                .parent(parent.clone())
+                .position(UIPosition::Relative(UISize::Pixels(0.), UISize::Pixels(0.)));
+            ui.checkbox(&mut box_checked);
+            if box_checked != ui.debug.fps {
+                ui.debug.fps = box_checked;
+            }
+            // TODO(xarkes): This sucks, you have to define better alternatives
+            ui.params
+                .position(UIPosition::Relative(
+                    UISize::Pixels(25.),
+                    UISize::Pixels(-20.),
+                ))
+                .text_align(UITextAlign::Left);
+            ui.label("Show FPS");
 
-        // Target element
-        self.params
-            .position(UIPosition::Relative(UISize::Pixels(0.), UISize::Pixels(4.)));
-        if let Some(target) = &self.debug.target {
-            // XXX(xarkes): this is stupid, you wont get any update on the element as it is recreated each time...
-            let txt = format!(
-                "{}x{}",
-                target.borrow().bounds.width(),
-                target.borrow().bounds.height()
-            );
-            self.label(txt.as_str());
-        } else {
-            self.label("<No element selected>");
-        }
+            // Target element
+            ui.params
+                .position(UIPosition::Relative(UISize::Pixels(0.), UISize::Pixels(4.)));
+            if let Some(target) = &ui.debug.target {
+                // XXX(xarkes): this is stupid, you wont get any update on the element as it is recreated each time...
+                let txt = format!(
+                    "{}x{}",
+                    target.borrow().bounds.width(),
+                    target.borrow().bounds.height()
+                );
+                ui.label(txt.as_str());
+            } else {
+                ui.label("<No element selected>");
+            }
+        });
     }
 
-    fn create_ui_widget(&mut self, flags: u64) -> UIWidgetRef {
+    fn create_ui_widget(&mut self, flags: u64, id: Option<String>) -> UIWidgetRef {
         // xarkes: apply layout properties and compute bounds
         let bounds = self.compute_layout_bounds();
         let mut w = UIWidget {
@@ -629,6 +647,18 @@ impl IMUI {
             flags,
             events: 0,
         };
+
+        // xarkes: pre-update dragged widget positions for events to work
+        if w.draggable() {
+            let id = id.as_ref().unwrap();
+            if let Some(dragpos) = self.event.drag_cache.get(id) {
+                // widget was dragged, update its position
+                w.bounds.x0 += dragpos.0;
+                w.bounds.x1 += dragpos.0;
+                w.bounds.y0 += dragpos.1;
+                w.bounds.y1 += dragpos.1;
+            }
+        }
 
         // xarkes: apply events flags
         if point_in_rect(&w.bounds, self.event.mouse) {
@@ -640,6 +670,39 @@ impl IMUI {
             w.events |= UIWidgetEvent::MouseReleased as u64;
             // xarkes: consume the release so clicked() triggers only once
             self.event.release = None;
+        }
+
+        // xarkes: update draggable position
+        if w.draggable() {
+            let id = id.as_ref().unwrap();
+            if w.click() {
+                if self.event.drag_pos.is_none() {
+                    // save the first click
+                    self.event.drag_pos = self.event.mouse;
+                } else {
+                    let dist_x = self.event.mouse.unwrap().0 - self.event.drag_pos.unwrap().0;
+                    let dist_y = self.event.mouse.unwrap().1 - self.event.drag_pos.unwrap().1;
+                    w.bounds.x0 += dist_x;
+                    w.bounds.x1 += dist_x;
+                    w.bounds.y0 += dist_y;
+                    w.bounds.y1 += dist_y;
+                }
+            } else if self.event.drag_pos.is_some() {
+                let old_distance = match self.event.drag_cache.get(id) {
+                    Some(dist) => dist,
+                    None => &(0., 0.),
+                };
+                self.event.drag_cache.insert(
+                    id.clone(),
+                    (
+                        old_distance.0 + self.event.mouse.unwrap().0
+                            - self.event.drag_pos.unwrap().0,
+                        old_distance.1 + self.event.mouse.unwrap().1
+                            - self.event.drag_pos.unwrap().1,
+                    ),
+                );
+                self.event.drag_pos = None;
+            }
         }
 
         // xarkes: update child and parent relationships
@@ -678,10 +741,9 @@ impl IMUI {
                     None => (x.pixels(parent.bounds.x0), y.pixels(parent.bounds.y0)),
                 };
                 (parent.bounds.x0 + mx, parent.bounds.y0 + my)
-            }
-            UIPosition::Fixed(x, y) => {
-                (x.pixels(parent.bounds.x0), y.pixels(parent.bounds.height()))
-            }
+            } // UIPosition::Fixed(x, y) => {
+              //     (x.pixels(parent.bounds.x0), y.pixels(parent.bounds.height()))
+              // }
         };
 
         let w = self.params.width.pixels(parent.bounds.width());
@@ -755,11 +817,23 @@ impl IMUI {
             }
         }
     }
-    pub fn widget(&mut self) -> UIWidgetRef {
-        let widget = self.create_ui_widget(0);
+    // pub fn widget(&mut self) -> UIWidgetRef {
+    //     let widget = self.create_ui_widget(0);
+    //     self.drawer
+    //         .draw_rect(&widget.borrow().bounds, self.params.color);
+    //     widget
+    // }
+    pub fn container(
+        &mut self,
+        id: String,
+        mut drawfunction: impl FnMut(&mut IMUI, UIWidgetRef),
+    ) -> UIWidgetRef {
+        let flags = self.params.flags;
+        let container = self.create_ui_widget(flags, Some(id));
         self.drawer
-            .draw_rect(&widget.borrow().bounds, self.params.color);
-        widget
+            .draw_rect(&container.borrow().bounds, self.params.color);
+        drawfunction(self, container.clone());
+        container
     }
     pub fn checkbox(&mut self, state: &mut bool) -> UIWidgetRef {
         // XXX(xarkes): Just a hack for now, think better about this
@@ -767,7 +841,7 @@ impl IMUI {
         let oldheight = self.params.height;
         self.params.width = UISize::Pixels(20.);
         self.params.height = UISize::Pixels(20.);
-        let checkbox = self.create_ui_widget(UIWidgetFlag::MouseClickable as u64);
+        let checkbox = self.create_ui_widget(UIWidgetFlag::Clickable as u64, None);
         self.params.width = oldwidth;
         self.params.height = oldheight;
 
@@ -819,7 +893,8 @@ impl IMUI {
         id: &str,
         multiline: bool,
     ) -> UIWidgetRef {
-        let widget = self.create_ui_widget(UIWidgetFlag::MouseClickable as u64);
+        // TODO(xarkes): once you rewrite this, think of the LTR text inputs and handle it
+        let widget = self.create_ui_widget(UIWidgetFlag::Clickable as u64, None);
         let font_size = 12.;
         if widget.borrow().clicked() {
             // xarkes: update the text input global state
@@ -904,43 +979,41 @@ impl IMUI {
         widget
     }
     pub fn button(&mut self, label: Option<&str>) -> UIWidgetRef {
-        let button = self.create_ui_widget(UIWidgetFlag::MouseClickable as u64);
-        {
-            let uibox = button.borrow();
-            let bg_color = match uibox.hover() {
-                false => self.params.color,
-                true => V4f32 {
-                    r: self.params.color.r * 1.1,
-                    g: self.params.color.g * 1.1,
-                    b: self.params.color.b * 1.1,
-                    a: self.params.color.a,
-                },
-            };
-            let draw_off = match uibox.click() {
-                false => 0.,
-                true => 1.,
-            };
-            self.drawer.draw_rect(
-                &RectCoords {
-                    x0: uibox.bounds.x0 + draw_off,
-                    y0: uibox.bounds.y0 + draw_off,
-                    x1: uibox.bounds.x1 + draw_off,
-                    y1: uibox.bounds.y1 + draw_off,
-                },
-                bg_color,
+        let button = self.create_ui_widget(UIWidgetFlag::Clickable as u64, None);
+        let uibox = button.borrow();
+        let bg_color = match uibox.hover() {
+            false => self.params.color,
+            true => V4f32 {
+                r: self.params.color.r * 1.1,
+                g: self.params.color.g * 1.1,
+                b: self.params.color.b * 1.1,
+                a: self.params.color.a,
+            },
+        };
+        let draw_off = match uibox.click() {
+            false => 0.,
+            true => 1.,
+        };
+        self.drawer.draw_rect(
+            &RectCoords {
+                x0: uibox.bounds.x0 + draw_off,
+                y0: uibox.bounds.y0 + draw_off,
+                x1: uibox.bounds.x1 + draw_off,
+                y1: uibox.bounds.y1 + draw_off,
+            },
+            bg_color,
+        );
+        if let Some(label) = label {
+            self.drawer.draw_text(
+                uibox.bounds.x0 + draw_off,
+                uibox.bounds.y0 + draw_off,
+                12,
+                label,
+                label.len(),
+                draw::color::WHITE,
             );
-            if let Some(label) = label {
-                self.drawer.draw_text(
-                    uibox.bounds.x0 + draw_off,
-                    uibox.bounds.y0 + draw_off,
-                    12,
-                    label,
-                    label.len(),
-                    draw::color::WHITE,
-                );
-            }
         }
-        button
+        button.clone()
     }
     pub fn label(&mut self, label: &str) -> UIWidgetRef {
         let label_size = self.drawer.get_text_size(12, label, label.len());
@@ -951,7 +1024,7 @@ impl IMUI {
         self.params.width = UISize::Pixels(label_size.0);
         self.params.height =
             UISize::Pixels(self.drawer.renderer.font_cache.borrow().line_height(12.));
-        let widget = self.create_ui_widget(0);
+        let widget = self.create_ui_widget(0, None);
         self.params.width = oldwidth;
         self.params.height = oldheight;
 

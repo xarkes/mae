@@ -1,6 +1,8 @@
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 
+use mae::imui;
 use mae::imui::IMUI;
 use mae::imui::UISize;
 
@@ -62,6 +64,14 @@ impl NoteApp {
             Some(curnote.buffer.as_ref().unwrap().clone())
         }
     }
+
+    pub fn new_buffer(&mut self) {
+        self.notes.push(Note {
+            filename: String::from("newfile"),
+            filepath: PathBuf::new(),
+            buffer: Some(Rc::new(RefCell::new(String::new()))),
+        });
+    }
 }
 
 fn main() {
@@ -69,10 +79,38 @@ fn main() {
     let mut noteapp = NoteApp::new(HOME_FOLDER);
 
     // xarkes: draw UI
-    let default_buffer = noteapp.get_buffer().unwrap();
     let mut ui = IMUI::new(1024, 768);
+
     ui.eventloop(|ui| {
-        ui.params().size(UISize::Percents(1.), UISize::Percents(1.));
-        ui.textarea(default_buffer.clone(), "maintextarea");
+        // top label
+        ui.params()
+            .size(UISize::Percents(1.), UISize::Pixels(40.))
+            .text_align(mae::imui::UITextAlign::Center);
+        ui.label(noteapp.notes.last().unwrap().filename.as_str());
+
+        // textarea
+        ui.params()
+            .size(UISize::Percents(1.), UISize::Percents(0.9));
+        let tx = ui.textarea(noteapp.get_buffer().unwrap().clone(), "maintextarea");
+        if tx.borrow().clicked() {
+            println!("tx clicked");
+        }
+
+        // new note button
+        ui.params()
+            .parent(tx)
+            .size(UISize::Pixels(30.), UISize::Pixels(30.))
+            // .position(imui::UIPosition::Fixed(
+            //     UISize::Percents(0.5),
+            //     UISize::Percents(1.),
+            // ))
+            .color(imui::Color::from_text("#4466ff"));
+        let but = ui.button(None);
+        if but.borrow().clicked() {
+            // TODO(xarkes): We have to properly handle the events hierarchy (depth, who handles the click?)
+            // same problem as with the layout: how do you know if there is a widget above you catching the click event if you are handling the events while being drawn?
+            println!("clickme");
+            noteapp.new_buffer();
+        }
     });
 }

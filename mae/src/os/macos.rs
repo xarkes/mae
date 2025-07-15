@@ -221,15 +221,24 @@ impl Window {
                             pos: None,
                             chars: Some(ev.characters().unwrap().to_string()),
                         }),
+                        NSEventType::LeftMouseDragged => Some(OSEvent {
+                            ty: OSEventType::MouseMove,
+                            key: OSKey::LeftMouseButton,
+                            pos: Some(self.translate_loc(ev.locationInWindow())),
+                            chars: None,
+                        }),
                         // NSEventType::FlagsChanged => Some(OSEvent {
 
                         // }),
                         _ => None,
                     };
-                    // xarkes: send the event to the NSApplication
-                    // if ev.r#type() != NSEventType::KeyDown && ev.r#type() != NSEventType::KeyUp {
-                    app.sendEvent(&ev);
+                    // if new_ev.is_none() {
+                    //     println!("Unhandled event: {:?}", ev);
                     // }
+                    // xarkes: send the event to the NSApplication
+                    if ev.r#type() != NSEventType::KeyDown && ev.r#type() != NSEventType::KeyUp {
+                        app.sendEvent(&ev);
+                    }
                     if let Some(new_ev) = new_ev {
                         events.push(new_ev);
                     }

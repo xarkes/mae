@@ -157,6 +157,7 @@ fn main() {
     ui.params().parent(root);\n\n";
         let mut content = String::from(start);
         for tag in &self.tags {
+            content.push_str("    ");
             content.push_str(tag.to_rust().as_str());
         }
         content.push_str("\n  }\n}");
