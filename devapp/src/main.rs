@@ -26,28 +26,28 @@ enum XMLTag {
 impl XMLTag {
     pub fn to_imui(&self, ui: &mut IMUI) {
         match self {
-            XMLTag::Label(label, color) => {
-                if let Some(color) = color {
-                    ui.rparams().color(*color);
-                }
-                ui.label(&label);
-            }
-            XMLTag::Button(label, color, width, height) => {
-                if let Some(color) = color {
-                    ui.rparams().color(*color);
-                }
-                let label = match label {
-                    Some(txt) => Some(txt.as_str()),
-                    None => None,
-                };
-                if let Some(width) = width {
-                    ui.rparams().width(*width);
-                }
-                if let Some(height) = height {
-                    ui.rparams().height(*height);
-                }
-                ui.button(label);
-            }
+            // XMLTag::Label(label, color) => {
+            //     if let Some(color) = color {
+            //         ui.rparams().color(*color);
+            //     }
+            //     ui.label(&label);
+            // }
+            // XMLTag::Button(label, color, width, height) => {
+            //     if let Some(color) = color {
+            //         ui.rparams().color(*color);
+            //     }
+            //     let label = match label {
+            //         Some(txt) => Some(txt.as_str()),
+            //         None => None,
+            //     };
+            //     if let Some(width) = width {
+            //         ui.rparams().width(*width);
+            //     }
+            //     if let Some(height) = height {
+            //         ui.rparams().height(*height);
+            //     }
+            //     ui.button(label);
+            // }
             _ => {}
         }
     }
@@ -214,7 +214,7 @@ fn main() {
     // xarkes: initialize UI and print as parsing happens
     let mut ui = IMUI::new(1024, 768);
     ui.eventloop(|ui| {
-        ui.params();
+        // ui.params();
         uifile.lock().unwrap().to_imui(ui);
     });
 }

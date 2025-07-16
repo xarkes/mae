@@ -1,4 +1,4 @@
-use crate::imui;
+use crate::render::Point;
 
 #[cfg(all(
     not(target_os = "macos"),
@@ -142,7 +142,7 @@ pub enum OSKey {
 pub struct OSEvent {
     pub ty: OSEventType,
     pub key: OSKey,
-    pub pos: Option<imui::Point>,
+    pub pos: Option<Point>,
     pub chars: Option<String>,
 }
 

@@ -1,22 +1,5 @@
 use crate::render::{Extra, Rect2DInst, RectCoords, Renderer, V4f32};
 
-pub mod color {
-    use crate::render::V4f32;
-
-    pub const FPS: V4f32 = V4f32 {
-        r: 1.0,
-        g: 0.2,
-        b: 0.2,
-        a: 1.0,
-    };
-    pub const WHITE: V4f32 = V4f32 {
-        r: 1.0,
-        g: 1.0,
-        b: 1.0,
-        a: 1.0,
-    };
-}
-
 pub struct Drawer {
     pub renderer: Renderer,
 }
@@ -116,7 +99,7 @@ impl Drawer {
         text: &str,
         length: usize,
         color: V4f32,
-    ) {
+    ) -> f32 {
         // xarkes: Generate glyph for each string character and update texture if needed
         // This is likely dumb, but that's it for now
         {
@@ -134,6 +117,7 @@ impl Drawer {
             }
         }
 
+        let xstart = x as f32;
         let mut x = x as f32;
         let y = y + size as f32;
         for (i, c) in text.char_indices() {
@@ -178,5 +162,6 @@ impl Drawer {
             }
             x += glyph.advance;
         }
+        x - xstart
     }
 }
