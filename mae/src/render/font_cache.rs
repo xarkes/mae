@@ -73,11 +73,8 @@ where
     }
 }
 
-// TODO(xarkes): Seems like max glyph count is not really relevant, as what matters is if the atlas texture(s)
-// is full or not
+// TODO(xarkes): Seems like max glyph count is not really relevant, as what matters is if the atlas texture(s) is full or not
 const CACHE_GLYPH_COUNT: usize = 512;
-// TODO(xarkes): Rasterize for the right size?
-const FONT_SIZE_RASTER: usize = 12;
 const ATLAS_WIDTH: usize = 1024;
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -154,10 +151,14 @@ impl Atlas {
     }
 }
 
-pub struct FontCache {
-    font: fontdue::Font,
+struct GlyphCache {
     table: LRUCache<char, Glyph>,
     table_ascii: [Glyph; 256],
+}
+
+pub struct FontCache {
+    font: fontdue::Font,
+    glyph_cache: HashMap<u32, GlyphCache>,
     atlas: Atlas,
 }
 impl FontCache {
@@ -184,56 +185,80 @@ impl FontCache {
         //         as &[u8];
         // let font = include_bytes!("/System/Library/Fonts/Apple Symbols.ttf") as &[u8];
         let font = fontdue::Font::from_bytes(font, fontdue::FontSettings::default()).unwrap();
-        let mut fc = FontCache {
+        FontCache {
             font,
-            table: LRUCache::new(CACHE_GLYPH_COUNT),
-            table_ascii: [Glyph::default(); 256],
+            glyph_cache: HashMap::new(),
             atlas: Atlas::new(),
-        };
-
-        // xarkes: Pre-fill the cache for ASCII
-        for ccode in 0..=255u8 {
-            fc.add(ccode as char);
         }
-        fc
     }
 
     /// Add a glyph to the cache
     /// Must be called only if you are sure the glyph is not in the cache already
-    fn add(&mut self, glyph: char) -> Option<&Glyph> {
-        assert!(self.table.get(&glyph).is_none());
+    fn add(&mut self, glyph: char, size: f32) -> Option<&Glyph> {
+        let keysize = size as u32;
         if !self.font.has_glyph(glyph) {
-            // println!(
-            //     "glyph '{:?}' not found, switch font?",
-            //     glyph.to_string().into_bytes()
-            // );
-            return None;
+            return self.get('?', size).0;
         }
-        let (metrics, bitmap) = self.font.rasterize(glyph, FONT_SIZE_RASTER as f32);
+
+        let cache = self.glyph_cache.get_mut(&keysize).unwrap();
+        assert!(cache.table.get(&glyph).is_none());
+        let (metrics, bitmap) = self.font.rasterize(glyph, size);
         let glyph_data = self.atlas.add_glyph(metrics, bitmap);
         if glyph.len_utf8() == 1 {
-            self.table_ascii[glyph as u8 as usize] = glyph_data;
-            Some(&self.table_ascii[glyph as u8 as usize])
+            cache.table_ascii[glyph as u8 as usize] = glyph_data;
+            Some(&cache.table_ascii[glyph as u8 as usize])
         } else {
-            self.table.set(glyph, glyph_data);
-            self.table.get(&glyph)
+            cache.table.set(glyph, glyph_data);
+            cache.table.get(&glyph)
+        }
+    }
+
+    fn get_ro(&self, glyph: char, size: f32) -> (&Glyph, bool) {
+        let keysize = size as u32;
+        let cache = self.glyph_cache.get(&keysize).unwrap();
+        if glyph.len_utf8() == 1 {
+            (&cache.table_ascii[glyph as u8 as usize], false)
+        } else {
+            (cache.table.get(&glyph).unwrap(), false)
         }
     }
 
     /// Retrieve rasterized glyph
     /// If not in cache, add it
-    pub fn get(&mut self, glyph: char) -> (Option<&Glyph>, bool) {
-        let mut added = false;
-        // xarkes: For perf purpose, we already cached the ASCII table, just return the bitmap from it
+    // TODO(xarkes): always return a glyph, if not found, return a '?' or square glyph
+    pub fn get(&mut self, glyph: char, size: f32) -> (Option<&Glyph>, bool) {
+        let keysize = size as u32;
+        if self.glyph_cache.get(&keysize).is_none() {
+            // cache for specified size does not exist, create it
+            self.glyph_cache.insert(
+                keysize,
+                GlyphCache {
+                    table: LRUCache::new(CACHE_GLYPH_COUNT),
+                    table_ascii: [Glyph::default(); 256],
+                },
+            );
+            for ccode in 0..=255u8 {
+                self.add(ccode as char, size);
+            }
+            let out = self.get_ro(glyph, size);
+            return (Some(out.0), true);
+        }
+
+        // xarkes: for perf purpose, ASCII table is in a separate cache
         if glyph.len_utf8() == 1 {
-            return (Some(&self.table_ascii[glyph as u8 as usize]), false);
+            let cache = &self.glyph_cache.get(&keysize).unwrap();
+            return (Some(&cache.table_ascii[glyph as u8 as usize]), false);
+        } else {
+            // TODO FIXME FIXME FIXME
+            // // TODO(xarkes): for perf, make the hasmap use an optimized hash function (I suspect the current one to be too slow for this task), or have your own hashmap
+            // let cache = &self.glyph_cache.get(&keysize).unwrap();
+            // let metrics =
+            // // let metrics = cache.table.get(&glyph);
+            // // if metrics.is_some() {
+            // //     return (metrics, false);
+            // // }
         }
-        // TODO(xarkes): For perf, make the hasmap use an optimized hash function (I suspect the current one to be too slow for this task), or have your own hashmap
-        if self.table.get(&glyph).is_none() {
-            self.add(glyph);
-            added = true;
-        }
-        (self.table.get(&glyph), added)
+        return (self.add(glyph, size), true);
     }
 
     /// Retrieve the current atlas
@@ -242,11 +267,11 @@ impl FontCache {
     }
 
     /// Returns the nearest valid cursor position given one.
-    pub fn get_cursor_position(&mut self, size: u32, text: &str, cursorx: f32) -> (f32, usize) {
+    pub fn get_cursor_position(&mut self, size: f32, text: &str, cursorx: f32) -> (f32, usize) {
         let mut length = 0.;
         let mut idx = 0;
         for c in text.chars() {
-            let (glyph, _) = self.get(c);
+            let (glyph, _) = self.get(c, size);
             if let Some(glyph) = glyph {
                 if cursorx > length + glyph.advance / 2. {
                     length += glyph.advance;
@@ -271,7 +296,7 @@ impl FontCache {
             if c == '\t' {
                 continue;
             }
-            let (glyph, added) = self.get(c);
+            let (glyph, added) = self.get(c, size as f32);
             should_update |= added;
             if let Some(glyph) = glyph {
                 width += glyph.advance;

@@ -305,11 +305,10 @@ impl IMUITextInputState {
                 continue;
             }
             let idx;
-            (cursor_x, idx) = self.font_cache.borrow_mut().get_cursor_position(
-                font_size as u32,
-                line,
-                relative_x,
-            );
+            (cursor_x, idx) = self
+                .font_cache
+                .borrow_mut()
+                .get_cursor_position(font_size, line, relative_x);
             self.cursor_col = idx;
             buffer_idx += idx;
             break;
@@ -349,7 +348,7 @@ impl IMUITextInputState {
                 let mut length = 0.;
                 let mut col = 0;
                 for c in line.chars() {
-                    let (glyph, _) = fc.get(c);
+                    let (glyph, _) = fc.get(c, 12.); // XXX: font_size
                     if let Some(glyph) = glyph {
                         if curidx + col < self.idx {
                             length += glyph.advance;
@@ -453,6 +452,7 @@ impl IMUITextInputState {
     }
 }
 
+#[derive(Clone, Copy)]
 enum UILocaleKind {
     LtrTtb, // European languages
     RtlTtb, // Hebrew, Arabic like
@@ -622,7 +622,7 @@ impl IMUI {
         self.consume_events();
     }
     pub fn resize(&mut self) -> Point {
-        self.size = self.drawer.renderer.win.get_size();
+        self.size = self.drawer.renderer.win.get_render_size();
         self.drawer.renderer.resize(self.size.0, self.size.1);
         // let root = Rc::new(RefCell::new(UIWidget {
         //     bounds: RectCoords::from_size(0., 0., self.size.0, self.size.1),

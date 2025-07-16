@@ -18,6 +18,7 @@ impl Drawer {
         line_width: f32,
         debug: bool,
     ) {
+        let scale_factor = self.renderer.win.dpi;
         let batch = match debug {
             false => self.renderer.current_batch(),
             true => self.renderer.debug_batch(),
@@ -28,25 +29,29 @@ impl Drawer {
                 x1: coords.x1,
                 y0: coords.y0,
                 y1: coords.y0 + line_width,
-            },
+            }
+            .mul(scale_factor),
             RectCoords {
                 x0: coords.x0,
                 x1: coords.x1,
                 y0: coords.y1,
                 y1: coords.y1 - line_width,
-            },
+            }
+            .mul(scale_factor),
             RectCoords {
                 x0: coords.x0,
                 x1: coords.x0 + line_width,
                 y0: coords.y0,
                 y1: coords.y1,
-            },
+            }
+            .mul(scale_factor),
             RectCoords {
                 x0: coords.x1,
                 x1: coords.x1 - line_width,
                 y0: coords.y0,
                 y1: coords.y1,
-            },
+            }
+            .mul(scale_factor),
         ];
         for rectbounds in bounds {
             let rect = Rect2DInst {
@@ -64,9 +69,10 @@ impl Drawer {
         }
     }
     pub fn draw_rect(&mut self, coords: &RectCoords, color: V4f32) {
+        let scale_factor = self.renderer.win.dpi;
         let batch = self.renderer.current_batch();
         let rect = Rect2DInst {
-            dst: *coords,
+            dst: coords.mul(scale_factor),
             src: RectCoords {
                 x0: 0.0,
                 y0: 0.0,
@@ -100,6 +106,8 @@ impl Drawer {
         length: usize,
         color: V4f32,
     ) -> f32 {
+        let scale_factor = self.renderer.win.dpi;
+        let size = size as f32 * scale_factor;
         // xarkes: Generate glyph for each string character and update texture if needed
         // This is likely dumb, but that's it for now
         {
@@ -109,7 +117,7 @@ impl Drawer {
                     continue;
                 }
                 let mut fc = self.renderer.font_cache.borrow_mut();
-                let (_, added) = fc.get(c);
+                let (_, added) = fc.get(c, size);
                 should_update |= added;
             }
             if should_update {
@@ -119,18 +127,18 @@ impl Drawer {
 
         let xstart = x as f32;
         let mut x = x as f32;
-        let y = y + size as f32;
+        let y = y + size;
         for (i, c) in text.char_indices() {
             if i >= length {
                 break;
             }
             if c == '\t' {
-                x += size as f32;
+                x += size;
                 continue;
             }
             let glyph = {
                 let mut fc = self.renderer.font_cache.borrow_mut();
-                let (glyph, _) = fc.get(c);
+                let (glyph, _) = fc.get(c, size);
                 if glyph.is_none() {
                     continue;
                 }

@@ -1,4 +1,4 @@
-use super::{Color, IMUI, UIWidgetRef};
+use super::{Color, IMUI, UILocaleKind, UIWidgetRef};
 
 #[derive(Clone)]
 pub(crate) struct IMUIDebug {
@@ -66,19 +66,21 @@ pub fn draw_debug_info(ui: &mut IMUI, mut debug: IMUIDebug, time: f64) {
         let fps = 1f64 / time * 1000f64;
         let text = format!("{:.2}ms - {}fps", time, fps as u64);
         let font_size = 12;
-        ui.drawer.draw_text(
-            ui.size.0 - (text.len() as f32 * font_size as f32 / 1.6),
-            0.0,
-            font_size,
-            text.as_str(),
-            text.len(),
-            Color {
-                r: 1.,
-                g: 0.,
-                b: 0.,
-                a: 1.,
-            },
-        );
+        let bounds = ui.root.borrow().bounds;
+
+        // XXX: Hack
+        let tmp0 = ui.style.text_color;
+        let tmp1 = ui.locale_kind;
+        ui.style.text_color = Color {
+            r: 1.,
+            g: 0.,
+            b: 0.,
+            a: 1.,
+        };
+        ui.locale_kind = UILocaleKind::RtlTtb;
+        ui.draw_text(&bounds, text.as_str(), text.len(), font_size);
+        ui.locale_kind = tmp1;
+        ui.style.text_color = tmp0;
     }
 
     if debug.hints {

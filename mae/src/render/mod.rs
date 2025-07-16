@@ -48,9 +48,17 @@ impl RectCoords {
     pub fn x(&self, xval: f32) -> RectCoords {
         RectCoords {
             x0: self.x0 + xval,
-            x1: self.x1 + xval,
             y0: self.y0,
+            x1: self.x1 + xval,
             y1: self.y1,
+        }
+    }
+    pub fn mul(&self, coef: f32) -> RectCoords {
+        RectCoords {
+            x0: self.x0 * coef,
+            y0: self.y0 * coef,
+            x1: self.x1 * coef,
+            y1: self.y1 * coef,
         }
     }
 }

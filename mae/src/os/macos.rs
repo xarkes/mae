@@ -9,8 +9,8 @@ use objc2::{
 };
 use objc2_app_kit::{
     NSAnyEventMask, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
-    NSAutoresizingMaskOptions, NSBackingStoreType, NSEventType, NSMenu, NSMenuItem, NSView,
-    NSWindow, NSWindowDelegate, NSWindowStyleMask,
+    NSAutoresizingMaskOptions, NSBackingStoreType, NSEventSubtype, NSEventType, NSMenu, NSMenuItem,
+    NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
 };
 use objc2_foundation::{
     MainThreadMarker, NSDate, NSDefaultRunLoopMode, NSNotification, NSObject, NSObjectProtocol,
@@ -26,7 +26,9 @@ struct AppDelegateIvars {
 }
 
 pub struct Window {
+    pub window: OnceCell<Retained<NSWindow>>,
     pub view: OnceCell<Retained<NSView>>,
+    pub dpi: f32,
 }
 
 define_class!(
@@ -130,6 +132,16 @@ define_class!(
         fn did_resize(&self, _notification: &NSNotification) {
             // TODO(xarkes): we may have to implement our own resize handling due to the way MacOS handles it :') - TL;DR the sendEvent() when a mouse click is in a resize area will run its own eventloop to wait until we release the mouse button. More details here:https://github.com/rust-windowing/winit/issues/219
         }
+
+        #[unsafe(method(applicationDidChangeScreenParameters:))]
+        fn did_change_screen_parameters(&self, _notification: &NSNotification) {
+            // TODO(xarkes): you may want to update things when display settings are updated
+        }
+
+        #[unsafe(method(applicationDidChangeOcclusionState:))]
+        fn did_change_occlusion_state(&self, _notification: &NSNotification) {
+            // TODO(xarkes): you may want to stop rendering when the window is hidden
+        }
     }
 
     // SAFETY: `NSWindowDelegate` has no safety requirements.
@@ -165,8 +177,9 @@ impl Window {
 
         Window {
             // app,
-            // window: delegate.ivars().window.clone(),
+            window: delegate.ivars().window.clone(),
             view: delegate.ivars().view.clone(),
+            dpi: 1.,
         }
     }
 
@@ -178,6 +191,12 @@ impl Window {
     pub fn get_size(&self) -> (f32, f32) {
         let rect = self.view.get().unwrap().frame();
         (rect.size.width as f32, rect.size.height as f32)
+    }
+
+    pub fn get_render_size(&mut self) -> (f32, f32) {
+        let (w, h) = self.get_size();
+        self.dpi = self.window.get().unwrap().backingScaleFactor() as f32;
+        (w * self.dpi, h * self.dpi)
     }
 
     pub fn get_events(&self) -> Vec<OSEvent> {
@@ -230,6 +249,10 @@ impl Window {
                         // NSEventType::FlagsChanged => Some(OSEvent {
 
                         // }),
+                        // NSEventType::AppKitDefined => {
+                        //     println!("Unhandled event: {:?}", ev.subtype());
+                        //     None
+                        // }
                         _ => None,
                     };
                     // if new_ev.is_none() {
