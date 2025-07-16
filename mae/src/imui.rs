@@ -131,20 +131,18 @@ impl UISize {
     }
 }
 
-pub enum UIPosition {
-    Relative(UISize, UISize),
-    // Fixed(UISize, UISize),
-}
-
+#[derive(Copy, Clone)]
 pub enum UILayout {
-    Default,
-    Absolute,
+    Vertical,    // Default, natural vertical layout - results depends on the localization
+    VerticalLtr, // Vertical layout, forcing left to right reading
+    VerticalRtl, // Vertical layout, forcing right to left reading
 }
 
 pub struct UIWidget {
     bounds: RectCoords,
     parent: Option<UIWidgetRef>,
     children: Vec<UIWidgetRef>,
+    layout: UILayout,
 
     // event flags
     flags: u64,
@@ -178,7 +176,6 @@ pub struct UIWidgetParams {
     width: UISize,
     height: UISize,
     color: V4f32,
-    position: UIPosition,
     layout: UILayout,
     text_align: UITextAlign,
     flags: u64,
@@ -196,8 +193,7 @@ impl UIWidgetParams {
                 b: 1.,
                 a: 1.,
             },
-            position: UIPosition::Relative(UISize::Pixels(0.), UISize::Pixels(0.)),
-            layout: UILayout::Default,
+            layout: UILayout::Vertical,
             text_align: UITextAlign::Left,
             flags: 0,
         }
@@ -227,10 +223,6 @@ impl UIWidgetParams {
         self.color = color;
         self
     }
-    pub fn position(&mut self, pos: UIPosition) -> &mut Self {
-        self.position = pos;
-        self
-    }
     pub fn layout(&mut self, layout: UILayout) -> &mut Self {
         self.layout = layout;
         self
@@ -249,8 +241,7 @@ impl UIWidgetParams {
             b: 1.,
             a: 1.,
         };
-        self.position = UIPosition::Relative(UISize::Pixels(0.), UISize::Pixels(0.));
-        self.layout = UILayout::Default;
+        self.layout = UILayout::Vertical;
         self.text_align = UITextAlign::Left;
     }
 }
@@ -475,15 +466,44 @@ impl IMUITextInputState {
     }
 }
 
+enum UILocaleKind {
+    LtrTtb, // European languages
+    RtlTtb, // Hebrew, Arabic like
+    TtbLtr, // Mongolian like
+    TtbRtl, // Japanese like
+}
+
+struct UIStyle {
+    bg_color: Color,
+}
+
+impl UIStyle {
+    pub fn default() -> Self {
+        UIStyle {
+            bg_color: Color {
+                r: 40. / 256.,
+                g: 60. / 256.,
+                b: 140. / 256.,
+                a: 1.0,
+            },
+        }
+    }
+}
+
 pub struct IMUI {
-    pub root: UIWidgetRef,
-    pub drawer: Drawer,
+    drawer: Drawer,
     #[cfg(debug_assertions)]
     debug: IMUIDebug,
     size: (f32, f32),
     params: UIWidgetParams,
     event: IMUIEvents,
     text_input_state: Option<IMUITextInputState>,
+    locale_kind: UILocaleKind,
+
+    // ui construction helpers
+    root: UIWidgetRef,
+    parent_stack: Vec<UIWidgetRef>,
+    style: UIStyle,
 }
 impl IMUI {
     #[cfg(not(target_os = "android"))]
@@ -508,18 +528,22 @@ impl IMUI {
             bounds: RectCoords::from_size(0., 0., 1024., 768.),
             parent: None,
             children: Vec::new(),
+            layout: UILayout::Vertical,
             flags: 0,
             events: 0,
         }));
         IMUI {
-            root: root.clone(),
             drawer,
             #[cfg(debug_assertions)]
             debug: IMUIDebug::default(),
             size: (0., 0.),
-            params: UIWidgetParams::new(root),
+            params: UIWidgetParams::new(root.clone()),
             event: IMUIEvents::default(),
             text_input_state: None,
+            locale_kind: UILocaleKind::LtrTtb,
+            root: root.clone(),
+            parent_stack: vec![root.clone()],
+            style: UIStyle::default(),
         }
     }
     pub fn eventloop(&mut self, mut drawfunction: impl FnMut(&mut IMUI)) {
@@ -568,94 +592,188 @@ impl IMUI {
         }
     }
 
-    #[cfg(debug_assertions)]
-    fn draw_debug_pane(&mut self) {
-        self.params.reset();
-        let box_width = 200.;
-        self.params
-            .position(UIPosition::Relative(
-                UISize::Pixels(self.size.0 - box_width),
-                UISize::Pixels(40.),
-            ))
-            .parent(self.root.clone())
-            .size(UISize::Pixels(box_width), UISize::Pixels(80.))
-            .flags(UIWidgetFlag::Draggable as u64 | UIWidgetFlag::Resizable as u64)
-            .color(color_rgb(40, 60, 140));
+    // TODO
+    // Need to define terminology
+    // Window: OS level window
+    // Tab: window-like draggable resizable, in window
+    // Container: contains the thing
 
-        // TODO: Have a macro generate the ID
-        let id = format!("{}:{}", file!(), line!());
-        let parent = self.container(id);
-
-        self.params.reset();
-        self.params
-            .parent(parent.clone())
+    fn begin_tab(&mut self, title: &str) {
+        let parent = self.parent_stack.last().unwrap().clone();
+        self.params()
+            .parent(parent)
+            .width(UISize::Pixels(200.))
+            .flags(UIWidgetFlag::Draggable as u64)
+            .color(self.style.bg_color.clone());
+        let container = self.container(format!("{}:{}", file!(), line!()));
+        self.params()
+            .color(draw::color::WHITE)
+            .parent(container.clone())
             .text_align(UITextAlign::Center);
-        self.label("Debugging panel");
+        self.label(title);
+        self.parent_stack.push(container.clone());
+    }
+    fn end_tab(&mut self) {
+        self.parent_stack.pop();
+    }
 
-        // Debug checkbox
-        let mut box_checked = self.debug.hints;
-        self.checkbox(&mut box_checked);
-        if box_checked != self.debug.hints {
-            self.debug.hints = box_checked;
+    fn checkbox(&mut self, label: &str, target_var: &mut bool) {
+        let oldwidth = self.params.width;
+        let oldheight = self.params.height;
+        self.params.width = UISize::Pixels(20.);
+        self.params.height = UISize::Pixels(20.);
+
+        let checkbox =
+            self.create_ui_widget(UIWidgetFlag::Clickable as u64, Some(String::from(label)));
+        let checkbox_b = checkbox.borrow();
+        self.params.width = oldwidth;
+        self.params.height = oldheight;
+
+        self.drawer
+            .draw_rect(&checkbox.borrow().bounds, color_rgb(255, 255, 255));
+        self.drawer
+            .draw_empty_rect(&checkbox.borrow().bounds, color_rgb(0, 0, 0), 1., false);
+
+        self.drawer.draw_text(
+            checkbox_b.bounds.x0 + 20.,
+            checkbox_b.bounds.y0,
+            12,
+            label,
+            label.len(),
+            draw::color::WHITE,
+        );
+
+        if checkbox.borrow().clicked() {
+            *target_var = !*target_var;
         }
-        // TODO(xarkes): This sucks, you have to define better alternatives
-        self.params
-            .position(UIPosition::Relative(
-                UISize::Pixels(25.),
-                UISize::Pixels(-20.),
-            ))
-            .text_align(UITextAlign::Left);
-        self.label("Show debug hints");
-
-        // V-Sync checkbox
-        let mut box_checked = self.debug.vsync;
-        self.checkbox(&mut box_checked);
-        if box_checked != self.debug.vsync {
-            self.debug.vsync = box_checked;
-            self.drawer.renderer.vsync(self.debug.vsync);
-        }
-        // TODO(xarkes): This sucks, you have to define better alternatives
-        self.params
-            .position(UIPosition::Relative(
-                UISize::Pixels(25.),
-                UISize::Pixels(-20.),
-            ))
-            .text_align(UITextAlign::Left);
-        self.label("VSync");
-
-        // FPS checkbox
-        let mut box_checked = self.debug.fps;
-        self.params
-            .parent(parent.clone())
-            .position(UIPosition::Relative(UISize::Pixels(0.), UISize::Pixels(0.)));
-        self.checkbox(&mut box_checked);
-        if box_checked != self.debug.fps {
-            self.debug.fps = box_checked;
-        }
-        // TODO(xarkes): This sucks, you have to define better alternatives
-        self.params
-            .position(UIPosition::Relative(
-                UISize::Pixels(25.),
-                UISize::Pixels(-20.),
-            ))
-            .text_align(UITextAlign::Left);
-        self.label("Show FPS");
-
-        // Target element
-        self.params
-            .position(UIPosition::Relative(UISize::Pixels(0.), UISize::Pixels(4.)));
-        if let Some(target) = &self.debug.target {
-            // XXX(xarkes): this is stupid, you wont get any update on the element as it is recreated each time...
-            let txt = format!(
-                "{}x{}",
-                target.borrow().bounds.width(),
-                target.borrow().bounds.height()
+        if *target_var {
+            self.drawer.draw_rect(
+                &RectCoords::from_size(
+                    &checkbox.borrow().bounds.x0 + 2.,
+                    &checkbox.borrow().bounds.y0 + 2.,
+                    16.,
+                    16.,
+                ),
+                color_rgb(0, 0, 80),
             );
-            self.label(txt.as_str());
-        } else {
-            self.label("<No element selected>");
+        }
+        if checkbox.borrow().hover() {
+            self.drawer.draw_empty_rect(
+                &RectCoords::from_size(
+                    &checkbox.borrow().bounds.x0 + 1.,
+                    &checkbox.borrow().bounds.y0 + 1.,
+                    18.,
+                    18.,
+                ),
+                // color_rgb(30, 30, 140),
+                color_rgb(255, 30, 140),
+                2.,
+                false,
+            );
         }
     }
+
+    #[cfg(debug_assertions)]
+    fn draw_debug_pane(&mut self) {
+        self.begin_tab("Debugging panel");
+
+        let mut fps = self.debug.fps;
+        self.checkbox("Show FPS", &mut fps);
+        self.debug.fps = fps;
+
+        let mut hints = self.debug.hints;
+        self.checkbox("Debug hints", &mut hints);
+        self.debug.hints = hints;
+
+        let mut vsync = self.debug.vsync;
+        self.checkbox("Enable VSync", &mut vsync);
+        self.debug.vsync = vsync;
+
+        self.end_tab();
+    }
+
+    // #[cfg(debug_assertions)]
+    // fn draw_debug_pane(&mut self) {
+    //     self.params.reset();
+    //     let box_width = 200.;
+    //     self.params
+    //         .parent(self.root.clone())
+    //         .size(UISize::Pixels(box_width), UISize::Pixels(800.))
+    //         .flags(UIWidgetFlag::Draggable as u64 | UIWidgetFlag::Resizable as u64)
+    //         .color(color_rgb(40, 60, 140));
+
+    //     // TODO: Have a macro generate the ID
+    //     let id = format!("{}:{}", file!(), line!());
+    //     let parent = self.container(id);
+
+    //     self.params.reset();
+    //     self.params
+    //         .parent(parent.clone())
+    //         .text_align(UITextAlign::Center);
+    //     self.label("Debugging panel");
+
+    //     // Debug checkbox
+    //     self.params.parent(parent.clone()).color(color::NONE);
+    //     let row = self.widget();
+    //     {
+    //         self.params.parent(row.clone());
+    //         let mut box_checked = self.debug.hints;
+    //         self.checkbox(&mut box_checked);
+    //         if box_checked != self.debug.hints {
+    //             self.debug.hints = box_checked;
+    //         }
+    //         self.params
+    //             .text_align(UITextAlign::Left)
+    //             .color(draw::color::WHITE);
+    //         self.label("Show debug hints");
+    //     }
+
+    //     // FPS checkbox
+    //     self.params.parent(parent.clone()).color(color::NONE);
+    //     let row = self.widget();
+    //     {
+    //         self.params.parent(row.clone());
+    //         let mut box_checked = self.debug.fps;
+    //         self.checkbox(&mut box_checked);
+    //         if box_checked != self.debug.fps {
+    //             self.debug.fps = box_checked;
+    //         }
+    //         self.params
+    //             .text_align(UITextAlign::Left)
+    //             .color(draw::color::WHITE);
+    //         self.label("Show FPS");
+    //     }
+
+    //     // V-Sync checkbox
+    //     self.params.parent(parent.clone()).color(color::NONE);
+    //     let row = self.widget();
+    //     {
+    //         self.params.parent(row.clone());
+    //         let mut box_checked = self.debug.vsync;
+    //         self.checkbox(&mut box_checked);
+    //         if box_checked != self.debug.vsync {
+    //             self.debug.vsync = box_checked;
+    //             self.drawer.renderer.vsync(self.debug.vsync);
+    //         }
+    //         self.params
+    //             .text_align(UITextAlign::Left)
+    //             .color(draw::color::WHITE);
+    //         self.label("VSync");
+    //     }
+
+    //     // Target element
+    //     if let Some(target) = &self.debug.target {
+    //         // XXX(xarkes): this is stupid, you wont get any update on the element as it is recreated each time...
+    //         let txt = format!(
+    //             "{}x{}",
+    //             target.borrow().bounds.width(),
+    //             target.borrow().bounds.height()
+    //         );
+    //         self.label(txt.as_str());
+    //     } else {
+    //         self.label("<No element selected>");
+    //     }
+    // }
 
     fn create_ui_widget(&mut self, flags: u64, id: Option<String>) -> UIWidgetRef {
         // xarkes: apply layout properties and compute bounds
@@ -664,6 +782,7 @@ impl IMUI {
             parent: Some(self.params.parent.clone()),
             bounds,
             children: Vec::new(),
+            layout: UILayout::Vertical,
             flags,
             events: 0,
         };
@@ -748,23 +867,41 @@ impl IMUI {
     fn compute_layout_bounds(&self) -> RectCoords {
         let parent = self.params.parent.borrow();
         let previous = parent.children.last();
-        let (x, y) = match &self.params.position {
-            UIPosition::Relative(x, y) => {
-                let (mx, my) = match previous {
-                    Some(previous) => {
-                        let prev_child_bounds = previous.borrow().bounds;
-                        // layout LTR_TopToBottom
-                        (
-                            x.pixels(parent.bounds.x0),
-                            y.pixels(parent.bounds.y0) + (prev_child_bounds.y1 - parent.bounds.y0),
-                        )
-                    }
-                    None => (x.pixels(parent.bounds.x0), y.pixels(parent.bounds.y0)),
+
+        // xarkes: pre-process layout depending on the current locale kind
+        let layout = match parent.layout {
+            UILayout::Vertical => match self.locale_kind {
+                UILocaleKind::LtrTtb => UILayout::VerticalLtr,
+                UILocaleKind::RtlTtb => UILayout::VerticalRtl,
+                _ => {
+                    println!("Error, unhandled locale kind!");
+                    UILayout::VerticalLtr
+                }
+            },
+            _ => parent.layout,
+        };
+
+        let x;
+        match layout {
+            UILayout::VerticalLtr => {
+                x = match previous {
+                    Some(p) => p.borrow().bounds.x0,
+                    None => parent.bounds.x0,
                 };
-                (parent.bounds.x0 + mx, parent.bounds.y0 + my)
-            } // UIPosition::Fixed(x, y) => {
-              //     (x.pixels(parent.bounds.x0), y.pixels(parent.bounds.height()))
-              // }
+            }
+            UILayout::VerticalRtl => {
+                x = match previous {
+                    Some(p) => p.borrow().bounds.x1,
+                    None => parent.bounds.x1,
+                };
+            }
+            _ => {
+                unreachable!("Cannot have a generic layout here.")
+            }
+        }
+        let y = match previous {
+            Some(p) => p.borrow().bounds.y1,
+            None => parent.bounds.y0,
         };
 
         let w = self.params.width.pixels(parent.bounds.width());
@@ -780,6 +917,7 @@ impl IMUI {
         // debug_assert!(rect.y1 >= 0.);
         // debug_assert!(rect.x1 <= self.size.0);
         // debug_assert!(rect.y1 <= self.size.1);
+
         rect
     }
     pub fn params<'a>(&'a mut self) -> &'a mut UIWidgetParams {
@@ -838,12 +976,12 @@ impl IMUI {
             }
         }
     }
-    // pub fn widget(&mut self) -> UIWidgetRef {
-    //     let widget = self.create_ui_widget(0);
-    //     self.drawer
-    //         .draw_rect(&widget.borrow().bounds, self.params.color);
-    //     widget
-    // }
+    pub fn widget(&mut self) -> UIWidgetRef {
+        let widget = self.create_ui_widget(0, None);
+        self.drawer
+            .draw_rect(&widget.borrow().bounds, self.params.color);
+        widget
+    }
     pub fn container(
         &mut self,
         id: String,
@@ -856,7 +994,7 @@ impl IMUI {
         // drawfunction(self, container.clone());
         container
     }
-    pub fn checkbox(&mut self, state: &mut bool) -> UIWidgetRef {
+    pub fn checkbox_old(&mut self, state: &mut bool) -> UIWidgetRef {
         // XXX(xarkes): Just a hack for now, think better about this
         let oldwidth = self.params.width;
         let oldheight = self.params.height;

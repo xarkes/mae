@@ -137,9 +137,6 @@ impl UIFile {
         println!("{}", self.to_rust());
     }
     pub fn to_imui(&self, ui: &mut IMUI) {
-        let root = ui.root.clone();
-        ui.params().parent(root);
-
         for tag in &self.tags {
             tag.to_imui(ui);
         }

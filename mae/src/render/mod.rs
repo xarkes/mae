@@ -7,7 +7,7 @@ use std::{cell::RefCell, rc::Rc};
 use crate::os::Window;
 use font_cache::FontCache;
 
-pub(crate) struct RenderBatch {
+pub struct RenderBatch {
     data: Vec<Rect2DInst>,
     bytes_count: isize,
 }

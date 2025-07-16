@@ -103,8 +103,7 @@ impl GLContext {
             gl::BindBuffer(gl::ARRAY_BUFFER, 0);
             gl::BindVertexArray(0);
 
-            // gl::ClearColor(0.07, 0.31, 0.26, 0.);
-            gl::ClearColor(0., 0., 0., 0.);
+            gl::ClearColor(117. / 256., 139. / 256., 153. / 256., 0.);
 
             // xarkes: disable VSync in debug mode
             os_impl::ogl_toggle_vsync(&ctx, false);
