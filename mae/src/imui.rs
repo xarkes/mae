@@ -564,6 +564,7 @@ impl IMUI {
             {
                 self.get_events();
                 self.resize();
+                self.root.borrow_mut().children.clear();
             }
 
             // xarkes: draw interface
@@ -660,33 +661,8 @@ impl IMUI {
         id: Option<String>,
         size: (UISize, UISize),
         flags: u64,
-        float: bool,
     ) -> UIWidgetRef {
         let mut parent = self.parent_stack.last().unwrap().borrow_mut();
-        const MARGIN: f32 = 2.0;
-        // XXX: this is just a hack, think of something better in the future
-        let previous = match float {
-            false => match parent.children.last() {
-                Some(child) => {
-                    let mut prev = child.borrow().bounds;
-                    prev.y1 += MARGIN;
-                    prev
-                }
-                None => RectCoords::from_size(
-                    parent.bounds.x0,
-                    parent.bounds.y0,
-                    parent.bounds.width(),
-                    MARGIN,
-                ),
-            },
-            true => RectCoords::from_size(
-                150.,
-                150.,
-                size.0.pixels(parent.bounds.width()),
-                size.1.pixels(parent.bounds.height()),
-            ),
-        };
-
         // xarkes: compute bounds depending on layout and requested size
         let layout = match parent.layout {
             UILayout::Vertical => match self.locale_kind {
@@ -702,42 +678,79 @@ impl IMUI {
             _ => parent.layout,
         };
         let bounds = match layout {
-            UILayout::VerticalLtr => RectCoords::from_size(
-                previous.x0,
-                previous.y1,
-                f32::min(parent.bounds.width(), size.0.pixels(parent.bounds.width())),
-                f32::min(
-                    parent.bounds.height(),
-                    size.1.pixels(parent.bounds.height()),
-                ),
-            ),
-            UILayout::VerticalRtl => RectCoords::from_size(
-                previous.x1 - size.0.pixels(parent.bounds.width()),
-                previous.y1,
-                f32::min(parent.bounds.width(), size.0.pixels(parent.bounds.width())),
-                f32::min(
-                    parent.bounds.height(),
-                    size.1.pixels(parent.bounds.height()),
-                ),
-            ),
-            UILayout::HorizontalLtr => RectCoords::from_size(
-                previous.x1,
-                previous.y0,
-                f32::min(parent.bounds.width(), size.0.pixels(parent.bounds.width())),
-                f32::min(
-                    parent.bounds.height(),
-                    size.1.pixels(parent.bounds.height()),
-                ),
-            ),
-            UILayout::HorizontalRtl => RectCoords::from_size(
-                previous.x0,
-                previous.y0,
-                f32::min(parent.bounds.width(), size.0.pixels(parent.bounds.width())),
-                f32::min(
-                    parent.bounds.height(),
-                    size.1.pixels(parent.bounds.height()),
-                ),
-            ),
+            UILayout::VerticalLtr => {
+                let insert_point = match parent.children.last() {
+                    Some(child) => (child.borrow().bounds.x0, child.borrow().bounds.y1),
+                    None => (parent.bounds.x0, parent.bounds.y0),
+                };
+                RectCoords::from_size(
+                    insert_point.0,
+                    insert_point.1,
+                    f32::min(parent.bounds.width(), size.0.pixels(parent.bounds.width())),
+                    f32::min(
+                        parent.bounds.height(),
+                        size.1.pixels(parent.bounds.height()),
+                    ),
+                )
+            }
+            UILayout::VerticalRtl => {
+                let insert_point = match parent.children.last() {
+                    Some(child) => (
+                        child.borrow().bounds.x1 - size.0.pixels(parent.bounds.width()),
+                        child.borrow().bounds.y1,
+                    ),
+                    None => (
+                        parent.bounds.x1 - size.0.pixels(parent.bounds.width()),
+                        parent.bounds.y0,
+                    ),
+                };
+
+                RectCoords::from_size(
+                    insert_point.0,
+                    insert_point.1,
+                    f32::min(parent.bounds.width(), size.0.pixels(parent.bounds.width())),
+                    f32::min(
+                        parent.bounds.height(),
+                        size.1.pixels(parent.bounds.height()),
+                    ),
+                )
+            }
+            UILayout::HorizontalLtr => {
+                let insert_point = match parent.children.last() {
+                    Some(child) => (child.borrow().bounds.x1, child.borrow().bounds.y0),
+                    None => (parent.bounds.x0, parent.bounds.y0),
+                };
+                RectCoords::from_size(
+                    insert_point.0,
+                    insert_point.1,
+                    f32::min(parent.bounds.width(), size.0.pixels(parent.bounds.width())),
+                    f32::min(
+                        parent.bounds.height(),
+                        size.1.pixels(parent.bounds.height()),
+                    ),
+                )
+            }
+            UILayout::HorizontalRtl => {
+                let insert_point = match parent.children.last() {
+                    Some(child) => (
+                        child.borrow().bounds.x0 - size.0.pixels(parent.bounds.width()),
+                        child.borrow().bounds.y0,
+                    ),
+                    None => (
+                        parent.bounds.x1 - size.0.pixels(parent.bounds.width()),
+                        parent.bounds.y0,
+                    ),
+                };
+                RectCoords::from_size(
+                    insert_point.0,
+                    insert_point.1,
+                    f32::min(parent.bounds.width(), size.0.pixels(parent.bounds.width())),
+                    f32::min(
+                        parent.bounds.height(),
+                        size.1.pixels(parent.bounds.height()),
+                    ),
+                )
+            }
             _ => unreachable!("Generic layout impossible here!"),
         };
 
@@ -815,6 +828,19 @@ impl IMUI {
         parent.children.push(uibox.clone());
         uibox
     }
+    pub fn horizontal(
+        &mut self,
+        mut children: impl FnMut(&mut IMUI) -> UIWidgetRef,
+    ) -> UIWidgetRef {
+        let pane = self.layout_new_widget(None, (UISize::Percents(1.), UISize::Percents(1.)), 0);
+        pane.borrow_mut().layout = UILayout::Horizontal;
+        self.parent_stack.push(pane.clone());
+        let out = children(self);
+        self.parent_stack.pop();
+        let mut pu = pane.borrow_mut();
+        pu.bounds.y1 = f32::min(pu.bounds.y1, out.borrow().bounds.y1);
+        out
+    }
     pub fn pane(&mut self, title: &str, mut children: impl FnMut(&mut IMUI)) {
         // xarkes: draw widget
         let width = 200.;
@@ -823,8 +849,7 @@ impl IMUI {
         let pane = self.layout_new_widget(
             Some(format!("##pane_{}", title)),
             (UISize::DPixels(width), UISize::DPixels(height)),
-            UIWidgetFlag::Draggable as u64 | UIWidgetFlag::Resizable as u64,
-            true,
+            0, // UIWidgetFlag::Draggable as u64 | UIWidgetFlag::Resizable as u64,
         );
 
         let pbounds = pane.borrow().bounds;
@@ -865,7 +890,6 @@ impl IMUI {
             None,
             (UISize::DPixels(box_size), UISize::DPixels(box_size)),
             UIWidgetFlag::Clickable as u64,
-            false,
         );
         let widget = widget_r.borrow();
 
@@ -902,7 +926,6 @@ impl IMUI {
             Some(format!("##label_{}", label)),
             (UISize::DPixels(size.0), UISize::DPixels(size.1)),
             0,
-            false,
         );
         self.draw_text(
             &RectCoords::from_size(
@@ -918,10 +941,11 @@ impl IMUI {
         widget
     }
     pub fn checkbox(&mut self, label: &str, value: &mut bool) -> UIWidgetRef {
-        // TODO: Make label on horizontal layout
-        let checkbox = self.checkbox_widget(value);
-        self.label(label);
-        checkbox
+        self.horizontal(|ui| {
+            let checkbox = ui.checkbox_widget(value);
+            ui.label(label);
+            checkbox
+        })
     }
 }
 

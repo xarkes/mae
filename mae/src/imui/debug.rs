@@ -42,10 +42,26 @@ fn draw_debug_pane(ui: &mut IMUI, debug: &mut IMUIDebug) {
     };
 }
 
+fn draw_debug_hints(ui: &mut IMUI, start: UIWidgetRef) {
+    for c in &start.borrow().children {
+        draw_debug_hints(ui, c.clone());
+    }
+    ui.drawer.draw_empty_rect(
+        &start.borrow().bounds,
+        Color {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        },
+        1.0,
+        true,
+    );
+}
+
 pub fn draw_debug_info(ui: &mut IMUI, mut debug: IMUIDebug, time: f64) {
     draw_debug_pane(ui, &mut debug);
 
-    // xarkes: draw and update FPS counter
     if debug.fps {
         let fps = 1f64 / time * 1000f64;
         let text = format!("{:.2}ms - {}fps", time, fps as u64);
@@ -63,5 +79,9 @@ pub fn draw_debug_info(ui: &mut IMUI, mut debug: IMUIDebug, time: f64) {
                 a: 1.,
             },
         );
+    }
+
+    if debug.hints {
+        draw_debug_hints(ui, ui.root.clone());
     }
 }
