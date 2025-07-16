@@ -6,7 +6,6 @@ pub(crate) struct IMUIDebug {
     pub hints: bool,
     pub vsync: bool,
     pub locale: bool,
-    pub target: Option<UIWidgetRef>,
 }
 
 impl IMUIDebug {
@@ -16,7 +15,6 @@ impl IMUIDebug {
             hints: false,
             vsync: false,
             locale: true,
-            target: None,
         }
     }
 }
@@ -32,14 +30,16 @@ fn draw_debug_pane(ui: &mut IMUI, debug: &mut IMUIDebug) {
         {
             ui.drawer.renderer.vsync(debug.vsync);
         };
-        ui.checkbox("LTR", &mut debug.locale);
+        if ui.checkbox("LTR", &mut debug.locale).borrow().clicked() {
+            ui.locale_kind = match debug.locale {
+                true => super::UILocaleKind::LtrTtb,
+                false => super::UILocaleKind::RtlTtb,
+            };
+            ui.event.drag_cache.clear();
+        };
     });
 
     ui.debug = debug.clone();
-    ui.locale_kind = match debug.locale {
-        true => super::UILocaleKind::LtrTtb,
-        false => super::UILocaleKind::RtlTtb,
-    };
 }
 
 fn draw_debug_hints(ui: &mut IMUI, start: UIWidgetRef) {

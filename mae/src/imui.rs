@@ -784,8 +784,6 @@ impl IMUI {
             events |= UIWidgetEvent::MouseClicked as u64;
         } else if point_in_rect(&uibox.bounds, self.event.release) && uibox.clickable() {
             events |= UIWidgetEvent::MouseReleased as u64;
-            // NOTE(xarkes): consume the release so clicked() is called only once
-            self.event.release = None;
         }
         uibox.events = events;
 
@@ -838,6 +836,7 @@ impl IMUI {
         let out = children(self);
         self.parent_stack.pop();
         let mut pu = pane.borrow_mut();
+        // XXX: This is a hack, should we allow it?
         pu.bounds.y1 = f32::min(pu.bounds.y1, out.borrow().bounds.y1);
         out
     }
@@ -849,7 +848,7 @@ impl IMUI {
         let pane = self.layout_new_widget(
             Some(format!("##pane_{}", title)),
             (UISize::DPixels(width), UISize::DPixels(height)),
-            0, // UIWidgetFlag::Draggable as u64 | UIWidgetFlag::Resizable as u64,
+            UIWidgetFlag::Draggable as u64 | UIWidgetFlag::Resizable as u64,
         );
 
         let pbounds = pane.borrow().bounds;
@@ -912,8 +911,11 @@ impl IMUI {
             false,
         );
 
-        if widget.clicked() {
+        // TODO(xarkes): We need a better API...
+        if widget.clicked() && self.event.release.is_some() {
             *value = !*value;
+            // NOTE(xarkes): consume the release so clicked() is called only once
+            self.event.release = None;
         }
 
         widget_r.clone()
