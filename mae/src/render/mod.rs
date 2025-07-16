@@ -163,4 +163,8 @@ impl Renderer {
     pub fn add_batch(&mut self, batch: RenderBatch) {
         self.batches.push(batch);
     }
+
+    pub fn vsync(&mut self, enable: bool) {
+        self.ctx.vsync(enable);
+    }
 }

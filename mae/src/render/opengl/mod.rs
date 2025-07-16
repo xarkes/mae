@@ -204,6 +204,10 @@ impl GLContext {
         os_impl::ogl_swapbuffers(&self.ctx);
     }
 
+    pub fn vsync(&mut self, enable: bool) {
+        os_impl::ogl_toggle_vsync(&self.ctx, enable);
+    }
+
     pub fn render(&self, batches: &Vec<super::RenderBatch>) {
         // xarkes: draw one rectangle batch group
         for batch in batches.iter() {

@@ -272,6 +272,7 @@ struct IMUIDebug {
     fps: bool,
     hints: bool,
     target: Option<UIWidgetRef>,
+    vsync: bool,
 }
 #[cfg(debug_assertions)]
 impl IMUIDebug {
@@ -280,6 +281,7 @@ impl IMUIDebug {
             fps: true,
             hints: false,
             target: None,
+            vsync: false,
         }
     }
 }
@@ -571,70 +573,88 @@ impl IMUI {
         self.params.reset();
         let box_width = 200.;
         self.params
-            // .position(UIPosition::Fixed(
-            //     UISize::Pixels(self.size.0 - box_width),
-            //     UISize::Pixels(40.),
-            // ))
+            .position(UIPosition::Relative(
+                UISize::Pixels(self.size.0 - box_width),
+                UISize::Pixels(40.),
+            ))
             .parent(self.root.clone())
             .size(UISize::Pixels(box_width), UISize::Pixels(80.))
             .flags(UIWidgetFlag::Draggable as u64 | UIWidgetFlag::Resizable as u64)
             .color(color_rgb(40, 60, 140));
+
+        // TODO: Have a macro generate the ID
         let id = format!("{}:{}", file!(), line!());
-        self.container(id, |ui, parent| {
-            ui.params.reset();
-            ui.params
-                .parent(parent.clone())
-                .text_align(UITextAlign::Center);
-            ui.label("Debugging panel");
+        let parent = self.container(id);
 
-            // Debug checkbox
-            let mut box_checked = ui.debug.hints;
-            ui.checkbox(&mut box_checked);
-            if box_checked != ui.debug.hints {
-                ui.debug.hints = box_checked;
-            }
-            // TODO(xarkes): This sucks, you have to define better alternatives
-            ui.params
-                .position(UIPosition::Relative(
-                    UISize::Pixels(25.),
-                    UISize::Pixels(-20.),
-                ))
-                .text_align(UITextAlign::Left);
-            ui.label("Show debug hints");
+        self.params.reset();
+        self.params
+            .parent(parent.clone())
+            .text_align(UITextAlign::Center);
+        self.label("Debugging panel");
 
-            // FPS checkbox
-            let mut box_checked = ui.debug.fps;
-            ui.params
-                .parent(parent.clone())
-                .position(UIPosition::Relative(UISize::Pixels(0.), UISize::Pixels(0.)));
-            ui.checkbox(&mut box_checked);
-            if box_checked != ui.debug.fps {
-                ui.debug.fps = box_checked;
-            }
-            // TODO(xarkes): This sucks, you have to define better alternatives
-            ui.params
-                .position(UIPosition::Relative(
-                    UISize::Pixels(25.),
-                    UISize::Pixels(-20.),
-                ))
-                .text_align(UITextAlign::Left);
-            ui.label("Show FPS");
+        // Debug checkbox
+        let mut box_checked = self.debug.hints;
+        self.checkbox(&mut box_checked);
+        if box_checked != self.debug.hints {
+            self.debug.hints = box_checked;
+        }
+        // TODO(xarkes): This sucks, you have to define better alternatives
+        self.params
+            .position(UIPosition::Relative(
+                UISize::Pixels(25.),
+                UISize::Pixels(-20.),
+            ))
+            .text_align(UITextAlign::Left);
+        self.label("Show debug hints");
 
-            // Target element
-            ui.params
-                .position(UIPosition::Relative(UISize::Pixels(0.), UISize::Pixels(4.)));
-            if let Some(target) = &ui.debug.target {
-                // XXX(xarkes): this is stupid, you wont get any update on the element as it is recreated each time...
-                let txt = format!(
-                    "{}x{}",
-                    target.borrow().bounds.width(),
-                    target.borrow().bounds.height()
-                );
-                ui.label(txt.as_str());
-            } else {
-                ui.label("<No element selected>");
-            }
-        });
+        // V-Sync checkbox
+        let mut box_checked = self.debug.vsync;
+        self.checkbox(&mut box_checked);
+        if box_checked != self.debug.vsync {
+            self.debug.vsync = box_checked;
+            self.drawer.renderer.vsync(self.debug.vsync);
+        }
+        // TODO(xarkes): This sucks, you have to define better alternatives
+        self.params
+            .position(UIPosition::Relative(
+                UISize::Pixels(25.),
+                UISize::Pixels(-20.),
+            ))
+            .text_align(UITextAlign::Left);
+        self.label("VSync");
+
+        // FPS checkbox
+        let mut box_checked = self.debug.fps;
+        self.params
+            .parent(parent.clone())
+            .position(UIPosition::Relative(UISize::Pixels(0.), UISize::Pixels(0.)));
+        self.checkbox(&mut box_checked);
+        if box_checked != self.debug.fps {
+            self.debug.fps = box_checked;
+        }
+        // TODO(xarkes): This sucks, you have to define better alternatives
+        self.params
+            .position(UIPosition::Relative(
+                UISize::Pixels(25.),
+                UISize::Pixels(-20.),
+            ))
+            .text_align(UITextAlign::Left);
+        self.label("Show FPS");
+
+        // Target element
+        self.params
+            .position(UIPosition::Relative(UISize::Pixels(0.), UISize::Pixels(4.)));
+        if let Some(target) = &self.debug.target {
+            // XXX(xarkes): this is stupid, you wont get any update on the element as it is recreated each time...
+            let txt = format!(
+                "{}x{}",
+                target.borrow().bounds.width(),
+                target.borrow().bounds.height()
+            );
+            self.label(txt.as_str());
+        } else {
+            self.label("<No element selected>");
+        }
     }
 
     fn create_ui_widget(&mut self, flags: u64, id: Option<String>) -> UIWidgetRef {
@@ -692,16 +712,17 @@ impl IMUI {
                     Some(dist) => dist,
                     None => &(0., 0.),
                 };
+                let dist_x = self.event.mouse.unwrap().0 - self.event.drag_pos.unwrap().0;
+                let dist_y = self.event.mouse.unwrap().1 - self.event.drag_pos.unwrap().1;
                 self.event.drag_cache.insert(
                     id.clone(),
-                    (
-                        old_distance.0 + self.event.mouse.unwrap().0
-                            - self.event.drag_pos.unwrap().0,
-                        old_distance.1 + self.event.mouse.unwrap().1
-                            - self.event.drag_pos.unwrap().1,
-                    ),
+                    (old_distance.0 + dist_x, old_distance.1 + dist_y),
                 );
                 self.event.drag_pos = None;
+                w.bounds.x0 += dist_x;
+                w.bounds.x1 += dist_x;
+                w.bounds.y0 += dist_y;
+                w.bounds.y1 += dist_y;
             }
         }
 
@@ -826,13 +847,13 @@ impl IMUI {
     pub fn container(
         &mut self,
         id: String,
-        mut drawfunction: impl FnMut(&mut IMUI, UIWidgetRef),
+        // mut drawfunction: impl FnMut(&mut IMUI, UIWidgetRef),
     ) -> UIWidgetRef {
         let flags = self.params.flags;
         let container = self.create_ui_widget(flags, Some(id));
         self.drawer
             .draw_rect(&container.borrow().bounds, self.params.color);
-        drawfunction(self, container.clone());
+        // drawfunction(self, container.clone());
         container
     }
     pub fn checkbox(&mut self, state: &mut bool) -> UIWidgetRef {
