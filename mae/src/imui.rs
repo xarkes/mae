@@ -136,6 +136,7 @@ impl UISize {
 
 #[derive(Copy, Clone)]
 pub enum UILayout {
+    Root,        // Root specific layout, allows children to be floating over everything else
     Vertical,    // Default, natural vertical layout - results depends on the localization
     VerticalLtr, // Vertical layout, forcing left to right reading
     VerticalRtl, // Vertical layout, forcing right to left reading
@@ -535,7 +536,7 @@ impl IMUI {
 
         let root = Rc::new(RefCell::new(UIBox {
             bounds: RectCoords::from_size(0., 0., 0., 0.),
-            layout: UILayout::Vertical,
+            layout: UILayout::Root,
             flags: 0,
             events: 0,
             children: Vec::new(),
@@ -678,6 +679,12 @@ impl IMUI {
             _ => parent.layout,
         };
         let bounds = match layout {
+            UILayout::Root => RectCoords::from_size(
+                parent.bounds.x0,
+                parent.bounds.y0,
+                size.0.pixels(parent.bounds.width()),
+                size.1.pixels(parent.bounds.height()),
+            ),
             UILayout::VerticalLtr => {
                 let insert_point = match parent.children.last() {
                     Some(child) => (child.borrow().bounds.x0, child.borrow().bounds.y1),
@@ -840,18 +847,34 @@ impl IMUI {
         pu.bounds.y1 = f32::min(pu.bounds.y1, out.borrow().bounds.y1);
         out
     }
+    pub fn vertical(&mut self, mut children: impl FnMut(&mut IMUI) -> UIWidgetRef) -> UIWidgetRef {
+        let pane = self.layout_new_widget(None, (UISize::Percents(1.), UISize::Percents(1.)), 0);
+        self.parent_stack.push(pane.clone());
+        let out = children(self);
+        self.parent_stack.pop();
+        // let mut pu = pane.borrow_mut();
+        // XXX: This is a hack, should we allow it?
+        // pu.bounds.y1 = f32::min(pu.bounds.y1, out.borrow().bounds.y1);
+        out
+    }
+    // TODO:
+    // - corriger gestion evenements + fenetre flottante
+    // --> event stack?
+    // --> multiple floating windows?
+    // - separer wigets customisables et widgets basiques
+    // --> l'idee c'est de fournir des API pour faire une UI jolie et facilement, rapidemment
+    // --> mais aussi fournir des API pour la devapp qui permet de customiser au max
     pub fn floating_pane(&mut self, title: &str, mut children: impl FnMut(&mut IMUI)) {
         // xarkes: draw widget
         let width = 200.;
         let height = 250.;
 
+        // XXX: layout_new_widget should be used only for non floating things, things inside a layout
         let pane = self.layout_new_widget(
             Some(format!("##pane_{}", title)),
             (UISize::DPixels(width), UISize::DPixels(height)),
             UIWidgetFlag::Draggable as u64 | UIWidgetFlag::Resizable as u64,
         );
-        pane.borrow_mut().bounds.x0 = self.size.0 / 2. - width;
-        pane.borrow_mut().bounds.y0 = self.size.1 / 2. - height;
 
         let pbounds = pane.borrow().bounds;
         let bar_height = 20.;
@@ -923,12 +946,18 @@ impl IMUI {
         widget_r.clone()
     }
     pub fn label(&mut self, label: &str) -> UIWidgetRef {
-        let size = self
+        let (width, _) = self
             .drawer
             .get_text_size(self.style.text_size, label, label.len());
+        let height = self
+            .drawer
+            .renderer
+            .font_cache
+            .borrow()
+            .line_height(self.style.text_size);
         let widget = self.layout_new_widget(
             Some(format!("##label_{}", label)),
-            (UISize::DPixels(size.0), UISize::DPixels(size.1)),
+            (UISize::DPixels(width), UISize::DPixels(height)),
             0,
         );
         self.draw_text(
@@ -987,6 +1016,9 @@ impl IMUI {
                 self.event.mouse.unwrap(),
             );
             self.text_input_state = Some(state);
+            // TODO(xarkes): ------------------> HERE YOU NEED TO CONSUME THE EVENTS IN ORDER LOL
+            // BECAUSE TOP PANE IS NOT ABLE TO HANDLE THIS FUCK
+            self.event.release = None;
         }
 
         // background
@@ -1029,8 +1061,18 @@ impl IMUI {
             None => false,
         };
         if show_cursor {
-            // XXX: We assume here monospace font
-            let cursorx = bounds.x0 + self.text_input_state.as_ref().unwrap().cursor_x;
+            let cursorx = match self.locale_kind {
+                UILocaleKind::LtrTtb => {
+                    bounds.x0 + self.text_input_state.as_ref().unwrap().cursor_x
+                }
+                UILocaleKind::RtlTtb => {
+                    bounds.x1 - self.text_input_state.as_ref().unwrap().cursor_x
+                }
+                _ => {
+                    println!("Textarea cursor localekind not handled!");
+                    bounds.x0 + self.text_input_state.as_ref().unwrap().cursor_x
+                }
+            };
             let cursory = bounds.y0 + self.text_input_state.as_ref().unwrap().cursor_y;
             self.drawer.draw_rect(
                 &RectCoords::from_size(cursorx, cursory, 2., self.style.text_size + 4.),
@@ -1041,9 +1083,18 @@ impl IMUI {
         textarea.clone()
     }
     pub fn button(&mut self, label: Option<&str>) -> UIWidgetRef {
+        let width = match label {
+            Some(label) => {
+                self.drawer
+                    .get_text_size(self.style.text_size, label, label.len())
+                    .0
+            }
+            None => 40.,
+        };
+        let height = 40.;
         let button = self.layout_new_widget(
             None,
-            (UISize::Percents(1.), UISize::Percents(1.)),
+            (UISize::DPixels(width), UISize::DPixels(height)),
             UIWidgetFlag::Clickable as u64,
         );
         let uibox = button.borrow();

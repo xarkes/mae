@@ -8,6 +8,7 @@ pub struct Window {
     pub display: *mut x11::xlib::Display,
     pub win: u64,
     xic: x11::xlib::XIC,
+    pub dpi: f32,
 }
 
 fn create_window(width: u32, height: u32) -> (*mut x11::xlib::Display, u64) {
@@ -79,12 +80,20 @@ impl Window {
                 display,
                 win,
                 xic,
+                dpi: 1.0, // TODO(xarkes): Do that better
             }
         }
     }
 
     pub fn get_size(&self) -> (f32, f32) {
         self.size
+    }
+
+    // TODO(xarkes): This API should probably be generic
+    pub fn get_render_size(&self) -> (f32, f32) {
+        // TODO -> compute dpi from screen
+        // (self.size.0 * self.dpi, self.size.1 * self.dpi)
+        (self.size.0, self.size.1)
     }
 
     pub fn get_events(&mut self) -> Vec<OSEvent> {

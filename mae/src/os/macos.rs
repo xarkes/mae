@@ -175,11 +175,12 @@ impl Window {
         // NOTE(xarkes): due to our code in `applicationDidFinishLaunching`, run won't be blocking
         app.run();
 
+        let win = delegate.ivars().window.clone();
         Window {
             // app,
-            window: delegate.ivars().window.clone(),
+            window: win.clone(),
             view: delegate.ivars().view.clone(),
-            dpi: 1.,
+            dpi: win.get().unwrap().backingScaleFactor() as f32,
         }
     }
 
@@ -195,6 +196,7 @@ impl Window {
 
     pub fn get_render_size(&mut self) -> (f32, f32) {
         let (w, h) = self.get_size();
+        // TODO(xarkes): compute dpi only on screen change
         self.dpi = self.window.get().unwrap().backingScaleFactor() as f32;
         (w * self.dpi, h * self.dpi)
     }

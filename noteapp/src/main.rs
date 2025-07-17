@@ -82,22 +82,28 @@ fn main() {
     let mut ui = IMUI::new(1024, 768);
 
     ui.eventloop(|ui| {
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.label(noteapp.notes.last().unwrap().filename.as_str());
+                ui.textarea(noteapp.get_buffer().unwrap().clone(), "maintextarea")
+            })
+        });
+        ui.button(Some("click me here"));
         // top label
         // ui.params()
         //     .size(UISize::Percents(1.), UISize::Pixels(40.))
         //     .text_align(mae::imui::UITextAlign::Center);
         // ui.horizontal(|ui| {
-        //     ui.label(noteapp.notes.last().unwrap().filename.as_str());
         //     ui.label("right")
         // });
 
         // textarea
         // ui.params()
         //     .size(UISize::Percents(1.), UISize::Percents(0.9));
-        let tx = ui.textarea(noteapp.get_buffer().unwrap().clone(), "maintextarea");
-        if tx.borrow().clicked() {
-            // println!("tx clicked");
-        }
+        // let tx = ui.textarea(noteapp.get_buffer().unwrap().clone(), "maintextarea");
+        // if tx.borrow().clicked() {
+        // println!("tx clicked");
+        // }
         // new note button
         // ui.params()
         //     .parent(tx)
