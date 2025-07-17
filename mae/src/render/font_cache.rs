@@ -284,7 +284,7 @@ impl FontCache {
         (length, idx)
     }
 
-    pub fn get_text_size(&mut self, size: u32, text: &str, length: usize) -> (bool, f32, f32) {
+    pub fn get_text_size(&mut self, size: f32, text: &str, length: usize) -> (bool, f32, f32) {
         // TODO(xarkes): Usually we will call draw_text later on, so we can avoid useless heavy calls by caching what was done in this function
         let mut should_update = false;
         let mut width = 0.;
@@ -296,7 +296,7 @@ impl FontCache {
             if c == '\t' {
                 continue;
             }
-            let (glyph, added) = self.get(c, size as f32);
+            let (glyph, added) = self.get(c, size);
             should_update |= added;
             if let Some(glyph) = glyph {
                 width += glyph.advance;

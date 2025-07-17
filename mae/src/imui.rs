@@ -115,8 +115,7 @@ pub enum UITextAlign {
 
 #[derive(Clone, Copy)]
 pub enum UISize {
-    // Pixels(f32), // raw pixels, do not use
-    DPixels(f32), // DPI scaled pixels
+    DPixels(f32), // DPI scaled pixels, in current implementation, all draws are dpi scaled
     Percents(f32),
 }
 impl UISize {
@@ -464,7 +463,7 @@ struct UIStyle {
     main_color: Color,
     bg_color: Color,
     text_color: Color,
-    text_size: u32,
+    text_size: f32,
     active_color: Color,
 }
 
@@ -489,7 +488,7 @@ impl UIStyle {
                 b: 1.,
                 a: 1.,
             },
-            text_size: 12,
+            text_size: 12.,
             active_color: Color {
                 r: 1.,
                 g: 0.6,
@@ -622,8 +621,9 @@ impl IMUI {
         self.consume_events();
     }
     pub fn resize(&mut self) -> Point {
-        self.size = self.drawer.renderer.win.get_render_size();
-        self.drawer.renderer.resize(self.size.0, self.size.1);
+        self.size = self.drawer.renderer.win.get_size();
+        let render_size = self.drawer.renderer.win.get_render_size();
+        self.drawer.renderer.resize(render_size.0, render_size.1);
         // let root = Rc::new(RefCell::new(UIWidget {
         //     bounds: RectCoords::from_size(0., 0., self.size.0, self.size.1),
         //     parent: None,
@@ -639,7 +639,7 @@ impl IMUI {
 
     /////////////////////////////////
     //// Widgets functions
-    fn draw_text(&mut self, bounds: &RectCoords, text: &str, length: usize, size: u32) -> f32 {
+    fn draw_text(&mut self, bounds: &RectCoords, text: &str, length: usize, size: f32) -> f32 {
         let text_pos = match self.locale_kind {
             UILocaleKind::LtrTtb => bounds.x0,
             UILocaleKind::RtlTtb => bounds.x1 - self.drawer.get_text_size(size, text, length).0,
@@ -650,7 +650,7 @@ impl IMUI {
         self.drawer.draw_text(
             text_pos,
             bounds.y0,
-            self.style.text_size,
+            size,
             text,
             length,
             self.style.text_color,

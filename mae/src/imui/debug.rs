@@ -65,7 +65,6 @@ pub fn draw_debug_info(ui: &mut IMUI, mut debug: IMUIDebug, time: f64) {
     if debug.fps {
         let fps = 1f64 / time * 1000f64;
         let text = format!("{:.2}ms - {}fps", time, fps as u64);
-        let font_size = 12;
         let bounds = ui.root.borrow().bounds;
 
         // XXX: Hack
@@ -78,7 +77,7 @@ pub fn draw_debug_info(ui: &mut IMUI, mut debug: IMUIDebug, time: f64) {
             a: 1.,
         };
         ui.locale_kind = UILocaleKind::RtlTtb;
-        ui.draw_text(&bounds, text.as_str(), text.len(), font_size);
+        ui.draw_text(&bounds, text.as_str(), text.len(), ui.style.text_size);
         ui.locale_kind = tmp1;
         ui.style.text_color = tmp0;
     }
