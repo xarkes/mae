@@ -15,7 +15,6 @@ struct Note {
     filename: String,
     filepath: std::path::PathBuf,
     buffer: Option<Rc<RefCell<String>>>,
-    dirty: bool,
 }
 struct NoteApp {
     dir: String,
@@ -41,7 +40,6 @@ impl NoteApp {
                     filename: String::from(path.file_name().unwrap().to_str().unwrap()),
                     filepath: path,
                     buffer: None,
-                    dirty: false,
                 });
             }
         }
@@ -56,7 +54,7 @@ impl NoteApp {
         if self.notes.is_empty() {
             None
         } else {
-            let curnote = self.notes.last_mut().unwrap();
+            let curnote = self.note();
             let buf = curnote.buffer.as_ref();
             if buf.is_none() {
                 curnote.buffer = Some(Rc::new(RefCell::new(
@@ -72,8 +70,11 @@ impl NoteApp {
             filename: String::from("newfile"),
             filepath: PathBuf::new(),
             buffer: Some(Rc::new(RefCell::new(String::new()))),
-            dirty: false,
         });
+    }
+
+    pub fn note(&mut self) -> &mut Note {
+        self.notes.last_mut().unwrap()
     }
 }
 
@@ -83,19 +84,36 @@ fn main() {
 
     // xarkes: draw UI
     let mut ui = IMUI::new(1024, 768);
+    let mut changecount = 0;
 
     ui.eventloop(|ui| {
-        ui.horizontal(|ui| {
-            // ui.params().width(UISize::DPixels(1024. - 200.));
-            ui.vertical(|ui| {
-                ui.label(noteapp.notes.last().unwrap().filename.as_str());
-                ui.textarea(noteapp.get_buffer().unwrap().clone(), "maintextarea")
-            })
+        // xarkes: update noteapp if textinput changed
+        ui.vertical(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(noteapp.note().filename.as_str());
+                if ui.text_input_changecount().unwrap_or(0) != changecount {
+                    ui.label("   dirty...")
+                } else {
+                    ui.label("   ok!")
+                }
+            });
+            let area = ui.textarea(noteapp.get_buffer().unwrap().clone(), "maintextarea");
+            area
         });
+
+        // TODO:
+        // Important stuff:
+        // 1. proper implementation for event handling
+        // 2. animation support
+        // 3. shortcut support
+        // 4. scrollable textarea
 
         // floating add button
         ui.params()
             .position((UISize::Percents(0.9), UISize::Percents(0.9)));
-        ui.button(Some("New note"));
+        if ui.button(Some("New note")).borrow().clicked() {
+            println!("I AM CLICKED THANK YOU");
+            noteapp.new_buffer();
+        }
     });
 }

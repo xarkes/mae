@@ -106,6 +106,7 @@ enum UIWidgetEvent {
     MouseOver = 1u64,
     MouseClicked = 2u64,
     MouseReleased = 4u64,
+    // KeyPressed = 8u64,
 }
 
 pub enum UITextAlign {
@@ -168,6 +169,9 @@ impl UIBox {
     pub fn clicked(&self) -> bool {
         (self.events & UIWidgetEvent::MouseReleased as u64) > 0
     }
+    // pub fn keypressed(&self) -> bool {
+    //     (self.events & UIWidgetEvent::KeyPressed as u64) > 0
+    // }
 
     fn clickable(&self) -> bool {
         (self.flags & UIWidgetFlag::Clickable as u64) == UIWidgetFlag::Clickable as u64
@@ -232,7 +236,8 @@ struct IMUIEvents {
 }
 
 struct IMUITextInputState {
-    focus: String,
+    // focus: String,
+    focus: UIWidgetRef,
     buffer: Rc<RefCell<String>>,
     idx: usize,
     cursor_col: usize,
@@ -241,6 +246,7 @@ struct IMUITextInputState {
     cursor_y: f32,
     multiline: bool,
     font_cache: Rc<RefCell<FontCache>>,
+    changecount: usize,
 }
 impl IMUITextInputState {
     pub fn compute_valid_cursor_loc(
@@ -286,13 +292,15 @@ impl IMUITextInputState {
         self.cursor_y = cursor_y;
     }
     pub fn new(
-        id: String,
+        // id: String,
+        id: UIWidgetRef,
         font_cache: Rc<RefCell<FontCache>>,
         text_buffer: Rc<RefCell<String>>,
         multiline: bool,
     ) -> Self {
         IMUITextInputState {
-            focus: String::from(id),
+            // focus: String::from(id),
+            focus: id,
             buffer: text_buffer.clone(),
             idx: 0,
             cursor_col: 0,
@@ -301,6 +309,7 @@ impl IMUITextInputState {
             cursor_y: 0.,
             multiline,
             font_cache,
+            changecount: 0,
         }
     }
     fn update_cursor_loc(&mut self, idx: usize) {
@@ -344,76 +353,87 @@ impl IMUITextInputState {
     }
     pub fn handle_event(&mut self, key: &OSKey, chars: &Option<String>) {
         match key {
-            OSKey::Keyboard(keycode) => match keycode {
-                OSKeyCode::KeyBackspace => {
-                    if self.idx > 0 {
-                        self.buffer.borrow_mut().remove(self.idx - 1);
-                        self.update_cursor_loc(self.idx - 1);
+            OSKey::Keyboard(keycode) => {
+                let mut bufchanged = false;
+                match keycode {
+                    OSKeyCode::KeyBackspace => {
+                        if self.idx > 0 {
+                            self.buffer.borrow_mut().remove(self.idx - 1);
+                            bufchanged = true;
+                            self.update_cursor_loc(self.idx - 1);
+                        }
                     }
-                }
-                OSKeyCode::KeyLeftArrow => {
-                    if self.idx > 0 {
-                        self.update_cursor_loc(self.idx - 1);
+                    OSKeyCode::KeyLeftArrow => {
+                        if self.idx > 0 {
+                            self.update_cursor_loc(self.idx - 1);
+                        }
                     }
-                }
-                OSKeyCode::KeyRightArrow => {
-                    if self.idx < self.buffer.borrow().len() {
-                        self.update_cursor_loc(self.idx + 1);
+                    OSKeyCode::KeyRightArrow => {
+                        if self.idx < self.buffer.borrow().len() {
+                            self.update_cursor_loc(self.idx + 1);
+                        }
                     }
-                }
-                OSKeyCode::KeyDownArrow => {
-                    if self.multiline {
-                        let new_idx = {
-                            let buf = self.buffer.borrow();
-                            let line_num = self.cursor_row + 1;
-                            let mut idx = 0;
-                            for (i, line) in buf.lines().enumerate() {
-                                if i == line_num {
-                                    idx += self.cursor_col;
-                                    break;
+                    OSKeyCode::KeyDownArrow => {
+                        if self.multiline {
+                            let new_idx = {
+                                let buf = self.buffer.borrow();
+                                let line_num = self.cursor_row + 1;
+                                let mut idx = 0;
+                                for (i, line) in buf.lines().enumerate() {
+                                    if i == line_num {
+                                        idx += self.cursor_col;
+                                        break;
+                                    }
+                                    idx += line.len() + 1; // +1 for '\n'
                                 }
-                                idx += line.len() + 1; // +1 for '\n'
-                            }
-                            idx
-                        };
-                        self.update_cursor_loc(new_idx);
-                    }
-                }
-                OSKeyCode::KeyUpArrow => {
-                    if self.multiline {
-                        let new_idx = {
-                            let buf = self.buffer.borrow();
-                            let lines = buf.lines();
-                            let line_num = match self.cursor_row {
-                                0 => 0,
-                                _ => self.cursor_row - 1,
+                                idx
                             };
-                            let mut idx = 0;
-                            for (i, line) in lines.enumerate() {
-                                if i == line_num {
-                                    idx += std::cmp::min(line.len(), self.cursor_col);
-                                    break;
-                                }
-                                idx += line.len() + 1; // +1 for '\n'
-                            }
-                            idx
-                        };
-                        self.update_cursor_loc(new_idx);
+                            self.update_cursor_loc(new_idx);
+                        }
                     }
-                }
-                OSKeyCode::KeyEnter => {
-                    if self.multiline {
-                        self.buffer.borrow_mut().insert_str(self.idx, "\n");
+                    OSKeyCode::KeyUpArrow => {
+                        if self.multiline {
+                            let new_idx = {
+                                let buf = self.buffer.borrow();
+                                let lines = buf.lines();
+                                let line_num = match self.cursor_row {
+                                    0 => 0,
+                                    _ => self.cursor_row - 1,
+                                };
+                                let mut idx = 0;
+                                for (i, line) in lines.enumerate() {
+                                    if i == line_num {
+                                        idx += std::cmp::min(line.len(), self.cursor_col);
+                                        break;
+                                    }
+                                    idx += line.len() + 1; // +1 for '\n'
+                                }
+                                idx
+                            };
+                            self.update_cursor_loc(new_idx);
+                        }
+                    }
+                    OSKeyCode::KeyEnter => {
+                        if self.multiline {
+                            self.buffer.borrow_mut().insert_str(self.idx, "\n");
+                            bufchanged = true;
+                            self.update_cursor_loc(self.idx + 1);
+                        }
+                    }
+                    _ => {
+                        self.buffer
+                            .borrow_mut()
+                            .insert_str(self.idx, chars.as_ref().unwrap().as_str());
+                        bufchanged = true;
                         self.update_cursor_loc(self.idx + 1);
                     }
                 }
-                _ => {
-                    self.buffer
-                        .borrow_mut()
-                        .insert_str(self.idx, chars.as_ref().unwrap().as_str());
-                    self.update_cursor_loc(self.idx + 1);
+
+                if bufchanged {
+                    // self.focus.borrow_mut().events |= UIWidgetEvent::KeyPressed as u64;
+                    self.changecount += 1;
                 }
-            },
+            }
             _ => {}
         }
     }
@@ -605,6 +625,12 @@ impl IMUI {
         self.root.borrow_mut().bounds.x1 = self.size.0;
         self.root.borrow_mut().bounds.y1 = self.size.1;
         self.size
+    }
+    pub fn text_input_changecount(&self) -> Option<usize> {
+        match &self.text_input_state {
+            Some(state) => Some(state.changecount),
+            None => None,
+        }
     }
 
     /////////////////////////////////
@@ -1047,7 +1073,8 @@ impl IMUI {
         if textarea.borrow().clicked() {
             // xarkes: update the text input global state
             let mut state = IMUITextInputState::new(
-                String::from(id),
+                // String::from(id),
+                textarea.clone(),
                 self.drawer.renderer.font_cache.clone(),
                 text_buffer.clone(),
                 multiline,
@@ -1100,7 +1127,8 @@ impl IMUI {
 
         // cursor
         let show_cursor = match &self.text_input_state {
-            Some(state) => state.focus.eq(id),
+            // Some(state) => state.focus.eq(id),
+            Some(_) => true,
             None => false,
         };
         if show_cursor {
