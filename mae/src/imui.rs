@@ -133,6 +133,7 @@ impl UISize {
         }
     }
 }
+pub type RelPoint = (UISize, UISize);
 
 #[derive(Copy, Clone)]
 pub enum UILayout {
@@ -153,6 +154,9 @@ pub struct UIBox {
     // event flags
     flags: u64,
     events: u64,
+
+    #[cfg(debug_assertions)]
+    depth: usize,
 }
 impl UIBox {
     pub fn hover(&self) -> bool {
@@ -177,78 +181,41 @@ impl UIBox {
 }
 
 pub struct UIWidgetParams {
-    default_parent: UIWidgetRef,
-    parent: UIWidgetRef,
-    width: UISize,
-    height: UISize,
-    color: V4f32,
-    layout: UILayout,
-    text_align: UITextAlign,
-    flags: u64,
+    width: Option<UISize>,
+    height: Option<UISize>,
+    layout: Option<UILayout>,
+    position: Option<RelPoint>,
 }
 impl UIWidgetParams {
-    pub fn new(parent: UIWidgetRef) -> Self {
+    pub fn new() -> Self {
         UIWidgetParams {
-            default_parent: parent.clone(),
-            parent,
-            width: UISize::Percents(1.),
-            height: UISize::Percents(1.),
-            color: V4f32 {
-                r: 1.,
-                g: 1.,
-                b: 1.,
-                a: 1.,
-            },
-            layout: UILayout::Vertical,
-            text_align: UITextAlign::Left,
-            flags: 0,
+            width: None,
+            height: None,
+            layout: None,
+            position: None,
         }
     }
-    pub fn size(&mut self, w: UISize, h: UISize) -> &mut Self {
-        self.width(w);
-        self.height(h);
+    pub fn width(&mut self, width: UISize) -> &mut Self {
+        self.width = Some(width);
         self
     }
-    pub fn flags(&mut self, flags: u64) -> &mut Self {
-        self.flags = flags;
-        self
-    }
-    pub fn width(&mut self, w: UISize) -> &mut Self {
-        self.width = w;
-        self
-    }
-    pub fn height(&mut self, h: UISize) -> &mut Self {
-        self.height = h;
-        self
-    }
-    pub fn parent(&mut self, parent: UIWidgetRef) -> &mut Self {
-        self.parent = parent;
-        self
-    }
-    pub fn color(&mut self, color: V4f32) -> &mut Self {
-        self.color = color;
+    pub fn height(&mut self, height: UISize) -> &mut Self {
+        self.height = Some(height);
         self
     }
     pub fn layout(&mut self, layout: UILayout) -> &mut Self {
-        self.layout = layout;
+        self.layout = Some(layout);
         self
     }
-    pub fn text_align(&mut self, mode: UITextAlign) -> &mut Self {
-        self.text_align = mode;
+    pub fn position(&mut self, position: RelPoint) -> &mut Self {
+        self.position = Some(position);
         self
     }
     pub fn reset(&mut self) {
-        self.parent = self.default_parent.clone();
-        self.width = UISize::Percents(1.);
-        self.height = UISize::Percents(1.);
-        self.color = V4f32 {
-            r: 1.,
-            g: 1.,
-            b: 1.,
-            a: 1.,
-        };
-        self.layout = UILayout::Vertical;
-        self.text_align = UITextAlign::Left;
+        self.width = None;
+        self.height = None;
+        self.layout = None;
+        self.position = None;
     }
 }
 
@@ -540,13 +507,15 @@ impl IMUI {
             flags: 0,
             events: 0,
             children: Vec::new(),
+            #[cfg(debug_assertions)]
+            depth: 0,
         }));
         IMUI {
             drawer,
             #[cfg(debug_assertions)]
             debug: IMUIDebug::default(),
             size: (0., 0.),
-            params: UIWidgetParams::new(root.clone()),
+            params: UIWidgetParams::new(),
             event: IMUIEvents::default(),
             text_input_state: None,
             locale_kind: UILocaleKind::LtrTtb,
@@ -640,6 +609,10 @@ impl IMUI {
 
     /////////////////////////////////
     //// Widgets functions
+    pub fn params(&mut self) -> &mut UIWidgetParams {
+        self.params.reset();
+        &mut self.params
+    }
     fn draw_text(&mut self, bounds: &RectCoords, text: &str, length: usize, size: f32) -> f32 {
         let text_pos = match self.locale_kind {
             UILocaleKind::LtrTtb => bounds.x0,
@@ -660,8 +633,10 @@ impl IMUI {
     fn layout_new_widget(
         &mut self,
         id: Option<String>,
-        size: (UISize, UISize),
+        pos: Option<RelPoint>,
+        size: RelPoint,
         flags: u64,
+        new_layout: UILayout,
     ) -> UIWidgetRef {
         let mut parent = self.parent_stack.last().unwrap().borrow_mut();
         // xarkes: compute bounds depending on layout and requested size
@@ -679,12 +654,19 @@ impl IMUI {
             _ => parent.layout,
         };
         let bounds = match layout {
-            UILayout::Root => RectCoords::from_size(
-                parent.bounds.x0,
-                parent.bounds.y0,
-                size.0.pixels(parent.bounds.width()),
-                size.1.pixels(parent.bounds.height()),
-            ),
+            UILayout::Root => {
+                debug_assert!(
+                    pos.is_some(),
+                    "When adding to root layout, a position must be set"
+                );
+                let pos = pos.unwrap();
+                RectCoords::from_size(
+                    pos.0.pixels(parent.bounds.width()),
+                    pos.1.pixels(parent.bounds.height()),
+                    size.0.pixels(parent.bounds.width()),
+                    size.1.pixels(parent.bounds.height()),
+                )
+            }
             UILayout::VerticalLtr => {
                 let insert_point = match parent.children.last() {
                     Some(child) => (child.borrow().bounds.x0, child.borrow().bounds.y1),
@@ -764,10 +746,12 @@ impl IMUI {
         // xarkes: create box
         let mut uibox = UIBox {
             bounds,
-            layout: UILayout::Vertical,
+            layout: new_layout,
             flags,
             events: 0,
             children: Vec::new(),
+            #[cfg(debug_assertions)]
+            depth: parent.depth + 1,
         };
 
         // xarkes: pre-update dragged widget positions for events to work
@@ -837,9 +821,31 @@ impl IMUI {
         &mut self,
         mut children: impl FnMut(&mut IMUI) -> UIWidgetRef,
     ) -> UIWidgetRef {
-        let pane = self.layout_new_widget(None, (UISize::Percents(1.), UISize::Percents(1.)), 0);
+        // process user params
+        let width = match self.params.width {
+            Some(width) => width,
+            None => UISize::Percents(1.),
+        };
+        let height = match self.params.height {
+            Some(height) => height,
+            None => UISize::Percents(1.),
+        };
+
+        // create widget
+        let layout = match self.params.layout {
+            Some(layout) => layout,
+            None => UILayout::Horizontal,
+        };
+        let pane = self.layout_new_widget(
+            None,
+            Some((UISize::DPixels(0.), UISize::DPixels(0.))),
+            (width, height),
+            0,
+            layout,
+        );
         pane.borrow_mut().layout = UILayout::Horizontal;
         self.parent_stack.push(pane.clone());
+        self.params.reset();
         let out = children(self);
         self.parent_stack.pop();
         let mut pu = pane.borrow_mut();
@@ -848,8 +854,30 @@ impl IMUI {
         out
     }
     pub fn vertical(&mut self, mut children: impl FnMut(&mut IMUI) -> UIWidgetRef) -> UIWidgetRef {
-        let pane = self.layout_new_widget(None, (UISize::Percents(1.), UISize::Percents(1.)), 0);
+        // process user params
+        let width = match self.params.width {
+            Some(width) => width,
+            None => UISize::Percents(1.),
+        };
+        let height = match self.params.height {
+            Some(height) => height,
+            None => UISize::Percents(1.),
+        };
+
+        // create widget
+        let layout = match self.params.layout {
+            Some(layout) => layout,
+            None => UILayout::Vertical,
+        };
+        let pane = self.layout_new_widget(
+            None,
+            Some((UISize::DPixels(0.), UISize::DPixels(0.))),
+            (width, height),
+            0,
+            layout,
+        );
         self.parent_stack.push(pane.clone());
+        self.params.reset();
         let out = children(self);
         self.parent_stack.pop();
         // let mut pu = pane.borrow_mut();
@@ -864,16 +892,24 @@ impl IMUI {
     // - separer wigets customisables et widgets basiques
     // --> l'idee c'est de fournir des API pour faire une UI jolie et facilement, rapidemment
     // --> mais aussi fournir des API pour la devapp qui permet de customiser au max
+    // en fait... a voir... prendre le parti "je fournis des widgets peu customizables" c'est cool et ca fait le taf
     pub fn floating_pane(&mut self, title: &str, mut children: impl FnMut(&mut IMUI)) {
         // xarkes: draw widget
-        let width = 200.;
-        let height = 250.;
+        let width = self.params.width.unwrap_or(UISize::DPixels(200.));
+        let height = self.params.height.unwrap_or(UISize::DPixels(250.));
 
-        // XXX: layout_new_widget should be used only for non floating things, things inside a layout
+        let pos = self
+            .params
+            .position
+            .unwrap_or((UISize::DPixels(0.), UISize::DPixels(0.)));
+
+        // XXX: layout_new_widget should be used only for non floating things, things inside a layout??? maybe not?
         let pane = self.layout_new_widget(
             Some(format!("##pane_{}", title)),
-            (UISize::DPixels(width), UISize::DPixels(height)),
+            Some(pos),
+            (width, height),
             UIWidgetFlag::Draggable as u64 | UIWidgetFlag::Resizable as u64,
+            UILayout::Vertical,
         );
 
         let pbounds = pane.borrow().bounds;
@@ -912,8 +948,10 @@ impl IMUI {
         let box_size = line_height;
         let widget_r = self.layout_new_widget(
             None,
+            None,
             (UISize::DPixels(box_size), UISize::DPixels(box_size)),
             UIWidgetFlag::Clickable as u64,
+            UILayout::Vertical,
         );
         let widget = widget_r.borrow();
 
@@ -957,8 +995,10 @@ impl IMUI {
             .line_height(self.style.text_size);
         let widget = self.layout_new_widget(
             Some(format!("##label_{}", label)),
+            None,
             (UISize::DPixels(width), UISize::DPixels(height)),
             0,
+            UILayout::Vertical,
         );
         self.draw_text(
             &RectCoords::from_size(
@@ -974,6 +1014,7 @@ impl IMUI {
         widget
     }
     pub fn checkbox(&mut self, label: &str, value: &mut bool) -> UIWidgetRef {
+        // TODO(xarkes): horizontal callback returning a widget sucks
         self.horizontal(|ui| {
             let checkbox = ui.checkbox_widget(value);
             ui.label(label);
@@ -997,8 +1038,10 @@ impl IMUI {
         // TODO(xarkes): once you rewrite this, think of the LTR text inputs and handle it
         let textarea = self.layout_new_widget(
             Some(String::from(id)),
+            None,
             (UISize::Percents(1.), UISize::Percents(1.)),
             UIWidgetFlag::Clickable as u64,
+            UILayout::Vertical,
         );
         let bounds = &textarea.borrow().bounds;
         if textarea.borrow().clicked() {
@@ -1083,30 +1126,41 @@ impl IMUI {
         textarea.clone()
     }
     pub fn button(&mut self, label: Option<&str>) -> UIWidgetRef {
+        let width = self.params.width.unwrap_or(UISize::DPixels(40.));
         let width = match label {
-            Some(label) => {
+            Some(label) => UISize::DPixels(f32::max(
                 self.drawer
                     .get_text_size(self.style.text_size, label, label.len())
-                    .0
-            }
-            None => 40.,
+                    .0,
+                width.pixels(self.parent_stack.last().unwrap().borrow().bounds.width()),
+            )),
+            None => width,
         };
-        let height = 40.;
+        let height = self.params.width.unwrap_or(UISize::DPixels(40.));
+
+        let position = self
+            .params
+            .position
+            .unwrap_or((UISize::DPixels(0.), UISize::DPixels(0.)));
+
         let button = self.layout_new_widget(
             None,
-            (UISize::DPixels(width), UISize::DPixels(height)),
+            Some(position),
+            (width, height),
             UIWidgetFlag::Clickable as u64,
+            UILayout::Vertical,
         );
         let uibox = button.borrow();
-        let bg_color = match uibox.hover() {
-            false => self.params.color,
-            true => V4f32 {
-                r: self.params.color.r * 1.1,
-                g: self.params.color.g * 1.1,
-                b: self.params.color.b * 1.1,
-                a: self.params.color.a,
-            },
-        };
+        // let bg_color = match uibox.hover() {
+        //     false => self.params.color,
+        //     true => V4f32 {
+        //         r: self.params.color.r * 1.1,
+        //         g: self.params.color.g * 1.1,
+        //         b: self.params.color.b * 1.1,
+        //         a: self.params.color.a,
+        //     },
+        // };
+        let bg_color = self.style.bg_color;
         let draw_off = match uibox.click() {
             false => 0.,
             true => 1.,

@@ -1,4 +1,4 @@
-use super::{Color, IMUI, UILocaleKind, UIWidgetRef};
+use super::{Color, IMUI, UILocaleKind, UISize, UIWidgetRef};
 
 #[derive(Clone)]
 pub(crate) struct IMUIDebug {
@@ -19,9 +19,48 @@ impl IMUIDebug {
     }
 }
 
-fn draw_debug_pane(ui: &mut IMUI, debug: &mut IMUIDebug) {
+fn draw_node_info(ui: &mut IMUI, node: UIWidgetRef) {
+    let mut i = 0;
+    let mut worklist = vec![node];
+    ui.label("-------------------");
+    loop {
+        let curnode = match worklist.pop() {
+            Some(n) => n,
+            None => {
+                break;
+            }
+        };
+        for c in &curnode.borrow().children {
+            worklist.push(c.clone());
+        }
+        ui.label(
+            format!(
+                "{1:0$}Node {2} ({3:.1}x{4:.1}, {5} children)",
+                curnode.borrow().depth + 1,
+                " ",
+                i,
+                curnode.borrow().bounds.x0,
+                curnode.borrow().bounds.y0,
+                curnode.borrow().children.len()
+            )
+            .as_str(),
+        );
+        i += 1;
+    }
+}
+
+fn draw_debug_pane(ui: &mut IMUI, debug: &mut IMUIDebug, time: f64) {
+    let xoff = ui.size.0 - 250.;
+    ui.params()
+        .width(UISize::DPixels(250.))
+        .height(UISize::DPixels(400.))
+        .position((UISize::DPixels(xoff), UISize::DPixels(40.)));
     ui.floating_pane("Debug metrics", |ui| {
-        ui.checkbox("Show fps", &mut debug.fps);
+        if debug.fps {
+            let fps = 1f64 / time * 1000f64;
+            let text = format!("Render: {:.2}ms - {}fps", time, fps as u64);
+            ui.label(text.as_str());
+        }
         ui.checkbox("Show hints", &mut debug.hints);
         if ui
             .checkbox("Enable VSync", &mut debug.vsync)
@@ -37,6 +76,7 @@ fn draw_debug_pane(ui: &mut IMUI, debug: &mut IMUIDebug) {
             };
             ui.event.drag_cache.clear();
         };
+        draw_node_info(ui, ui.root.clone());
     });
 
     ui.debug = debug.clone();
@@ -46,41 +86,26 @@ fn draw_debug_hints(ui: &mut IMUI, start: UIWidgetRef) {
     for c in &start.borrow().children {
         draw_debug_hints(ui, c.clone());
     }
-    ui.drawer.draw_empty_rect(
-        &start.borrow().bounds,
-        Color {
+    let color = match start.borrow().hover() {
+        true => Color {
+            r: 0.0,
+            g: 1.0,
+            b: 0.0,
+            a: 1.0,
+        },
+        false => Color {
             r: 1.0,
             g: 0.0,
             b: 0.0,
             a: 1.0,
         },
-        1.0,
-        true,
-    );
+    };
+    ui.drawer
+        .draw_empty_rect(&start.borrow().bounds, color, 1.0, true);
 }
 
 pub fn draw_debug_info(ui: &mut IMUI, mut debug: IMUIDebug, time: f64) {
-    draw_debug_pane(ui, &mut debug);
-
-    if debug.fps {
-        let fps = 1f64 / time * 1000f64;
-        let text = format!("{:.2}ms - {}fps", time, fps as u64);
-        let bounds = ui.root.borrow().bounds;
-
-        // XXX: Hack
-        let tmp0 = ui.style.text_color;
-        let tmp1 = ui.locale_kind;
-        ui.style.text_color = Color {
-            r: 1.,
-            g: 0.,
-            b: 0.,
-            a: 1.,
-        };
-        ui.locale_kind = UILocaleKind::RtlTtb;
-        ui.draw_text(&bounds, text.as_str(), text.len(), ui.style.text_size);
-        ui.locale_kind = tmp1;
-        ui.style.text_color = tmp0;
-    }
+    draw_debug_pane(ui, &mut debug, time);
 
     if debug.hints {
         draw_debug_hints(ui, ui.root.clone());

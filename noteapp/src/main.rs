@@ -15,6 +15,7 @@ struct Note {
     filename: String,
     filepath: std::path::PathBuf,
     buffer: Option<Rc<RefCell<String>>>,
+    dirty: bool,
 }
 struct NoteApp {
     dir: String,
@@ -40,6 +41,7 @@ impl NoteApp {
                     filename: String::from(path.file_name().unwrap().to_str().unwrap()),
                     filepath: path,
                     buffer: None,
+                    dirty: false,
                 });
             }
         }
@@ -70,6 +72,7 @@ impl NoteApp {
             filename: String::from("newfile"),
             filepath: PathBuf::new(),
             buffer: Some(Rc::new(RefCell::new(String::new()))),
+            dirty: false,
         });
     }
 }
@@ -83,42 +86,16 @@ fn main() {
 
     ui.eventloop(|ui| {
         ui.horizontal(|ui| {
+            // ui.params().width(UISize::DPixels(1024. - 200.));
             ui.vertical(|ui| {
                 ui.label(noteapp.notes.last().unwrap().filename.as_str());
                 ui.textarea(noteapp.get_buffer().unwrap().clone(), "maintextarea")
             })
         });
-        ui.button(Some("click me here"));
-        // top label
-        // ui.params()
-        //     .size(UISize::Percents(1.), UISize::Pixels(40.))
-        //     .text_align(mae::imui::UITextAlign::Center);
-        // ui.horizontal(|ui| {
-        //     ui.label("right")
-        // });
 
-        // textarea
-        // ui.params()
-        //     .size(UISize::Percents(1.), UISize::Percents(0.9));
-        // let tx = ui.textarea(noteapp.get_buffer().unwrap().clone(), "maintextarea");
-        // if tx.borrow().clicked() {
-        // println!("tx clicked");
-        // }
-        // new note button
-        // ui.params()
-        //     .parent(tx)
-        //     .size(UISize::DPixels(30.), UISize::DPixels(30.))
-        // .position(imui::UIPosition::Fixed(
-        //     UISize::Percents(0.5),
-        //     UISize::Percents(1.),
-        // ))
-        // .color(imui::Color::from_text("#4466ff"));
-        // let but = ui.button(None);
-        // if but.borrow().clicked() {
-        //     // TODO(xarkes): We have to properly handle the events hierarchy (depth, who handles the click?)
-        //     // same problem as with the layout: how do you know if there is a widget above you catching the click event if you are handling the events while being drawn?
-        //     println!("clickme");
-        //     noteapp.new_buffer();
-        // }
+        // floating add button
+        ui.params()
+            .position((UISize::Percents(0.9), UISize::Percents(0.9)));
+        ui.button(Some("New note"));
     });
 }
