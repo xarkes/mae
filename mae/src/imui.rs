@@ -840,7 +840,7 @@ impl IMUI {
         pu.bounds.y1 = f32::min(pu.bounds.y1, out.borrow().bounds.y1);
         out
     }
-    pub fn pane(&mut self, title: &str, mut children: impl FnMut(&mut IMUI)) {
+    pub fn floating_pane(&mut self, title: &str, mut children: impl FnMut(&mut IMUI)) {
         // xarkes: draw widget
         let width = 200.;
         let height = 250.;
@@ -850,6 +850,8 @@ impl IMUI {
             (UISize::DPixels(width), UISize::DPixels(height)),
             UIWidgetFlag::Draggable as u64 | UIWidgetFlag::Resizable as u64,
         );
+        pane.borrow_mut().bounds.x0 = self.size.0 / 2. - width;
+        pane.borrow_mut().bounds.y0 = self.size.1 / 2. - height;
 
         let pbounds = pane.borrow().bounds;
         let bar_height = 20.;
@@ -948,6 +950,139 @@ impl IMUI {
             ui.label(label);
             checkbox
         })
+    }
+    pub fn line_edit(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIWidgetRef {
+        let multiline = false;
+        self.text_edit_impl(text_buffer, id, multiline)
+    }
+    pub fn textarea(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIWidgetRef {
+        let multiline = true;
+        self.text_edit_impl(text_buffer, id, multiline)
+    }
+    fn text_edit_impl(
+        &mut self,
+        text_buffer: Rc<RefCell<String>>,
+        id: &str,
+        multiline: bool,
+    ) -> UIWidgetRef {
+        // TODO(xarkes): once you rewrite this, think of the LTR text inputs and handle it
+        let textarea = self.layout_new_widget(
+            Some(String::from(id)),
+            (UISize::Percents(1.), UISize::Percents(1.)),
+            UIWidgetFlag::Clickable as u64,
+        );
+        let bounds = &textarea.borrow().bounds;
+        if textarea.borrow().clicked() {
+            // xarkes: update the text input global state
+            let mut state = IMUITextInputState::new(
+                String::from(id),
+                self.drawer.renderer.font_cache.clone(),
+                text_buffer.clone(),
+                multiline,
+            );
+            state.compute_valid_cursor_loc(
+                bounds,
+                &text_buffer.borrow(),
+                self.style.text_size,
+                self.event.mouse.unwrap(),
+            );
+            self.text_input_state = Some(state);
+        }
+
+        // background
+        self.drawer
+            .draw_rect(&textarea.borrow().bounds, self.style.bg_color);
+
+        // text
+        if multiline {
+            let mut y = bounds.y0;
+            for (i, line) in text_buffer.borrow().lines().enumerate() {
+                let x = bounds.x0;
+                self.draw_text(
+                    &RectCoords::from_size(x, y, bounds.width(), bounds.height()),
+                    line,
+                    line.len(),
+                    self.style.text_size,
+                );
+                y += self
+                    .drawer
+                    .renderer
+                    .font_cache
+                    .borrow()
+                    .line_height(self.style.text_size);
+                if y >= bounds.y1 {
+                    break;
+                }
+            }
+        } else {
+            self.draw_text(
+                bounds,
+                text_buffer.borrow().as_str(),
+                text_buffer.borrow().len(),
+                self.style.text_size,
+            );
+        }
+
+        // cursor
+        let show_cursor = match &self.text_input_state {
+            Some(state) => state.focus.eq(id),
+            None => false,
+        };
+        if show_cursor {
+            // XXX: We assume here monospace font
+            let cursorx = bounds.x0 + self.text_input_state.as_ref().unwrap().cursor_x;
+            let cursory = bounds.y0 + self.text_input_state.as_ref().unwrap().cursor_y;
+            self.drawer.draw_rect(
+                &RectCoords::from_size(cursorx, cursory, 2., self.style.text_size + 4.),
+                self.style.active_color,
+            );
+        }
+
+        textarea.clone()
+    }
+    pub fn button(&mut self, label: Option<&str>) -> UIWidgetRef {
+        let button = self.layout_new_widget(
+            None,
+            (UISize::Percents(1.), UISize::Percents(1.)),
+            UIWidgetFlag::Clickable as u64,
+        );
+        let uibox = button.borrow();
+        let bg_color = match uibox.hover() {
+            false => self.params.color,
+            true => V4f32 {
+                r: self.params.color.r * 1.1,
+                g: self.params.color.g * 1.1,
+                b: self.params.color.b * 1.1,
+                a: self.params.color.a,
+            },
+        };
+        let draw_off = match uibox.click() {
+            false => 0.,
+            true => 1.,
+        };
+        self.drawer.draw_rect(
+            &RectCoords {
+                x0: uibox.bounds.x0 + draw_off,
+                y0: uibox.bounds.y0 + draw_off,
+                x1: uibox.bounds.x1 + draw_off,
+                y1: uibox.bounds.y1 + draw_off,
+            },
+            bg_color,
+        );
+        if let Some(label) = label {
+            self.draw_text(
+                &RectCoords::from_size(
+                    uibox.bounds.x0 + draw_off,
+                    uibox.bounds.y0 + draw_off,
+                    uibox.bounds.width(),
+                    uibox.bounds.height(),
+                ),
+                label,
+                label.len(),
+                self.style.text_size,
+            );
+        }
+        button.clone()
     }
 }
 

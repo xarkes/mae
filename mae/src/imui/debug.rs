@@ -20,7 +20,7 @@ impl IMUIDebug {
 }
 
 fn draw_debug_pane(ui: &mut IMUI, debug: &mut IMUIDebug) {
-    ui.pane("Debug metrics", |ui| {
+    ui.floating_pane("Debug metrics", |ui| {
         ui.checkbox("Show fps", &mut debug.fps);
         ui.checkbox("Show hints", &mut debug.hints);
         if ui
