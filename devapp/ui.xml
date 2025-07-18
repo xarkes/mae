@@ -4,3 +4,65 @@
   <button color="#336" width="50" height="50">Click me!</button>
 </main>
 -->
+
+
+<!--
+
+
+// Below is just some test at what would be a very customizable UI API
+// that remains simple to use
+
+logic="ui.c"
+logic="ui.rs"
+
+widget button(label: text) {
+  <button color="red" radius="5">{label}</button>
+}
+
+layout alias vertical {
+  match rtl {
+    LtrTtb => vertical_ltr
+    _ => Error
+  }
+}
+
+layout vertical_ltr(reqpos: RelPoint, reqsize: RelSize, parent: Widget, previous: Option<Widget>) {
+  insert_point = match previous {
+    Some(previous) => (previous.x0 - previous.y1),
+    None => (parent.x0, parent.y0)
+  }
+  return {
+    insert_point.0, insert_point.1,
+    f32::min(parent.width(), reqsize.0),
+    f32::min(parent.height(), reqsize.1)
+  }
+}
+
+widget complex_button(label: text) {
+  // warning: your widget does not take rtl and ltr into account
+  // if that is intentional -> state why with @ignore(rtl)
+  drawRect(0, 0, 0, 0);
+  drawRect(10, 10, 10, 10);
+}
+
+window main {
+  <vertical>
+    <label>{current_filename}</label>
+    <textarea></textarea>
+  </vertical>
+
+  // No layout above us, this will float (this is a window)
+  let relx = match rtl {
+    ltr => -10,
+    rtl => 10
+  };
+  <button relx={relx}>
+}
+
+fn main() {
+  show(main);
+}
+
+
+
+-->

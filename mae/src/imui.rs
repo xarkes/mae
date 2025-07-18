@@ -1,19 +1,32 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
+mod text_input_state;
+
 #[cfg(debug_assertions)]
 mod debug;
+#[cfg(debug_assertions)]
+use debug::{IMUIDebug, draw_debug_info};
 
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;
-use debug::{IMUIDebug, draw_debug_info};
+use text_input_state::IMUITextInputState;
 
 use crate::{
     draw::{self, Drawer},
-    os::{self, OSEvent, OSEventType, OSKey, OSKeyCode},
+    os::{self, OSEvent, OSEventType, OSKey},
     render::{self, Point, RectCoords, V4f32, font_cache::FontCache},
 };
 
 type UIWidgetRef = Rc<RefCell<UIBox>>;
+pub struct UIInteraction {
+    uibox: UIWidgetRef,
+    flags: u64,
+}
+impl UIInteraction {
+    pub fn clicked(&self) -> bool {
+        (self.flags & UIWidgetEvent::MouseReleased as u64) > 0
+    }
+}
 
 pub mod color {
     pub const NONE: crate::render::V4f32 = crate::render::V4f32 {
@@ -158,6 +171,7 @@ pub struct UIBox {
 
     #[cfg(debug_assertions)]
     depth: usize,
+    string: Option<String>,
 }
 impl UIBox {
     pub fn hover(&self) -> bool {
@@ -224,219 +238,16 @@ impl UIWidgetParams {
 }
 
 #[derive(Default)]
-struct IMUIEvents {
+struct IMUIEventState {
     events: Vec<OSEvent>,
     //// input events cache
     mouse: Option<Point>,
     click: Option<Point>,
     release: Option<Point>,
+    active: Option<UIWidgetRef>,
 
     drag_pos: Option<Point>,
     drag_cache: HashMap<String, Point>,
-}
-
-struct IMUITextInputState {
-    // focus: String,
-    focus: UIWidgetRef,
-    buffer: Rc<RefCell<String>>,
-    idx: usize,
-    cursor_col: usize,
-    cursor_row: usize,
-    cursor_x: f32,
-    cursor_y: f32,
-    multiline: bool,
-    font_cache: Rc<RefCell<FontCache>>,
-    changecount: usize,
-}
-impl IMUITextInputState {
-    pub fn compute_valid_cursor_loc(
-        &mut self,
-        bounds: &RectCoords,
-        text_buffer: &String,
-        font_size: f32,
-        point: Point,
-    ) {
-        let relative_x = point.0 - bounds.x0;
-        let relative_y = point.1 - bounds.y0;
-        if relative_x < 0. || relative_y < 0. {
-            return;
-        }
-
-        // xarkes: first, get the corresponding line
-        let line_height = self.font_cache.borrow().line_height(font_size);
-        let line_number = (relative_y / line_height) as usize;
-        self.cursor_row = std::cmp::min(line_number, text_buffer.lines().count());
-        let cursor_y = line_height * self.cursor_row as f32;
-
-        // xarkes: get the line's length and set final cursor position
-        let lines = text_buffer.lines();
-        let mut buffer_idx = 0;
-        let mut cursor_x = 0.;
-        for (i, line) in lines.enumerate() {
-            if i < self.cursor_row {
-                buffer_idx += line.len() + 1; // XXX: Are we sure this line.len() counts \r on Windows?
-                continue;
-            }
-            let idx;
-            (cursor_x, idx) = self
-                .font_cache
-                .borrow_mut()
-                .get_cursor_position(font_size, line, relative_x);
-            self.cursor_col = idx;
-            buffer_idx += idx;
-            break;
-        }
-
-        self.idx = buffer_idx;
-        self.cursor_x = cursor_x;
-        self.cursor_y = cursor_y;
-    }
-    pub fn new(
-        // id: String,
-        id: UIWidgetRef,
-        font_cache: Rc<RefCell<FontCache>>,
-        text_buffer: Rc<RefCell<String>>,
-        multiline: bool,
-    ) -> Self {
-        IMUITextInputState {
-            // focus: String::from(id),
-            focus: id,
-            buffer: text_buffer.clone(),
-            idx: 0,
-            cursor_col: 0,
-            cursor_row: 0,
-            cursor_x: 0.,
-            cursor_y: 0.,
-            multiline,
-            font_cache,
-            changecount: 0,
-        }
-    }
-    fn update_cursor_loc(&mut self, idx: usize) {
-        self.idx = idx;
-        let buf = self.buffer.borrow();
-        let mut curidx = 0;
-        let font_size = 12.; // XXX
-        let mut fc = self.font_cache.borrow_mut();
-        for (lineidx, line) in buf.lines().enumerate() {
-            if self.idx <= curidx + line.len() {
-                // this is current line, compute proper x
-                let mut length = 0.;
-                let mut col = 0;
-                for c in line.chars() {
-                    let (glyph, _) = fc.get(c, 12.); // XXX: font_size
-                    if let Some(glyph) = glyph {
-                        if curidx + col < self.idx {
-                            length += glyph.advance;
-                        } else {
-                            break;
-                        }
-                    }
-                    col += 1;
-                }
-                // update whole state
-                self.cursor_col = col;
-                self.cursor_row = lineidx;
-                self.cursor_x = length;
-                self.cursor_y = fc.line_height(font_size) * self.cursor_row as f32;
-                break;
-            } else if self.idx == curidx + line.len() + 1 {
-                // if we are at the '\n', go to next line instead
-                self.cursor_col = 0;
-                self.cursor_row = lineidx + 1;
-                self.cursor_x = 0.;
-                self.cursor_y = fc.line_height(font_size) * self.cursor_row as f32;
-                break;
-            }
-            curidx += line.len() + 1; // +1 for '\n'
-        }
-    }
-    pub fn handle_event(&mut self, key: &OSKey, chars: &Option<String>) {
-        match key {
-            OSKey::Keyboard(keycode) => {
-                let mut bufchanged = false;
-                match keycode {
-                    OSKeyCode::KeyBackspace => {
-                        if self.idx > 0 {
-                            self.buffer.borrow_mut().remove(self.idx - 1);
-                            bufchanged = true;
-                            self.update_cursor_loc(self.idx - 1);
-                        }
-                    }
-                    OSKeyCode::KeyLeftArrow => {
-                        if self.idx > 0 {
-                            self.update_cursor_loc(self.idx - 1);
-                        }
-                    }
-                    OSKeyCode::KeyRightArrow => {
-                        if self.idx < self.buffer.borrow().len() {
-                            self.update_cursor_loc(self.idx + 1);
-                        }
-                    }
-                    OSKeyCode::KeyDownArrow => {
-                        if self.multiline {
-                            let new_idx = {
-                                let buf = self.buffer.borrow();
-                                let line_num = self.cursor_row + 1;
-                                let mut idx = 0;
-                                for (i, line) in buf.lines().enumerate() {
-                                    if i == line_num {
-                                        idx += self.cursor_col;
-                                        break;
-                                    }
-                                    idx += line.len() + 1; // +1 for '\n'
-                                }
-                                idx
-                            };
-                            self.update_cursor_loc(new_idx);
-                        }
-                    }
-                    OSKeyCode::KeyUpArrow => {
-                        if self.multiline {
-                            let new_idx = {
-                                let buf = self.buffer.borrow();
-                                let lines = buf.lines();
-                                let line_num = match self.cursor_row {
-                                    0 => 0,
-                                    _ => self.cursor_row - 1,
-                                };
-                                let mut idx = 0;
-                                for (i, line) in lines.enumerate() {
-                                    if i == line_num {
-                                        idx += std::cmp::min(line.len(), self.cursor_col);
-                                        break;
-                                    }
-                                    idx += line.len() + 1; // +1 for '\n'
-                                }
-                                idx
-                            };
-                            self.update_cursor_loc(new_idx);
-                        }
-                    }
-                    OSKeyCode::KeyEnter => {
-                        if self.multiline {
-                            self.buffer.borrow_mut().insert_str(self.idx, "\n");
-                            bufchanged = true;
-                            self.update_cursor_loc(self.idx + 1);
-                        }
-                    }
-                    _ => {
-                        self.buffer
-                            .borrow_mut()
-                            .insert_str(self.idx, chars.as_ref().unwrap().as_str());
-                        bufchanged = true;
-                        self.update_cursor_loc(self.idx + 1);
-                    }
-                }
-
-                if bufchanged {
-                    // self.focus.borrow_mut().events |= UIWidgetEvent::KeyPressed as u64;
-                    self.changecount += 1;
-                }
-            }
-            _ => {}
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -493,7 +304,7 @@ pub struct IMUI {
     debug: IMUIDebug,
     size: (f32, f32),
     params: UIWidgetParams,
-    event: IMUIEvents,
+    event: IMUIEventState,
     text_input_state: Option<IMUITextInputState>,
     locale_kind: UILocaleKind,
 
@@ -529,6 +340,7 @@ impl IMUI {
             children: Vec::new(),
             #[cfg(debug_assertions)]
             depth: 0,
+            string: None,
         }));
         IMUI {
             drawer,
@@ -536,7 +348,7 @@ impl IMUI {
             debug: IMUIDebug::default(),
             size: (0., 0.),
             params: UIWidgetParams::new(),
-            event: IMUIEvents::default(),
+            event: IMUIEventState::default(),
             text_input_state: None,
             locale_kind: UILocaleKind::LtrTtb,
             root: root.clone(),
@@ -544,7 +356,7 @@ impl IMUI {
             style: UIStyle::default(),
         }
     }
-    pub fn eventloop(&mut self, mut drawfunction: impl FnMut(&mut IMUI)) {
+    pub fn eventloop(&mut self, mut build_ui_func: impl FnMut(&mut IMUI)) {
         let freq = os::timer_init();
         let mut time = 0f64;
         let mut start = os::timer_value();
@@ -553,17 +365,28 @@ impl IMUI {
             {
                 self.get_events();
                 self.resize();
-                self.root.borrow_mut().children.clear();
             }
 
-            // xarkes: draw interface
+            // xarkes: build interface
             {
-                drawfunction(self);
+                self.root.borrow_mut().children.clear();
+                build_ui_func(self);
             }
 
             #[cfg(debug_assertions)]
             {
-                draw_debug_info(self, self.debug.clone(), time);
+                // draw_debug_info(self, self.debug.clone(), time);
+            }
+
+            // TODO: Apply layout here
+            // XXX: I wonder atm how will you in the future not renderer when nothing is happening?
+            // I start to think I was wrong regarding the "only retained mode can do this" :')
+            // no basically if I have a widget that say shows time
+            // how do you know you have nothing to do until the string is different? this involves checking for each frame anyways? idk.
+
+            // xarkes: draw interface
+            {
+                self.draw_ui();
             }
 
             // xarkes: render
@@ -574,6 +397,43 @@ impl IMUI {
             let end = os::timer_value();
             time = (end - start) as f64 * 1_000_000.0 / freq;
             start = end;
+        }
+    }
+
+    fn draw_ui(&mut self) {
+        // xarkes: iterate created boxes from root (lowest), breadth first search (BFS)
+        let mut worklist = Vec::new();
+        let mut start = self.root.borrow().children.clone();
+        start.reverse();
+        for c in start {
+            worklist.push(c.clone());
+        }
+        loop {
+            let curnode = match worklist.pop() {
+                Some(n) => n,
+                None => {
+                    break;
+                }
+            };
+            let curnode = curnode.borrow();
+            for c in &curnode.children {
+                worklist.push(c.clone());
+                // worklist.insert(0, c.clone());
+            }
+
+            // xarkes: for each box, send the proper draw commands
+            self.drawer.draw_rect(&curnode.bounds, self.style.bg_color);
+
+            if let Some(string) = &curnode.string {
+                self.drawer.draw_text(
+                    curnode.bounds.x0,
+                    curnode.bounds.y0,
+                    self.style.text_size,
+                    string.as_str(),
+                    string.len(),
+                    self.style.text_color,
+                );
+            }
         }
     }
 
@@ -608,7 +468,6 @@ impl IMUI {
     }
     pub fn get_events(&mut self) {
         self.event.events = self.drawer.renderer.win.get_events();
-        self.consume_events();
     }
     pub fn resize(&mut self) -> Point {
         self.size = self.drawer.renderer.win.get_size();
@@ -778,6 +637,7 @@ impl IMUI {
             children: Vec::new(),
             #[cfg(debug_assertions)]
             depth: parent.depth + 1,
+            string: None,
         };
 
         // xarkes: pre-update dragged widget positions for events to work
@@ -1153,69 +1013,140 @@ impl IMUI {
 
         textarea.clone()
     }
-    pub fn button(&mut self, label: Option<&str>) -> UIWidgetRef {
-        let width = self.params.width.unwrap_or(UISize::DPixels(40.));
-        let width = match label {
-            Some(label) => UISize::DPixels(f32::max(
-                self.drawer
-                    .get_text_size(self.style.text_size, label, label.len())
-                    .0,
-                width.pixels(self.parent_stack.last().unwrap().borrow().bounds.width()),
-            )),
-            None => width,
+
+    fn add_box_from_string(&mut self, label: Option<&str>, flags: u64) -> UIWidgetRef {
+        let string = match label {
+            Some(str) => Some(String::from(str)),
+            None => None,
         };
-        let height = self.params.width.unwrap_or(UISize::DPixels(40.));
+        let uibox = Rc::new(RefCell::new(UIBox {
+            bounds: RectCoords::from_size(
+                self.params.position.unwrap().0.pixels(self.size.0),
+                self.params.position.unwrap().1.pixels(self.size.1),
+                self.params.width.unwrap().pixels(self.size.0),
+                self.params.height.unwrap().pixels(self.size.1),
+            ),
+            layout: UILayout::Vertical,
+            children: Vec::new(),
+            flags,
+            events: 0,
+            depth: 0,
+            string,
+        }));
+        self.root.borrow_mut().children.push(uibox.clone());
+        uibox
+    }
 
-        let position = self
-            .params
-            .position
-            .unwrap_or((UISize::DPixels(0.), UISize::DPixels(0.)));
+    fn handle_uibox_interaction(&mut self, uibox: UIWidgetRef) -> UIInteraction {
+        let mut interaction = UIInteraction {
+            uibox: uibox.clone(),
+            flags: 0,
+        };
+        self.event.events.retain(|ev| {
+            let mut retain = true;
+            let in_bounds = point_in_rect(&uibox.borrow().bounds, ev.pos);
+            let clickable = uibox.borrow().clickable();
+            let is_active = self
+                .event
+                .active
+                .as_ref()
+                .is_some_and(|x| x.borrow().string == uibox.borrow().string);
 
-        let button = self.layout_new_widget(
-            None,
-            Some(position),
-            (width, height),
-            UIWidgetFlag::Clickable as u64,
-            UILayout::Vertical,
-        );
-        let uibox = button.borrow();
-        // let bg_color = match uibox.hover() {
-        //     false => self.params.color,
-        //     true => V4f32 {
-        //         r: self.params.color.r * 1.1,
-        //         g: self.params.color.g * 1.1,
-        //         b: self.params.color.b * 1.1,
-        //         a: self.params.color.a,
-        //     },
+            if clickable
+                && ev.ty == OSEventType::Press
+                && ev.key == OSKey::LeftMouseButton
+                && in_bounds
+            {
+                self.event.active = Some(uibox.clone());
+                interaction.flags |= UIWidgetEvent::MouseClicked as u64;
+                // self.event.click = ev.pos;
+                // self.event.mouse = ev.pos; // Handles when a click happens before the mouse is moved
+
+                // xarkes: when there is a click anywhere, reset the text input global state
+                // if the click happens to be on something clickable, then the widget will handle it,
+                // if not this resets the current state
+                // self.text_input_state = None;
+                retain = false;
+            } else if clickable
+                && ev.ty == OSEventType::Release
+                && ev.key == OSKey::LeftMouseButton
+                && in_bounds
+                && is_active
+            {
+                self.event.active = None;
+                interaction.flags |= UIWidgetEvent::MouseReleased as u64;
+                retain = false;
+            }
+            retain
+        });
+        interaction
+    }
+
+    pub fn button(&mut self, label: Option<&str>) -> UIInteraction {
+        let uibox = self.add_box_from_string(label, UIWidgetFlag::Clickable as u64);
+        self.handle_uibox_interaction(uibox)
+        // let width = self.params.width.unwrap_or(UISize::DPixels(40.));
+        // let width = match label {
+        //     Some(label) => UISize::DPixels(f32::max(
+        //         self.drawer
+        //             .get_text_size(self.style.text_size, label, label.len())
+        //             .0,
+        //         width.pixels(self.parent_stack.last().unwrap().borrow().bounds.width()),
+        //     )),
+        //     None => width,
         // };
-        let bg_color = self.style.bg_color;
-        let draw_off = match uibox.click() {
-            false => 0.,
-            true => 1.,
-        };
-        self.drawer.draw_rect(
-            &RectCoords {
-                x0: uibox.bounds.x0 + draw_off,
-                y0: uibox.bounds.y0 + draw_off,
-                x1: uibox.bounds.x1 + draw_off,
-                y1: uibox.bounds.y1 + draw_off,
-            },
-            bg_color,
-        );
-        if let Some(label) = label {
-            self.draw_text(
-                &RectCoords::from_size(
-                    uibox.bounds.x0 + draw_off,
-                    uibox.bounds.y0 + draw_off,
-                    uibox.bounds.width(),
-                    uibox.bounds.height(),
-                ),
-                label,
-                label.len(),
-                self.style.text_size,
-            );
-        }
-        button.clone()
+        // let height = self.params.width.unwrap_or(UISize::DPixels(40.));
+
+        // let position = self
+        //     .params
+        //     .position
+        //     .unwrap_or((UISize::DPixels(0.), UISize::DPixels(0.)));
+
+        // let button = self.layout_new_widget(
+        //     None,
+        //     Some(position),
+        //     (width, height),
+        //     UIWidgetFlag::Clickable as u64,
+        //     UILayout::Vertical,
+        // );
+        // let uibox = button.borrow();
+        // // let bg_color = match uibox.hover() {
+        // //     false => self.params.color,
+        // //     true => V4f32 {
+        // //         r: self.params.color.r * 1.1,
+        // //         g: self.params.color.g * 1.1,
+        // //         b: self.params.color.b * 1.1,
+        // //         a: self.params.color.a,
+        // //     },
+        // // };
+        // let bg_color = self.style.bg_color;
+        // let draw_off = match uibox.click() {
+        //     false => 0.,
+        //     true => 1.,
+        // };
+        // self.drawer.draw_rect(
+        //     &RectCoords {
+        //         x0: uibox.bounds.x0 + draw_off,
+        //         y0: uibox.bounds.y0 + draw_off,
+        //         x1: uibox.bounds.x1 + draw_off,
+        //         y1: uibox.bounds.y1 + draw_off,
+        //     },
+        //     bg_color,
+        // );
+        // if let Some(label) = label {
+        //     self.draw_text(
+        //         &RectCoords::from_size(
+        //             uibox.bounds.x0 + draw_off,
+        //             uibox.bounds.y0 + draw_off,
+        //             uibox.bounds.width(),
+        //             uibox.bounds.height(),
+        //         ),
+        //         label,
+        //         label.len(),
+        //         self.style.text_size,
+        //     );
+        // }
+        // button.clone()
     }
 }
 

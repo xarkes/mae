@@ -88,32 +88,46 @@ fn main() {
 
     ui.eventloop(|ui| {
         // xarkes: update noteapp if textinput changed
-        ui.vertical(|ui| {
-            ui.horizontal(|ui| {
-                ui.label(noteapp.note().filename.as_str());
-                if ui.text_input_changecount().unwrap_or(0) != changecount {
-                    ui.label("   dirty...")
-                } else {
-                    ui.label("   ok!")
-                }
-            });
-            let area = ui.textarea(noteapp.get_buffer().unwrap().clone(), "maintextarea");
-            area
-        });
-
-        // TODO:
-        // Important stuff:
-        // 1. proper implementation for event handling
-        // 2. animation support
-        // 3. shortcut support
-        // 4. scrollable textarea
-
-        // floating add button
         ui.params()
-            .position((UISize::Percents(0.9), UISize::Percents(0.9)));
-        if ui.button(Some("New note")).borrow().clicked() {
-            println!("I AM CLICKED THANK YOU");
-            noteapp.new_buffer();
-        }
+            .width(UISize::DPixels(200.))
+            .height(UISize::DPixels(40.))
+            .position((UISize::DPixels(20.), UISize::DPixels(20.)));
+        if ui.button(Some("Hello there")).clicked() {
+            println!("Click on one");
+        };
+        ui.params()
+            .width(UISize::DPixels(200.))
+            .height(UISize::DPixels(40.))
+            .position((UISize::DPixels(150.), UISize::DPixels(40.)));
+        if ui.button(Some("Hello there 2 :)")).clicked() {
+            println!("Click on two");
+        };
+        // ui.vertical(|ui| {
+        //     ui.horizontal(|ui| {
+        //         ui.label(noteapp.note().filename.as_str());
+        //         if ui.text_input_changecount().unwrap_or(0) != changecount {
+        //             ui.label("   dirty...")
+        //         } else {
+        //             ui.label("   ok!")
+        //         }
+        //     });
+        //     let area = ui.textarea(noteapp.get_buffer().unwrap().clone(), "maintextarea");
+        //     area
+        // });
+
+        // // TODO:
+        // // Important stuff:
+        // // 1. proper implementation for event handling
+        // // 2. animation support
+        // // 3. shortcut support
+        // // 4. scrollable textarea
+
+        // // floating add button
+        // ui.params()
+        //     .position((UISize::Percents(0.9), UISize::Percents(0.9)));
+        // if ui.button(Some("New note")).borrow().clicked() {
+        //     println!("I AM CLICKED THANK YOU");
+        //     noteapp.new_buffer();
+        // }
     });
 }
