@@ -1,8 +1,8 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use mae::imui;
 use mae::imui::IMUI;
 use mae::imui::UISize;
 use mae::imui::color_rgb;
@@ -13,14 +13,71 @@ const HOME_FOLDER: &str = "/Users/user/notes";
 #[cfg(target_os = "linux")]
 const HOME_FOLDER: &str = "/home/user/notes";
 
+use rusqlite::{Connection, Result};
+
 struct Note {
-    filename: String,
-    filepath: std::path::PathBuf,
-    buffer: Option<Rc<RefCell<String>>>,
+    id: u64,
+    name: String,
+    content: String,
 }
+
+struct Database {
+    conn: Connection,
+}
+impl Database {
+    pub fn new(dbfile: &std::path::Path) -> Self {
+        let conn = Connection::open(dbfile).unwrap();
+        Database { conn }
+    }
+
+    pub fn init(&self) {
+        self.conn.execute(
+            "CREATE TABLE note (id INTEGER PRIMARY KEY, name TEXT NOT NULL, content TEXT NOT NULL)",
+            (),
+        )
+        .unwrap();
+    }
+
+    pub fn all_notes(&self) -> HashMap<u64, Note> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, name, content FROM note")
+            .unwrap();
+        let note_iter = stmt
+            .query_map([], |row| {
+                Ok(Note {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    content: row.get(2)?,
+                })
+            })
+            .unwrap();
+        let mut notes = HashMap::new();
+        for note in note_iter {
+            let note = note.unwrap();
+            notes.insert(note.id, note);
+        }
+        notes
+    }
+
+    pub fn save_all(&self, notes: &HashMap<u64, Note>) {
+        for note in notes {
+            let note = note.1;
+            self.conn
+                .execute(
+                    "REPLACE INTO note (id, name, content) VALUES (?1, ?2, ?3)",
+                    (&note.id, &note.name, &note.content),
+                )
+                .unwrap();
+        }
+    }
+}
+
 struct NoteApp {
-    dir: String,
-    notes: Vec<Note>,
+    db: Database,
+    notes: HashMap<u64, Note>,
+    curnote: u64,
+    buffer: Rc<RefCell<String>>,
 }
 impl NoteApp {
     pub fn new(dir: &str) -> Self {
@@ -29,54 +86,39 @@ impl NoteApp {
             std::fs::create_dir(dir).unwrap();
         }
 
-        // xarkes: retrieve all notes from file system
-        let mut notes = Vec::new();
-        for entry in std::fs::read_dir(dir).unwrap() {
-            let entry = entry.unwrap();
-            let path = entry.path();
-            if path.is_dir() {
-                // TODO
-            } else {
-                println!("Loading note: {}", path.as_os_str().to_str().unwrap());
-                notes.push(Note {
-                    filename: String::from(path.file_name().unwrap().to_str().unwrap()),
-                    filepath: path,
-                    buffer: None,
-                });
+        let db_file = std::path::Path::new(dir).join("data.db");
+        let db = match std::fs::exists(&db_file).unwrap_or(false) {
+            true => Database::new(db_file.as_path()),
+            false => {
+                let db = Database::new(db_file.as_path());
+                db.init();
+                db
             }
-        }
+        };
 
+        let mut notes = db.all_notes();
+        if notes.len() == 0 {
+            notes.insert(
+                0,
+                Note {
+                    id: 0,
+                    name: String::from(""),
+                    content: String::from(""),
+                },
+            );
+        }
+        let buffer = Rc::new(RefCell::new(notes.get(&0).unwrap().content.clone()));
         NoteApp {
-            dir: String::from(dir),
+            db,
             notes,
+            curnote: 0,
+            buffer,
         }
     }
 
-    pub fn get_buffer(&mut self) -> Option<Rc<RefCell<String>>> {
-        if self.notes.is_empty() {
-            None
-        } else {
-            let curnote = self.note();
-            let buf = curnote.buffer.as_ref();
-            if buf.is_none() {
-                curnote.buffer = Some(Rc::new(RefCell::new(
-                    std::fs::read_to_string(&curnote.filepath).unwrap(),
-                )));
-            }
-            Some(curnote.buffer.as_ref().unwrap().clone())
-        }
-    }
-
-    pub fn new_buffer(&mut self) {
-        self.notes.push(Note {
-            filename: String::from("newfile"),
-            filepath: PathBuf::new(),
-            buffer: Some(Rc::new(RefCell::new(String::new()))),
-        });
-    }
-
-    pub fn note(&mut self) -> &mut Note {
-        self.notes.last_mut().unwrap()
+    pub fn save(&mut self) {
+        self.notes.get_mut(&self.curnote).unwrap().content = self.buffer.borrow().clone();
+        self.db.save_all(&self.notes);
     }
 }
 
@@ -86,15 +128,13 @@ fn main() {
 
     // xarkes: draw UI
     let mut ui = IMUI::new(1024, 768);
-    let mut changecount = 0;
-
     ui.eventloop(|ui| {
         ui.params()
             .width(uisize!("100%"))
             .height(uisize!("100%"))
             .position((uisize!("0px"), uisize!("0px")))
             .background_color(color_rgb(10, 20, 30));
-        ui.textarea(noteapp.get_buffer().unwrap().clone(), "#textarea");
+        ui.textarea(noteapp.buffer.clone(), "#textarea");
 
         ui.params()
             // .width(UISize::TextContent)
@@ -102,36 +142,9 @@ fn main() {
             .width(uisize!("100px"))
             .height(uisize!("40px"))
             .position((uisize!("90%"), uisize!("90%")));
-        if ui.button(Some("New note")).borrow().clicked() {
-            println!("Click on two");
+        if ui.button(Some("Save")).borrow().clicked() {
+            noteapp.save();
+            // noteapp.new_buffer();
         };
-
-        // ui.vertical(|ui| {
-        //     ui.horizontal(|ui| {
-        //         ui.label(noteapp.note().filename.as_str());
-        //         if ui.text_input_changecount().unwrap_or(0) != changecount {
-        //             ui.label("   dirty...")
-        //         } else {
-        //             ui.label("   ok!")
-        //         }
-        //     });
-        //     let area = ui.textarea(noteapp.get_buffer().unwrap().clone(), "maintextarea");
-        //     area
-        // });
-
-        // // TODO:
-        // // Important stuff:
-        // // 1. proper implementation for event handling
-        // // 2. animation support
-        // // 3. shortcut support
-        // // 4. scrollable textarea
-
-        // // floating add button
-        // ui.params()
-        //     .position((UISize::Percents(0.9), UISize::Percents(0.9)));
-        // if ui.button(Some("New note")).borrow().clicked() {
-        //     println!("I AM CLICKED THANK YOU");
-        //     noteapp.new_buffer();
-        // }
     });
 }

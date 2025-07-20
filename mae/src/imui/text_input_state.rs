@@ -123,7 +123,8 @@ impl IMUITextInputState {
             curidx += line.len() + 1; // +1 for '\n'
         }
     }
-    pub fn handle_event(&mut self, key: &OSKey, chars: &Option<String>) {
+    pub fn handle_event(&mut self, key: &OSKey, chars: &Option<String>) -> bool {
+        let mut handled = false;
         match key {
             OSKey::Keyboard(keycode) => {
                 let mut bufchanged = false;
@@ -205,8 +206,12 @@ impl IMUITextInputState {
                     // self.focus.borrow_mut().events |= UIWidgetEvent::KeyPressed as u64;
                     self.changecount += 1;
                 }
+                handled = true;
             }
-            _ => {}
+            _ => {
+                handled = false;
+            }
         }
+        handled
     }
 }

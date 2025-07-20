@@ -142,6 +142,7 @@ struct IMUIEventState {
     events: Vec<OSEvent>,
     //// input events cache
     mouse: Option<Point>,
+    click: Option<Point>,
     active: Option<u64>,
 
     drag_pos: Option<Point>,
@@ -341,7 +342,12 @@ impl IMUI {
             // xarkes: for each box, send the proper draw commands
             if curnode.draw_background() {
                 let color = curnode.style.bg_col.unwrap_or(self.style.bg_color);
-                self.drawer.draw_rect(&curnode.bounds, color);
+                // XXX: this doesnt work
+                let bounds = match curnode.click() {
+                    false => &curnode.bounds,
+                    true => &curnode.bounds.x(2.),
+                };
+                self.drawer.draw_rect(bounds, color);
             }
 
             if curnode.draw_border() {
@@ -372,64 +378,16 @@ impl IMUI {
     //// Events related functions
     pub fn consume_events(&mut self) {
         self.event.events = self.drawer.renderer.win.get_events();
-        // TODO(xarkes): Iterate node tree from the bottom of the tree (z-index high, most close to the user) and consume the event
-        // let mut worklist = Vec::new();
-        // let start = self.root.borrow().children.clone();
-        // for c in start {
-        //     worklist.push(c.clone());
-        // }
-        // loop {
-        //     let curnode = match worklist.pop() {
-        //         Some(n) => n,
-        //         None => {
-        //             break;
-        //         }
-        //     };
-        //     for c in &curnode.borrow().children {
-        //         worklist.push(c.clone());
-        //     }
 
-        //     // iterate events
-        //     let uibox = curnode;
-        //     for ev in &self.event.events {
-        //         let in_bounds = point_in_rect(&uibox.borrow().bounds, ev.pos);
-        //         let clickable = uibox.borrow().clickable();
-        //         let is_active = self
-        //             .event
-        //             .active
-        //             .as_ref()
-        //             .is_some_and(|key| *key == uibox.borrow().key);
-
-        //         // handle LMB click
-        //         if clickable
-        //             && ev.ty == OSEventType::Press
-        //             && ev.key == OSKey::LeftMouseButton
-        //             && in_bounds
-        //         {
-        //             self.event.active = Some(uibox.borrow().key);
-        //             uibox.borrow_mut().events |= UIBoxEvent::MouseClicked as u64;
-        //         }
-        //         // handle LBM release
-        //         else if clickable
-        //             && ev.ty == OSEventType::Release
-        //             && ev.key == OSKey::LeftMouseButton
-        //             && in_bounds
-        //             && is_active
-        //         {
-        //             self.event.active = None;
-        //             uibox.borrow_mut().events |= UIBoxEvent::MouseReleased as u64;
-        //         }
-        //         // handle over
-        //         else if clickable && ev.ty == OSEventType::MouseMove {
-        //             if in_bounds {
-        //                 uibox.borrow_mut().events |= UIBoxEvent::MouseOver as u64;
-        //             } else {
-        //                 uibox.borrow_mut().events &= !(UIBoxEvent::MouseOver as u64);
-        //             }
-        //         }
-        //     }
-
-        // }
+        self.event.events.retain(|ev| {
+            let mut retain = true;
+            if ev.ty == OSEventType::Press {
+                if let Some(textinput) = self.text_input_state.as_mut() {
+                    retain = !textinput.handle_event(&ev.key, &ev.chars);
+                }
+            }
+            retain
+        });
         // TODO(xarkes): we may want to propagate the event back to the OS window when the application did not consume them
     }
     pub fn resize(&mut self) -> Point {
@@ -976,6 +934,7 @@ impl IMUI {
                 && clickable
                 && in_bounds
             {
+                self.event.click = ev.pos;
                 self.event.active = Some(uibox.borrow().key);
                 uibox.borrow_mut().events |= UIBoxEvent::MouseClicked as u64;
             } else if ev.ty == OSEventType::Release
@@ -985,6 +944,7 @@ impl IMUI {
                 && is_active
             {
                 self.event.active = None;
+                self.event.click = None;
                 uibox.borrow_mut().events |= UIBoxEvent::MouseReleased as u64;
                 self.text_input_state = None;
             } else if ev.ty == OSEventType::MouseMove {
@@ -994,6 +954,9 @@ impl IMUI {
 
         if point_in_rect(&uibox.borrow().bounds, self.event.mouse) {
             uibox.borrow_mut().events |= UIBoxEvent::MouseOver as u64;
+        }
+        if point_in_rect(&uibox.borrow().bounds, self.event.mouse) {
+            uibox.borrow_mut().events |= UIBoxEvent::MouseClicked as u64;
         }
     }
 

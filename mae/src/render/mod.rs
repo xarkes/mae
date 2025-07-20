@@ -31,14 +31,14 @@ impl RectCoords {
             y1: y + h,
         }
     }
-    pub fn from_point(p: &Point, size: f32) -> Self {
-        RectCoords {
-            x0: p.0,
-            y0: p.1,
-            x1: p.0 + size,
-            y1: p.1 + size,
-        }
-    }
+    // pub fn from_point(p: &Point, size: f32) -> Self {
+    //     RectCoords {
+    //         x0: p.0,
+    //         y0: p.1,
+    //         x1: p.0 + size,
+    //         y1: p.1 + size,
+    //     }
+    // }
     pub fn width(&self) -> f32 {
         self.x1 - self.x0
     }
@@ -186,10 +186,8 @@ impl Renderer {
     pub fn debug_batch(&mut self) -> &mut RenderBatch {
         &mut self.batches[1]
     }
-    pub fn add_batch(&mut self, batch: RenderBatch) {
-        self.batches.push(batch);
-    }
 
+    #[cfg(debug_assertions)]
     pub fn vsync(&mut self, enable: bool) {
         self.ctx.vsync(enable);
     }

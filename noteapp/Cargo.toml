@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 mae = { version = "*", path = "../mae" }
+rusqlite = { version = "0.37.0", features = ["bundled"] }
 
