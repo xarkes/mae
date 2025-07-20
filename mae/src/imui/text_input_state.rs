@@ -9,7 +9,7 @@ use super::{FontCache, uibox::UIBoxRef};
 
 pub struct IMUITextInputState {
     // focus: String,
-    focus: UIBoxRef,
+    pub(crate) focus: UIBoxRef,
     buffer: Rc<RefCell<String>>,
     idx: usize,
     cursor_col: usize,

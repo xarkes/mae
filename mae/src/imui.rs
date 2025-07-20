@@ -3,7 +3,7 @@ mod uibox;
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use text_input_state::IMUITextInputState;
-use uibox::{UIBox, UIBoxEvent, UIBoxFlag, UIBoxRef, u64_hash_from_string};
+use uibox::{UIBox, UIBoxEvent, UIBoxFlag, UIBoxParams, UIBoxRef, u64_hash_from_string};
 
 #[cfg(debug_assertions)]
 mod debug;
@@ -126,7 +126,7 @@ macro_rules! uisize {
         if let Some(val) = $value.strip_suffix("px") {
             UISize::DPixels(val.parse::<f32>().unwrap())
         } else if let Some(val) = $value.strip_suffix("%") {
-            UISize::Percents(val.parse::<f32>().unwrap())
+            UISize::Percents(val.parse::<f32>().unwrap() / 100.)
         } else {
             panic!("Unrecognized unit")
         }
@@ -146,53 +146,12 @@ pub enum UILayout {
     HorizontalRtl,
 }
 
-pub struct UIBoxParams {
-    width: Option<UISize>,
-    height: Option<UISize>,
-    layout: Option<UILayout>,
-    position: Option<RelPoint>,
-}
-impl UIBoxParams {
-    pub fn new() -> Self {
-        UIBoxParams {
-            width: None,
-            height: None,
-            layout: None,
-            position: None,
-        }
-    }
-    pub fn width(&mut self, width: UISize) -> &mut Self {
-        self.width = Some(width);
-        self
-    }
-    pub fn height(&mut self, height: UISize) -> &mut Self {
-        self.height = Some(height);
-        self
-    }
-    pub fn layout(&mut self, layout: UILayout) -> &mut Self {
-        self.layout = Some(layout);
-        self
-    }
-    pub fn position(&mut self, position: RelPoint) -> &mut Self {
-        self.position = Some(position);
-        self
-    }
-    pub fn reset(&mut self) {
-        self.width = None;
-        self.height = None;
-        self.layout = None;
-        self.position = None;
-    }
-}
-
 #[derive(Default)]
 struct IMUIEventState {
     events: Vec<OSEvent>,
     //// input events cache
     mouse: Option<Point>,
-    click: Option<Point>,
-    release: Option<Point>,
-    active: Option<UIBoxRef>,
+    active: Option<u64>,
 
     drag_pos: Option<Point>,
     drag_cache: HashMap<String, Point>,
@@ -321,6 +280,7 @@ impl IMUI {
             // I start to think I was wrong regarding the "only retained mode can do this" :')
             // no basically if I have a widget that say shows time
             // how do you know you have nothing to do until the string is different? this involves checking for each frame anyways? idk.
+            self.build_ui_end();
 
             // xarkes: draw interface and render
             {
@@ -331,6 +291,38 @@ impl IMUI {
             let end = os::timer_value();
             time = (end - start) as f64 * 1_000_000.0 / freq;
             start = end;
+        }
+    }
+
+    fn build_ui_end(&mut self) {
+        // show cursor if any
+        if let Some(text_input_state) = &self.text_input_state {
+            let cursorx = match self.locale_kind {
+                UILocaleKind::LtrTtb => {
+                    text_input_state.focus.borrow().bounds.x0
+                        + self.text_input_state.as_ref().unwrap().cursor_x
+                }
+                UILocaleKind::RtlTtb => {
+                    text_input_state.focus.borrow().bounds.x1
+                        - self.text_input_state.as_ref().unwrap().cursor_x
+                }
+                _ => {
+                    println!("Textarea cursor localekind not handled!");
+                    text_input_state.focus.borrow().bounds.x0
+                        + self.text_input_state.as_ref().unwrap().cursor_x
+                }
+            };
+            let cursory = text_input_state.focus.borrow().bounds.y0
+                + self.text_input_state.as_ref().unwrap().cursor_y;
+
+            let color = self.style.active_color;
+            let height = self.style.text_size;
+            self.params()
+                .background_color(color)
+                .width(uisize!("2px"))
+                .height(UISize::DPixels(height))
+                .position((UISize::DPixels(cursorx), UISize::DPixels(cursory)));
+            self.add_box_from_string(None, UIBoxFlag::DrawBackground as u64);
         }
     }
 
@@ -357,7 +349,8 @@ impl IMUI {
 
             // xarkes: for each box, send the proper draw commands
             if curnode.draw_background() {
-                self.drawer.draw_rect(&curnode.bounds, self.style.bg_color);
+                let color = curnode.style.bg_col.unwrap_or(self.style.bg_color);
+                self.drawer.draw_rect(&curnode.bounds, color);
             }
 
             if curnode.draw_border() {
@@ -389,64 +382,64 @@ impl IMUI {
     pub fn consume_events(&mut self) {
         self.event.events = self.drawer.renderer.win.get_events();
         // TODO(xarkes): Iterate node tree from the bottom of the tree (z-index high, most close to the user) and consume the event
-        let mut worklist = Vec::new();
-        let start = self.root.borrow().children.clone();
-        for c in start {
-            worklist.push(c.clone());
-        }
-        loop {
-            let curnode = match worklist.pop() {
-                Some(n) => n,
-                None => {
-                    break;
-                }
-            };
-            for c in &curnode.borrow().children {
-                worklist.push(c.clone());
-            }
+        // let mut worklist = Vec::new();
+        // let start = self.root.borrow().children.clone();
+        // for c in start {
+        //     worklist.push(c.clone());
+        // }
+        // loop {
+        //     let curnode = match worklist.pop() {
+        //         Some(n) => n,
+        //         None => {
+        //             break;
+        //         }
+        //     };
+        //     for c in &curnode.borrow().children {
+        //         worklist.push(c.clone());
+        //     }
 
-            // iterate events
-            let uibox = curnode;
-            for ev in &self.event.events {
-                let in_bounds = point_in_rect(&uibox.borrow().bounds, ev.pos);
-                let clickable = uibox.borrow().clickable();
-                let is_active = self
-                    .event
-                    .active
-                    .as_ref()
-                    .is_some_and(|x| x.borrow().string == uibox.borrow().string);
+        //     // iterate events
+        //     let uibox = curnode;
+        //     for ev in &self.event.events {
+        //         let in_bounds = point_in_rect(&uibox.borrow().bounds, ev.pos);
+        //         let clickable = uibox.borrow().clickable();
+        //         let is_active = self
+        //             .event
+        //             .active
+        //             .as_ref()
+        //             .is_some_and(|key| *key == uibox.borrow().key);
 
-                // handle LMB click
-                if clickable
-                    && ev.ty == OSEventType::Press
-                    && ev.key == OSKey::LeftMouseButton
-                    && in_bounds
-                {
-                    self.event.active = Some(uibox.clone());
-                    uibox.borrow_mut().events |= UIBoxEvent::MouseClicked as u64;
-                }
-                // handle LBM release
-                else if clickable
-                    && ev.ty == OSEventType::Release
-                    && ev.key == OSKey::LeftMouseButton
-                    && in_bounds
-                    && is_active
-                {
-                    self.event.active = None;
-                    uibox.borrow_mut().events |= UIBoxEvent::MouseReleased as u64;
-                }
-                // handle over
-                else if clickable && ev.ty == OSEventType::MouseMove {
-                    if in_bounds {
-                        uibox.borrow_mut().events |= UIBoxEvent::MouseOver as u64;
-                    } else {
-                        uibox.borrow_mut().events &= !(UIBoxEvent::MouseOver as u64);
-                    }
-                }
-            }
+        //         // handle LMB click
+        //         if clickable
+        //             && ev.ty == OSEventType::Press
+        //             && ev.key == OSKey::LeftMouseButton
+        //             && in_bounds
+        //         {
+        //             self.event.active = Some(uibox.borrow().key);
+        //             uibox.borrow_mut().events |= UIBoxEvent::MouseClicked as u64;
+        //         }
+        //         // handle LBM release
+        //         else if clickable
+        //             && ev.ty == OSEventType::Release
+        //             && ev.key == OSKey::LeftMouseButton
+        //             && in_bounds
+        //             && is_active
+        //         {
+        //             self.event.active = None;
+        //             uibox.borrow_mut().events |= UIBoxEvent::MouseReleased as u64;
+        //         }
+        //         // handle over
+        //         else if clickable && ev.ty == OSEventType::MouseMove {
+        //             if in_bounds {
+        //                 uibox.borrow_mut().events |= UIBoxEvent::MouseOver as u64;
+        //             } else {
+        //                 uibox.borrow_mut().events &= !(UIBoxEvent::MouseOver as u64);
+        //             }
+        //         }
+        //     }
 
-            // TODO(xarkes): we may want to propagate the event back to the OS window when the application did not consume them
-        }
+        // }
+        // TODO(xarkes): we may want to propagate the event back to the OS window when the application did not consume them
     }
     pub fn resize(&mut self) -> Point {
         self.size = self.drawer.renderer.win.get_size();
@@ -839,112 +832,82 @@ impl IMUI {
     //         checkbox
     //     })
     // }
-    // pub fn line_edit(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIWidgetRef {
+    // pub fn line_edit(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIBoxRef {
     //     let multiline = false;
     //     self.text_edit_impl(text_buffer, id, multiline)
     // }
-    // pub fn textarea(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIWidgetRef {
-    //     let multiline = true;
-    //     self.text_edit_impl(text_buffer, id, multiline)
-    // }
-    // fn text_edit_impl(
-    //     &mut self,
-    //     text_buffer: Rc<RefCell<String>>,
-    //     id: &str,
-    //     multiline: bool,
-    // ) -> UIWidgetRef {
-    //     // TODO(xarkes): once you rewrite this, think of the LTR text inputs and handle it
-    //     let textarea = self.layout_new_widget(
-    //         Some(String::from(id)),
-    //         None,
-    //         (UISize::Percents(1.), UISize::Percents(1.)),
-    //         UIBoxFlag::Clickable as u64,
-    //         UILayout::Vertical,
-    //     );
-    //     let bounds = &textarea.borrow().bounds;
-    //     if textarea.borrow().clicked() {
-    //         // xarkes: update the text input global state
-    //         let mut state = IMUITextInputState::new(
-    //             // String::from(id),
-    //             textarea.clone(),
-    //             self.drawer.renderer.font_cache.clone(),
-    //             text_buffer.clone(),
-    //             multiline,
-    //         );
-    //         state.compute_valid_cursor_loc(
-    //             bounds,
-    //             &text_buffer.borrow(),
-    //             self.style.text_size,
-    //             self.event.mouse.unwrap(),
-    //         );
-    //         self.text_input_state = Some(state);
-    //         // TODO(xarkes): ------------------> HERE YOU NEED TO CONSUME THE EVENTS IN ORDER LOL
-    //         // BECAUSE TOP PANE IS NOT ABLE TO HANDLE THIS FUCK
-    //         self.event.release = None;
-    //     }
+    pub fn textarea(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIBoxRef {
+        let textarea = self.add_box_from_string(
+            Some(id),
+            UIBoxFlag::Clickable as u64 | UIBoxFlag::DrawBackground as u64,
+        );
+        let multiline = true;
+        self.text_edit_impl(textarea, text_buffer, id, multiline)
+    }
+    fn text_edit_impl(
+        &mut self,
+        textarea: UIBoxRef,
+        text_buffer: Rc<RefCell<String>>,
+        id: &str,
+        multiline: bool,
+    ) -> UIBoxRef {
+        let bounds = &textarea.borrow().bounds;
+        if textarea.borrow().clicked() {
+            // xarkes: update the text input global state
+            let mut state = IMUITextInputState::new(
+                // String::from(id),
+                textarea.clone(),
+                self.drawer.renderer.font_cache.clone(),
+                text_buffer.clone(),
+                multiline,
+            );
+            state.compute_valid_cursor_loc(
+                bounds,
+                &text_buffer.borrow(),
+                self.style.text_size,
+                self.event.mouse.unwrap(),
+            );
+            self.text_input_state = Some(state);
+        }
 
-    //     // background
-    //     self.drawer
-    //         .draw_rect(&textarea.borrow().bounds, self.style.bg_color);
+        // text
+        if multiline {
+            let mut y = bounds.y0;
+            for line in text_buffer.borrow().lines() {
+                let x = bounds.x0;
+                // XXX: using params() here sucks
+                self.params()
+                    .position((UISize::DPixels(x), UISize::DPixels(y)))
+                    .width(UISize::DPixels(bounds.width()))
+                    .height(UISize::DPixels(bounds.height()));
+                self.label(line);
+                // self.draw_text(
+                //     &RectCoords::from_size(x, y, bounds.width(), bounds.height()),
+                //     line,
+                //     line.len(),
+                //     self.style.text_size,
+                // );
+                y += self
+                    .drawer
+                    .renderer
+                    .font_cache
+                    .borrow()
+                    .line_height(self.style.text_size);
+                if y >= bounds.y1 {
+                    break;
+                }
+            }
+        } else {
+            self.draw_text(
+                bounds,
+                text_buffer.borrow().as_str(),
+                text_buffer.borrow().len(),
+                self.style.text_size,
+            );
+        }
 
-    //     // text
-    //     if multiline {
-    //         let mut y = bounds.y0;
-    //         for (i, line) in text_buffer.borrow().lines().enumerate() {
-    //             let x = bounds.x0;
-    //             self.draw_text(
-    //                 &RectCoords::from_size(x, y, bounds.width(), bounds.height()),
-    //                 line,
-    //                 line.len(),
-    //                 self.style.text_size,
-    //             );
-    //             y += self
-    //                 .drawer
-    //                 .renderer
-    //                 .font_cache
-    //                 .borrow()
-    //                 .line_height(self.style.text_size);
-    //             if y >= bounds.y1 {
-    //                 break;
-    //             }
-    //         }
-    //     } else {
-    //         self.draw_text(
-    //             bounds,
-    //             text_buffer.borrow().as_str(),
-    //             text_buffer.borrow().len(),
-    //             self.style.text_size,
-    //         );
-    //     }
-
-    //     // cursor
-    //     let show_cursor = match &self.text_input_state {
-    //         // Some(state) => state.focus.eq(id),
-    //         Some(_) => true,
-    //         None => false,
-    //     };
-    //     if show_cursor {
-    //         let cursorx = match self.locale_kind {
-    //             UILocaleKind::LtrTtb => {
-    //                 bounds.x0 + self.text_input_state.as_ref().unwrap().cursor_x
-    //             }
-    //             UILocaleKind::RtlTtb => {
-    //                 bounds.x1 - self.text_input_state.as_ref().unwrap().cursor_x
-    //             }
-    //             _ => {
-    //                 println!("Textarea cursor localekind not handled!");
-    //                 bounds.x0 + self.text_input_state.as_ref().unwrap().cursor_x
-    //             }
-    //         };
-    //         let cursory = bounds.y0 + self.text_input_state.as_ref().unwrap().cursor_y;
-    //         self.drawer.draw_rect(
-    //             &RectCoords::from_size(cursorx, cursory, 2., self.style.text_size + 4.),
-    //             self.style.active_color,
-    //         );
-    //     }
-
-    //     textarea.clone()
-    // }
+        textarea.clone()
+    }
 
     fn add_box_from_string(&mut self, label: Option<&str>, flags: u64) -> UIBoxRef {
         let string = match label {
@@ -956,7 +919,11 @@ impl IMUI {
             None => 0,
         };
         let uibox = match self.uiboxes.get(&key) {
-            Some(uibox) => uibox.clone(),
+            Some(uibox) => {
+                // xarkes: clear previous frame event info
+                uibox.borrow_mut().events = 0;
+                uibox.clone()
+            }
             None => {
                 let uibox = Rc::new(RefCell::new(UIBox {
                     key,
@@ -966,11 +933,11 @@ impl IMUI {
                         self.params.width.unwrap().pixels(self.size.0),
                         self.params.height.unwrap().pixels(self.size.1),
                     ),
-                    layout: UILayout::Vertical,
                     children: Vec::new(),
                     flags,
                     events: 0,
                     string,
+                    style: self.params.clone(),
                 }));
                 if key != 0 {
                     self.uiboxes.insert(key, uibox.clone());
@@ -978,18 +945,57 @@ impl IMUI {
                 uibox
             }
         };
+
         self.parent_stack
             .last()
             .unwrap()
             .borrow_mut()
             .children
             .push(uibox.clone());
+
+        self.handle_uibox_event(uibox.clone());
         uibox
     }
 
     pub fn label(&mut self, label: &str) -> UIBoxRef {
-        let uibox = self.add_box_from_string(Some(label), UIBoxFlag::DrawText as u64);
+        let uibox = self.add_box_from_string(None, UIBoxFlag::DrawText as u64);
+        uibox.borrow_mut().string = Some(String::from(label));
         uibox
+    }
+
+    fn handle_uibox_event(&mut self, uibox: UIBoxRef) {
+        for ev in &self.event.events {
+            let in_bounds = point_in_rect(&uibox.borrow().bounds, ev.pos);
+            let clickable = uibox.borrow().clickable();
+            let is_active = self
+                .event
+                .active
+                .as_ref()
+                .is_some_and(|key| *key == uibox.borrow().key);
+
+            if ev.ty == OSEventType::Press
+                && ev.key == OSKey::LeftMouseButton
+                && clickable
+                && in_bounds
+            {
+                self.event.active = Some(uibox.borrow().key);
+                uibox.borrow_mut().events |= UIBoxEvent::MouseClicked as u64;
+            } else if ev.ty == OSEventType::Release
+                && ev.key == OSKey::LeftMouseButton
+                && clickable
+                && in_bounds
+                && is_active
+            {
+                self.event.active = None;
+                uibox.borrow_mut().events |= UIBoxEvent::MouseReleased as u64;
+            } else if ev.ty == OSEventType::MouseMove {
+                self.event.mouse = ev.pos;
+            }
+        }
+
+        if point_in_rect(&uibox.borrow().bounds, self.event.mouse) {
+            uibox.borrow_mut().events |= UIBoxEvent::MouseOver as u64;
+        }
     }
 
     pub fn button(&mut self, label: Option<&str>) -> UIBoxRef {
@@ -1015,9 +1021,9 @@ fn point_in_rect(loc: &RectCoords, point: Option<Point>) -> bool {
 }
 pub fn color_rgb(r: u8, g: u8, b: u8) -> V4f32 {
     V4f32 {
-        r: r as f32 / 256.,
-        g: g as f32 / 256.,
-        b: b as f32 / 256.,
+        r: r as f32 / 255.,
+        g: g as f32 / 255.,
+        b: b as f32 / 255.,
         a: 1.,
     }
 }

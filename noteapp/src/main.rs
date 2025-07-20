@@ -5,6 +5,7 @@ use std::rc::Rc;
 use mae::imui;
 use mae::imui::IMUI;
 use mae::imui::UISize;
+use mae::imui::color_rgb;
 use mae::uisize;
 
 #[cfg(target_os = "macos")]
@@ -90,19 +91,26 @@ fn main() {
     ui.eventloop(|ui| {
         // xarkes: update noteapp if textinput changed
         ui.params()
-            .width(UISize::DPixels(400.))
-            .height(UISize::DPixels(240.))
-            .position((UISize::DPixels(20.), UISize::DPixels(20.)));
+            .width(uisize!("400px"))
+            .height(uisize!("240px"))
+            .position((uisize!("20px"), uisize!("20px")));
         if ui.button(Some("Hello there")).borrow().clicked() {
             println!("Click on one");
         };
         ui.params()
-            .width(UISize::DPixels(200.))
-            .height(UISize::DPixels(40.))
-            .position((UISize::DPixels(150.), UISize::DPixels(40.)));
+            .width(uisize!("200px"))
+            .height(uisize!("40px"))
+            .position((uisize!("150px"), uisize!("40px")));
         if ui.button(Some("Hello there 2 :)")).borrow().clicked() {
             println!("Click on two");
         };
+
+        ui.params()
+            .width(uisize!("100%"))
+            .height(uisize!("100%"))
+            .background_color(color_rgb(10, 20, 30))
+            .position((uisize!("0px"), uisize!("300px")));
+        ui.textarea(noteapp.get_buffer().unwrap().clone(), "#textarea");
         // ui.vertical(|ui| {
         //     ui.horizontal(|ui| {
         //         ui.label(noteapp.note().filename.as_str());

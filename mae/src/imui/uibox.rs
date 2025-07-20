@@ -4,7 +4,7 @@ use std::{
     rc::Rc,
 };
 
-use super::UILayout;
+use super::{Color, RelPoint, UILayout, UISize};
 use crate::render::RectCoords;
 pub type UIBoxRef = Rc<RefCell<UIBox>>;
 
@@ -28,10 +28,56 @@ pub(crate) enum UIBoxEvent {
     // KeyPressed = 8u64,
 }
 
+#[derive(Clone)]
+pub struct UIBoxParams {
+    pub(crate) width: Option<UISize>,
+    pub(crate) height: Option<UISize>,
+    pub(crate) layout: Option<UILayout>,
+    pub(crate) position: Option<RelPoint>,
+    pub(crate) bg_col: Option<Color>,
+}
+impl UIBoxParams {
+    pub fn new() -> Self {
+        UIBoxParams {
+            width: None,
+            height: None,
+            layout: None,
+            position: None,
+            bg_col: None,
+        }
+    }
+    pub fn width(&mut self, width: UISize) -> &mut Self {
+        self.width = Some(width);
+        self
+    }
+    pub fn height(&mut self, height: UISize) -> &mut Self {
+        self.height = Some(height);
+        self
+    }
+    pub fn layout(&mut self, layout: UILayout) -> &mut Self {
+        self.layout = Some(layout);
+        self
+    }
+    pub fn position(&mut self, position: RelPoint) -> &mut Self {
+        self.position = Some(position);
+        self
+    }
+    pub fn background_color(&mut self, bg_col: Color) -> &mut Self {
+        self.bg_col = Some(bg_col);
+        self
+    }
+    pub fn reset(&mut self) {
+        self.width = None;
+        self.height = None;
+        self.layout = None;
+        self.position = None;
+        self.bg_col = None;
+    }
+}
+
 pub struct UIBox {
     pub(crate) key: u64,
     pub(crate) bounds: RectCoords,
-    pub(crate) layout: UILayout,
     pub(crate) children: Vec<UIBoxRef>,
 
     // event flags
@@ -39,6 +85,8 @@ pub struct UIBox {
     pub(crate) events: u64,
 
     pub(crate) string: Option<String>,
+
+    pub(crate) style: UIBoxParams,
 }
 
 pub(crate) fn u64_hash_from_string(seed: u64, string: &String) -> u64 {
@@ -123,11 +171,11 @@ impl UIBox {
         UIBox {
             key: u64_hash_from_string(1234, &String::from("#root")),
             bounds: RectCoords::from_size(0., 0., 0., 0.),
-            layout: UILayout::Root,
             flags: 0,
             events: 0,
             children: Vec::new(),
             string: None,
+            style: UIBoxParams::new(),
         }
     }
     pub fn hover(&self) -> bool {
