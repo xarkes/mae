@@ -19,15 +19,6 @@ use crate::{
     render::{self, Point, RectCoords, V4f32, font_cache::FontCache},
 };
 
-pub mod color {
-    pub const NONE: crate::render::V4f32 = crate::render::V4f32 {
-        r: 0.,
-        g: 0.,
-        b: 0.,
-        a: 0.,
-    };
-}
-
 pub type Color = V4f32;
 impl Color {
     pub fn from_text(text: &str) -> Self {
@@ -743,11 +734,18 @@ impl IMUI {
     //     // pu.bounds.y1 = f32::min(pu.bounds.y1, out.borrow().bounds.y1);
     //     out
     // }
-    pub fn floating_pane(&mut self, title: &str, mut children: impl FnMut(&mut IMUI)) {
-        // xarkes: draw children
-        // self.parent_stack.push(pane);
+    pub fn floating_pane(&mut self, title: &str, mut children: impl FnMut(&mut IMUI)) -> UIBoxRef {
+        let uibox = self.add_box_from_string(
+            None,
+            UIBoxFlag::Clickable as u64
+                | UIBoxFlag::DrawBackground as u64
+                | UIBoxFlag::DrawBorder as u64
+                | UIBoxFlag::Draggable as u64,
+        );
+        self.parent_stack.push(uibox.clone());
         children(self);
-        // self.parent_stack.pop();
+        self.parent_stack.pop();
+        uibox
     }
     // pub fn checkbox_widget(&mut self, value: &mut bool) -> UIWidgetRef {
     //     let line_height = self
@@ -988,6 +986,7 @@ impl IMUI {
             {
                 self.event.active = None;
                 uibox.borrow_mut().events |= UIBoxEvent::MouseReleased as u64;
+                self.text_input_state = None;
             } else if ev.ty == OSEventType::MouseMove {
                 self.event.mouse = ev.pos;
             }

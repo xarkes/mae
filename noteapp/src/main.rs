@@ -89,28 +89,23 @@ fn main() {
     let mut changecount = 0;
 
     ui.eventloop(|ui| {
-        // xarkes: update noteapp if textinput changed
-        ui.params()
-            .width(uisize!("400px"))
-            .height(uisize!("240px"))
-            .position((uisize!("20px"), uisize!("20px")));
-        if ui.button(Some("Hello there")).borrow().clicked() {
-            println!("Click on one");
-        };
-        ui.params()
-            .width(uisize!("200px"))
-            .height(uisize!("40px"))
-            .position((uisize!("150px"), uisize!("40px")));
-        if ui.button(Some("Hello there 2 :)")).borrow().clicked() {
-            println!("Click on two");
-        };
-
         ui.params()
             .width(uisize!("100%"))
             .height(uisize!("100%"))
-            .background_color(color_rgb(10, 20, 30))
-            .position((uisize!("0px"), uisize!("300px")));
+            .position((uisize!("0px"), uisize!("0px")))
+            .background_color(color_rgb(10, 20, 30));
         ui.textarea(noteapp.get_buffer().unwrap().clone(), "#textarea");
+
+        ui.params()
+            // .width(UISize::TextContent)
+            // .height(UISize::TextContent)
+            .width(uisize!("100px"))
+            .height(uisize!("40px"))
+            .position((uisize!("90%"), uisize!("90%")));
+        if ui.button(Some("New note")).borrow().clicked() {
+            println!("Click on two");
+        };
+
         // ui.vertical(|ui| {
         //     ui.horizontal(|ui| {
         //         ui.label(noteapp.note().filename.as_str());

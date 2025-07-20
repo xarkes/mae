@@ -67,7 +67,12 @@ fn android_main(app: AndroidApp) {
         ui.params()
             .parent(content.clone())
             .size(UISize::Percents(1.), UISize::Pixels(100. * ui_scale))
-            .color(mae::imui::color::NONE);
+            .color(Color {
+                r: 0.,
+                g: 0.,
+                b: 0.,
+                a: 0.,
+            });
         ui.widget();
         ui.params()
             .parent(content.clone())
