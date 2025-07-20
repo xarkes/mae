@@ -54,7 +54,11 @@ impl Database {
             .unwrap();
         let mut notes = HashMap::new();
         for note in note_iter {
-            let note = note.unwrap();
+            let mut note = note.unwrap();
+            // xarkes: always add newline at the end, this helps our textarea
+            if note.content.len() == 0 || note.content.chars().last().unwrap() != '\n' {
+                note.content.push_str("\n");
+            }
             notes.insert(note.id, note);
         }
         notes
@@ -120,6 +124,32 @@ impl NoteApp {
         self.notes.get_mut(&self.curnote).unwrap().content = self.buffer.borrow().clone();
         self.db.save_all(&self.notes);
     }
+
+    pub fn newnote(&mut self) {
+        // xarkes: save current buffer to note
+        self.notes.get_mut(&self.curnote).unwrap().content = self.buffer.borrow().clone();
+
+        // get highest id
+        let mut id = 0;
+        for k in self.notes.keys() {
+            if k > &id {
+                id = *k;
+            }
+        }
+
+        // create new note, and switch to it
+        let id = id + 1;
+        self.notes.insert(
+            id,
+            Note {
+                id,
+                name: String::from(""),
+                content: String::from(""),
+            },
+        );
+        self.curnote = id;
+        self.buffer = Rc::new(RefCell::new(String::from("")));
+    }
 }
 
 fn main() {
@@ -144,7 +174,23 @@ fn main() {
             .position((uisize!("90%"), uisize!("90%")));
         if ui.button(Some("Save")).borrow().clicked() {
             noteapp.save();
-            // noteapp.new_buffer();
+        };
+
+        ui.params()
+            .width(uisize!("100px"))
+            .height(uisize!("40px"))
+            .position((uisize!("80%"), uisize!("90%")));
+        if ui.button(Some("New")).borrow().clicked() {
+            noteapp.newnote();
+        };
+
+        ui.params()
+            .width(uisize!("100px"))
+            .height(uisize!("40px"))
+            .position((uisize!("70%"), uisize!("90%")));
+        if ui.button(Some("Search")).borrow().clicked() {
+            // TODO(xarkes): create search prompt :p
+            // noteapp.save();
         };
     });
 }

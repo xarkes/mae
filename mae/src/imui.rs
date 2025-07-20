@@ -854,12 +854,11 @@ impl IMUI {
                 }
             }
         } else {
-            self.draw_text(
-                bounds,
-                text_buffer.borrow().as_str(),
-                text_buffer.borrow().len(),
-                self.style.text_size,
-            );
+            self.params()
+                .position((UISize::DPixels(bounds.x0), UISize::DPixels(bounds.y0)))
+                .width(UISize::DPixels(bounds.width()))
+                .height(UISize::DPixels(bounds.height()));
+            self.label(text_buffer.borrow().as_str());
         }
 
         textarea.clone()
