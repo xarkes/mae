@@ -1,5 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::io::Error;
+use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -36,6 +38,18 @@ impl Database {
             (),
         )
         .unwrap();
+    }
+
+    pub fn import_from_markdown(&self, folder: &std::path::Path) -> Result<(), Error> {
+        if !std::fs::exists(folder).is_ok_and(|exists| exists == true) {
+            return Err(Error::new(ErrorKind::NotFound, "Markdown folder not found"));
+        }
+
+        for file in std::fs::read_dir(folder) {
+            // TODO(xarkes) -> read all and import into database
+        }
+
+        Ok(())
     }
 
     pub fn all_notes(&self) -> HashMap<u64, Note> {

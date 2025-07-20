@@ -232,7 +232,7 @@ impl IMUI {
         let renderer = render::Renderer::new(window);
         let drawer = draw::Drawer::new(renderer);
 
-        let root = Rc::new(RefCell::new(UIBox::default()));
+        let root = Rc::new(RefCell::new(UIBox::new()));
         IMUI {
             drawer,
             #[cfg(debug_assertions)]
@@ -273,6 +273,7 @@ impl IMUI {
             // no basically if I have a widget that say shows time
             // how do you know you have nothing to do until the string is different? this involves checking for each frame anyways? idk.
             self.build_ui_end();
+            self.layout();
 
             // xarkes: draw interface and render
             {
@@ -318,6 +319,142 @@ impl IMUI {
         }
     }
 
+    fn layout(&mut self) {
+        // xarkes: iterate created boxes from root (lowest), breadth first search (BFS)
+        let mut worklist = Vec::new();
+        let mut start = self.root.borrow().children.clone();
+        start.reverse();
+        for c in start {
+            worklist.push(c.clone());
+        }
+        loop {
+            let curnode_r = match worklist.pop() {
+                Some(n) => n,
+                None => {
+                    break;
+                }
+            };
+            let bounds = {
+                let curnode = curnode_r.borrow();
+                for c in &curnode.children {
+                    worklist.push(c.clone());
+                    // worklist.insert(0, c.clone());
+                }
+
+                // xarkes: compute bounds depending on layout and requested size
+                if curnode.parent.is_none() {
+                    continue;
+                }
+                let parent = curnode.parent.as_ref().unwrap().borrow();
+                if parent.layout.is_none() {
+                    // println!("Warning: box has children but no layout");
+                    continue;
+                }
+                let layout = match parent.layout.unwrap() {
+                    UILayout::Vertical => match self.locale_kind {
+                        UILocaleKind::LtrTtb => UILayout::VerticalLtr,
+                        UILocaleKind::RtlTtb => UILayout::VerticalRtl,
+                        _ => unimplemented!("Handle other kinds of locales!"),
+                    },
+                    UILayout::Horizontal => match self.locale_kind {
+                        UILocaleKind::LtrTtb => UILayout::HorizontalLtr,
+                        UILocaleKind::RtlTtb => UILayout::HorizontalRtl,
+                        _ => unimplemented!("Handle other kinds of locales!"),
+                    },
+                    _ => parent.layout.unwrap(),
+                };
+                let size = (
+                    curnode.style.width.unwrap_or(UISize::DPixels(100.)),
+                    curnode.style.height.unwrap_or(UISize::DPixels(100.)),
+                );
+                let bounds = match layout {
+                    UILayout::Root => RectCoords::from_size(
+                        curnode.style.position.unwrap().0.pixels(self.size.0),
+                        curnode.style.position.unwrap().1.pixels(self.size.1),
+                        curnode.style.width.unwrap().pixels(self.size.0),
+                        curnode.style.height.unwrap().pixels(self.size.1),
+                    ),
+                    UILayout::VerticalLtr => {
+                        let insert_point = match parent.children.last() {
+                            Some(child) => (child.borrow().bounds.x0, child.borrow().bounds.y1),
+                            None => (parent.bounds.x0, parent.bounds.y0),
+                        };
+                        RectCoords::from_size(
+                            insert_point.0,
+                            insert_point.1,
+                            f32::min(parent.bounds.width(), size.0.pixels(parent.bounds.width())),
+                            f32::min(
+                                parent.bounds.height(),
+                                size.1.pixels(parent.bounds.height()),
+                            ),
+                        )
+                    }
+                    UILayout::VerticalRtl => {
+                        let insert_point = match parent.children.last() {
+                            Some(child) => (
+                                child.borrow().bounds.x1 - size.0.pixels(parent.bounds.width()),
+                                child.borrow().bounds.y1,
+                            ),
+                            None => (
+                                parent.bounds.x1 - size.0.pixels(parent.bounds.width()),
+                                parent.bounds.y0,
+                            ),
+                        };
+
+                        RectCoords::from_size(
+                            insert_point.0,
+                            insert_point.1,
+                            f32::min(parent.bounds.width(), size.0.pixels(parent.bounds.width())),
+                            f32::min(
+                                parent.bounds.height(),
+                                size.1.pixels(parent.bounds.height()),
+                            ),
+                        )
+                    }
+                    UILayout::HorizontalLtr => {
+                        let insert_point = match parent.children.last() {
+                            Some(child) => (child.borrow().bounds.x1, child.borrow().bounds.y0),
+                            None => (parent.bounds.x0, parent.bounds.y0),
+                        };
+                        RectCoords::from_size(
+                            insert_point.0,
+                            insert_point.1,
+                            f32::min(parent.bounds.width(), size.0.pixels(parent.bounds.width())),
+                            f32::min(
+                                parent.bounds.height(),
+                                size.1.pixels(parent.bounds.height()),
+                            ),
+                        )
+                    }
+                    UILayout::HorizontalRtl => {
+                        let insert_point = match parent.children.last() {
+                            Some(child) => (
+                                child.borrow().bounds.x0 - size.0.pixels(parent.bounds.width()),
+                                child.borrow().bounds.y0,
+                            ),
+                            None => (
+                                parent.bounds.x1 - size.0.pixels(parent.bounds.width()),
+                                parent.bounds.y0,
+                            ),
+                        };
+                        RectCoords::from_size(
+                            insert_point.0,
+                            insert_point.1,
+                            f32::min(parent.bounds.width(), size.0.pixels(parent.bounds.width())),
+                            f32::min(
+                                parent.bounds.height(),
+                                size.1.pixels(parent.bounds.height()),
+                            ),
+                        )
+                    }
+                    _ => unreachable!("Generic layout impossible here!"),
+                };
+                bounds
+            };
+            curnode_r.borrow_mut().bounds = bounds;
+        }
+    }
+
     fn draw_ui(&mut self) {
         // xarkes: iterate created boxes from root (lowest), breadth first search (BFS)
         let mut worklist = Vec::new();
@@ -343,10 +480,11 @@ impl IMUI {
             if curnode.draw_background() {
                 let color = curnode.style.bg_col.unwrap_or(self.style.bg_color);
                 // XXX: this doesnt work
-                let bounds = match curnode.click() {
-                    false => &curnode.bounds,
-                    true => &curnode.bounds.x(2.),
-                };
+                // let bounds = match curnode.click() {
+                //     false => &curnode.bounds,
+                //     true => &curnode.bounds.x(2.),
+                // };
+                let bounds = &curnode.bounds;
                 self.drawer.draw_rect(bounds, color);
             }
 
@@ -436,194 +574,6 @@ impl IMUI {
             self.style.text_color,
         )
     }
-    // fn layout_new_widget(
-    //     &mut self,
-    //     id: Option<String>,
-    //     pos: Option<RelPoint>,
-    //     size: RelPoint,
-    //     flags: u64,
-    //     new_layout: UILayout,
-    // ) -> UIWidgetRef {
-    //     let mut parent = self.parent_stack.last().unwrap().borrow_mut();
-    //     // xarkes: compute bounds depending on layout and requested size
-    //     let layout = match parent.layout {
-    //         UILayout::Vertical => match self.locale_kind {
-    //             UILocaleKind::LtrTtb => UILayout::VerticalLtr,
-    //             UILocaleKind::RtlTtb => UILayout::VerticalRtl,
-    //             _ => unimplemented!("Handle other kinds of locales!"),
-    //         },
-    //         UILayout::Horizontal => match self.locale_kind {
-    //             UILocaleKind::LtrTtb => UILayout::HorizontalLtr,
-    //             UILocaleKind::RtlTtb => UILayout::HorizontalRtl,
-    //             _ => unimplemented!("Handle other kinds of locales!"),
-    //         },
-    //         _ => parent.layout,
-    //     };
-    //     let bounds = match layout {
-    //         UILayout::Root => {
-    //             debug_assert!(
-    //                 pos.is_some(),
-    //                 "When adding to root layout, a position must be set"
-    //             );
-    //             let pos = pos.unwrap();
-    //             RectCoords::from_size(
-    //                 pos.0.pixels(parent.bounds.width()),
-    //                 pos.1.pixels(parent.bounds.height()),
-    //                 size.0.pixels(parent.bounds.width()),
-    //                 size.1.pixels(parent.bounds.height()),
-    //             )
-    //         }
-    //         UILayout::VerticalLtr => {
-    //             let insert_point = match parent.children.last() {
-    //                 Some(child) => (child.borrow().bounds.x0, child.borrow().bounds.y1),
-    //                 None => (parent.bounds.x0, parent.bounds.y0),
-    //             };
-    //             RectCoords::from_size(
-    //                 insert_point.0,
-    //                 insert_point.1,
-    //                 f32::min(parent.bounds.width(), size.0.pixels(parent.bounds.width())),
-    //                 f32::min(
-    //                     parent.bounds.height(),
-    //                     size.1.pixels(parent.bounds.height()),
-    //                 ),
-    //             )
-    //         }
-    //         UILayout::VerticalRtl => {
-    //             let insert_point = match parent.children.last() {
-    //                 Some(child) => (
-    //                     child.borrow().bounds.x1 - size.0.pixels(parent.bounds.width()),
-    //                     child.borrow().bounds.y1,
-    //                 ),
-    //                 None => (
-    //                     parent.bounds.x1 - size.0.pixels(parent.bounds.width()),
-    //                     parent.bounds.y0,
-    //                 ),
-    //             };
-
-    //             RectCoords::from_size(
-    //                 insert_point.0,
-    //                 insert_point.1,
-    //                 f32::min(parent.bounds.width(), size.0.pixels(parent.bounds.width())),
-    //                 f32::min(
-    //                     parent.bounds.height(),
-    //                     size.1.pixels(parent.bounds.height()),
-    //                 ),
-    //             )
-    //         }
-    //         UILayout::HorizontalLtr => {
-    //             let insert_point = match parent.children.last() {
-    //                 Some(child) => (child.borrow().bounds.x1, child.borrow().bounds.y0),
-    //                 None => (parent.bounds.x0, parent.bounds.y0),
-    //             };
-    //             RectCoords::from_size(
-    //                 insert_point.0,
-    //                 insert_point.1,
-    //                 f32::min(parent.bounds.width(), size.0.pixels(parent.bounds.width())),
-    //                 f32::min(
-    //                     parent.bounds.height(),
-    //                     size.1.pixels(parent.bounds.height()),
-    //                 ),
-    //             )
-    //         }
-    //         UILayout::HorizontalRtl => {
-    //             let insert_point = match parent.children.last() {
-    //                 Some(child) => (
-    //                     child.borrow().bounds.x0 - size.0.pixels(parent.bounds.width()),
-    //                     child.borrow().bounds.y0,
-    //                 ),
-    //                 None => (
-    //                     parent.bounds.x1 - size.0.pixels(parent.bounds.width()),
-    //                     parent.bounds.y0,
-    //                 ),
-    //             };
-    //             RectCoords::from_size(
-    //                 insert_point.0,
-    //                 insert_point.1,
-    //                 f32::min(parent.bounds.width(), size.0.pixels(parent.bounds.width())),
-    //                 f32::min(
-    //                     parent.bounds.height(),
-    //                     size.1.pixels(parent.bounds.height()),
-    //                 ),
-    //             )
-    //         }
-    //         _ => unreachable!("Generic layout impossible here!"),
-    //     };
-
-    //     // xarkes: create box
-    //     let mut uibox = UIBox {
-    //         bounds,
-    //         layout: new_layout,
-    //         flags,
-    //         events: 0,
-    //         children: Vec::new(),
-    //         #[cfg(debug_assertions)]
-    //         depth: parent.depth + 1,
-    //         string: None,
-    //     };
-
-    //     // xarkes: pre-update dragged widget positions for events to work
-    //     if uibox.draggable() {
-    //         let id = id.as_ref().unwrap();
-    //         if let Some(dragpos) = self.event.drag_cache.get(id) {
-    //             // widget was dragged, update its position
-    //             uibox.bounds.x0 += dragpos.0;
-    //             uibox.bounds.x1 += dragpos.0;
-    //             uibox.bounds.y0 += dragpos.1;
-    //             uibox.bounds.y1 += dragpos.1;
-    //         }
-    //     }
-
-    //     // xarkes: compute event flags
-    //     let mut events = 0;
-    //     if point_in_rect(&uibox.bounds, self.event.mouse) {
-    //         events |= UIBoxEvent::MouseOver as u64;
-    //     }
-    //     if point_in_rect(&uibox.bounds, self.event.click) && uibox.clickable() {
-    //         events |= UIBoxEvent::MouseClicked as u64;
-    //     } else if point_in_rect(&uibox.bounds, self.event.release) && uibox.clickable() {
-    //         events |= UIBoxEvent::MouseReleased as u64;
-    //     }
-    //     uibox.events = events;
-
-    //     // xarkes: update draggable position
-    //     if uibox.draggable() {
-    //         let id = id.as_ref().unwrap();
-    //         if uibox.click() {
-    //             if self.event.drag_pos.is_none() {
-    //                 // save the first click
-    //                 self.event.drag_pos = self.event.mouse;
-    //             } else {
-    //                 let dist_x = self.event.mouse.unwrap().0 - self.event.drag_pos.unwrap().0;
-    //                 let dist_y = self.event.mouse.unwrap().1 - self.event.drag_pos.unwrap().1;
-    //                 uibox.bounds.x0 += dist_x;
-    //                 uibox.bounds.x1 += dist_x;
-    //                 uibox.bounds.y0 += dist_y;
-    //                 uibox.bounds.y1 += dist_y;
-    //             }
-    //         } else if self.event.drag_pos.is_some() {
-    //             let old_distance = match self.event.drag_cache.get(id) {
-    //                 Some(dist) => dist,
-    //                 None => &(0., 0.),
-    //             };
-    //             let dist_x = self.event.mouse.unwrap().0 - self.event.drag_pos.unwrap().0;
-    //             let dist_y = self.event.mouse.unwrap().1 - self.event.drag_pos.unwrap().1;
-    //             self.event.drag_cache.insert(
-    //                 id.clone(),
-    //                 (old_distance.0 + dist_x, old_distance.1 + dist_y),
-    //             );
-    //             self.event.drag_pos = None;
-    //             uibox.bounds.x0 += dist_x;
-    //             uibox.bounds.x1 += dist_x;
-    //             uibox.bounds.y0 += dist_y;
-    //             uibox.bounds.y1 += dist_y;
-    //         }
-    //     }
-
-    //     // create ref and push as child
-    //     let uibox = Rc::new(RefCell::new(uibox));
-    //     parent.children.push(uibox.clone());
-    //     uibox
-    // }
     // pub fn horizontal(
     //     &mut self,
     //     mut children: impl FnMut(&mut IMUI) -> UIWidgetRef,
@@ -865,6 +815,7 @@ impl IMUI {
     }
 
     fn add_box_from_string(&mut self, label: Option<&str>, flags: u64) -> UIBoxRef {
+        let parent = self.parent_stack.last().unwrap();
         let string = match label {
             Some(str) => Some(String::from(str)),
             None => None,
@@ -893,6 +844,8 @@ impl IMUI {
                     events: 0,
                     string,
                     style: self.params.clone(),
+                    parent: Some(parent.clone()),
+                    layout: None,
                 }));
                 if key != 0 {
                     self.uiboxes.insert(key, uibox.clone());
@@ -935,6 +888,7 @@ impl IMUI {
             {
                 self.event.click = ev.pos;
                 self.event.active = Some(uibox.borrow().key);
+                self.event.mouse = ev.pos;
                 uibox.borrow_mut().events |= UIBoxEvent::MouseClicked as u64;
             } else if ev.ty == OSEventType::Release
                 && ev.key == OSKey::LeftMouseButton
@@ -946,7 +900,9 @@ impl IMUI {
                 self.event.click = None;
                 uibox.borrow_mut().events |= UIBoxEvent::MouseReleased as u64;
                 self.text_input_state = None;
-            } else if ev.ty == OSEventType::MouseMove {
+            }
+
+            if ev.ty == OSEventType::MouseMove {
                 self.event.mouse = ev.pos;
             }
         }

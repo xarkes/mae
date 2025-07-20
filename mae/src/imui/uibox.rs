@@ -79,6 +79,8 @@ pub struct UIBox {
     pub(crate) key: u64,
     pub(crate) bounds: RectCoords,
     pub(crate) children: Vec<UIBoxRef>,
+    pub(crate) parent: Option<UIBoxRef>,
+    pub(crate) layout: Option<UILayout>,
 
     // event flags
     pub(crate) flags: u64,
@@ -167,10 +169,12 @@ pub(crate) fn u64_hash_from_string(seed: u64, string: &String) -> u64 {
 }
 
 impl UIBox {
-    pub fn default() -> Self {
+    pub fn new() -> Self {
         UIBox {
             key: u64_hash_from_string(1234, &String::from("#root")),
             bounds: RectCoords::from_size(0., 0., 0., 0.),
+            parent: None,
+            layout: Some(UILayout::Root),
             flags: 0,
             events: 0,
             children: Vec::new(),
