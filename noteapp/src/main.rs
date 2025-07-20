@@ -5,6 +5,7 @@ use std::rc::Rc;
 use mae::imui;
 use mae::imui::IMUI;
 use mae::imui::UISize;
+use mae::uisize;
 
 #[cfg(target_os = "macos")]
 const HOME_FOLDER: &str = "/Users/user/notes";
@@ -89,17 +90,17 @@ fn main() {
     ui.eventloop(|ui| {
         // xarkes: update noteapp if textinput changed
         ui.params()
-            .width(UISize::DPixels(200.))
-            .height(UISize::DPixels(40.))
+            .width(UISize::DPixels(400.))
+            .height(UISize::DPixels(240.))
             .position((UISize::DPixels(20.), UISize::DPixels(20.)));
-        if ui.button(Some("Hello there")).clicked() {
+        if ui.button(Some("Hello there")).borrow().clicked() {
             println!("Click on one");
         };
         ui.params()
             .width(UISize::DPixels(200.))
             .height(UISize::DPixels(40.))
             .position((UISize::DPixels(150.), UISize::DPixels(40.)));
-        if ui.button(Some("Hello there 2 :)")).clicked() {
+        if ui.button(Some("Hello there 2 :)")).borrow().clicked() {
             println!("Click on two");
         };
         // ui.vertical(|ui| {

@@ -5,11 +5,11 @@ use crate::{
     render::{Point, RectCoords},
 };
 
-use super::{FontCache, UIWidgetRef};
+use super::{FontCache, uibox::UIBoxRef};
 
 pub struct IMUITextInputState {
     // focus: String,
-    focus: UIWidgetRef,
+    focus: UIBoxRef,
     buffer: Rc<RefCell<String>>,
     idx: usize,
     cursor_col: usize,
@@ -65,7 +65,7 @@ impl IMUITextInputState {
     }
     pub fn new(
         // id: String,
-        id: UIWidgetRef,
+        id: UIBoxRef,
         font_cache: Rc<RefCell<FontCache>>,
         text_buffer: Rc<RefCell<String>>,
         multiline: bool,
