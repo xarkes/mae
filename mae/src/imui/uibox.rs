@@ -5,7 +5,7 @@ use std::{
 };
 
 use super::{Color, RelPoint, UILayout, UISize};
-use crate::render::RectCoords;
+use crate::{draw::Drawer, render::RectCoords};
 pub type UIBoxRef = Rc<RefCell<UIBox>>;
 
 #[repr(u64)]
@@ -80,6 +80,7 @@ pub struct UIBox {
     pub(crate) bounds: RectCoords,
     pub(crate) children: Vec<UIBoxRef>,
     pub(crate) parent: Option<UIBoxRef>,
+    pub(crate) previous: Option<UIBoxRef>,
     pub(crate) layout: Option<UILayout>,
 
     // event flags
@@ -169,15 +170,16 @@ pub(crate) fn u64_hash_from_string(seed: u64, string: &String) -> u64 {
 }
 
 impl UIBox {
-    pub fn new() -> Self {
+    pub fn root() -> Self {
         UIBox {
             key: u64_hash_from_string(1234, &String::from("#root")),
             bounds: RectCoords::from_size(0., 0., 0., 0.),
             parent: None,
+            previous: None,
+            children: Vec::new(),
             layout: Some(UILayout::Root),
             flags: 0,
             events: 0,
-            children: Vec::new(),
             string: None,
             style: UIBoxParams::new(),
         }
@@ -213,4 +215,15 @@ impl UIBox {
     pub(crate) fn draw_hot(&self) -> bool {
         (self.flags & UIBoxFlag::DrawHot as u64) == UIBoxFlag::DrawHot as u64
     }
+
+    // pub fn compute_size(&self, size: &UISize, drawer: &Drawer) -> f32 {
+    //     match size {
+    //         UISize::DPixels(val) => val,
+    //         UISize::Percents(val) => val * self.parent.unwrap().borrow().bounds,
+    //         UISize::TextContent => {
+    //             drawer.get_text_size(self.style.text_size, self.string, self.string.len())
+    //         }
+    //     }
+    //     100.
+    // }
 }

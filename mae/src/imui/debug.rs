@@ -53,7 +53,7 @@ fn draw_debug_pane(ui: &mut IMUI, debug: &mut IMUIDebug, time: f64) {
     let xoff = ui.size.0 - 250.;
     ui.params()
         .width(UISize::DPixels(250.))
-        .height(UISize::DPixels(400.))
+        .height(UISize::DPixels(40.))
         .position((UISize::DPixels(xoff), UISize::DPixels(40.)));
     ui.floating_pane("Debug metrics", |ui| {
         if debug.fps {

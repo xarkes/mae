@@ -172,6 +172,9 @@ fn main() {
 
     // xarkes: draw UI
     let mut ui = IMUI::new(1024, 768);
+
+    let mut show_search = false;
+    let mut search = Rc::new(RefCell::new(String::from("")));
     ui.eventloop(|ui| {
         ui.params()
             .width(uisize!("100%"))
@@ -203,8 +206,30 @@ fn main() {
             .height(uisize!("40px"))
             .position((uisize!("70%"), uisize!("90%")));
         if ui.button(Some("Search")).borrow().clicked() {
-            // TODO(xarkes): create search prompt :p
-            // noteapp.save();
+            show_search = true;
+            search = Rc::new(RefCell::new(String::from("")));
+        }
+
+        // Prompts
+        if show_search {
+            // ui.floating_pane("search", |ui| {
+            ui.params()
+                .width(uisize!("50%"))
+                .height(uisize!("50%"))
+                .position((uisize!("25%"), uisize!("40px")));
+            ui.vertical(|ui| {
+                ui.line_edit(search.clone(), "#search");
+                ui.label("something 1");
+                ui.label("something 2");
+                ui.label("something 3");
+                ui.label("something 4");
+            });
         };
     });
+
+    // TODO:
+    // Implement search/go to button
+    // --> dropdown menu a la command palette
+    // --> implement animation
+    // --> add shortcuts
 }
