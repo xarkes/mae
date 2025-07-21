@@ -21,6 +21,27 @@ pub struct IMUITextInputState {
     pub(crate) changecount: usize,
 }
 impl IMUITextInputState {
+    pub fn new(
+        // id: String,
+        id: UIBoxRef,
+        font_cache: Rc<RefCell<FontCache>>,
+        text_buffer: Rc<RefCell<String>>,
+        multiline: bool,
+    ) -> Self {
+        IMUITextInputState {
+            // focus: String::from(id),
+            focus: id,
+            buffer: text_buffer.clone(),
+            idx: 0,
+            cursor_col: 0,
+            cursor_row: 0,
+            cursor_x: 0.,
+            cursor_y: 0.,
+            multiline,
+            font_cache,
+            changecount: 0,
+        }
+    }
     pub fn compute_valid_cursor_loc(
         &mut self,
         bounds: &RectCoords,
@@ -46,7 +67,7 @@ impl IMUITextInputState {
         let mut cursor_x = 0.;
         for (i, line) in lines.enumerate() {
             if i < self.cursor_row {
-                buffer_idx += line.len() + 1; // XXX: Are we sure this line.len() counts \r on Windows?
+                buffer_idx += line.chars().count() + 1;
                 continue;
             }
             let idx;
@@ -63,27 +84,6 @@ impl IMUITextInputState {
         self.cursor_x = cursor_x;
         self.cursor_y = cursor_y;
     }
-    pub fn new(
-        // id: String,
-        id: UIBoxRef,
-        font_cache: Rc<RefCell<FontCache>>,
-        text_buffer: Rc<RefCell<String>>,
-        multiline: bool,
-    ) -> Self {
-        IMUITextInputState {
-            // focus: String::from(id),
-            focus: id,
-            buffer: text_buffer.clone(),
-            idx: 0,
-            cursor_col: 0,
-            cursor_row: 0,
-            cursor_x: 0.,
-            cursor_y: 0.,
-            multiline,
-            font_cache,
-            changecount: 0,
-        }
-    }
     fn update_cursor_loc(&mut self, idx: usize) {
         self.idx = idx;
         let buf = self.buffer.borrow();
@@ -91,12 +91,12 @@ impl IMUITextInputState {
         let font_size = 12.; // XXX
         let mut fc = self.font_cache.borrow_mut();
         for (lineidx, line) in buf.lines().enumerate() {
-            if self.idx <= curidx + line.len() {
+            if self.idx <= curidx + line.chars().count() {
                 // this is current line, compute proper x
                 let mut length = 0.;
                 let mut col = 0;
                 for c in line.chars() {
-                    let glyph = fc.get(c, 12.); // XXX: font_size
+                    let glyph = fc.get(c, font_size);
                     if curidx + col < self.idx {
                         length += glyph.advance;
                     } else {
@@ -110,7 +110,7 @@ impl IMUITextInputState {
                 self.cursor_x = length;
                 self.cursor_y = fc.line_height(font_size) * self.cursor_row as f32;
                 break;
-            } else if self.idx == curidx + line.len() + 1 {
+            } else if self.idx == curidx + line.chars().count() + 1 {
                 // if we are at the '\n', go to next line instead
                 self.cursor_col = 0;
                 self.cursor_row = lineidx + 1;
@@ -118,17 +118,29 @@ impl IMUITextInputState {
                 self.cursor_y = fc.line_height(font_size) * self.cursor_row as f32;
                 break;
             }
-            curidx += line.len() + 1; // +1 for '\n'
+            curidx += line.chars().count() + 1; // +1 for '\n'
         }
     }
-    pub fn handle_event(&mut self, key: &OSKey, chars: &Option<String>) -> bool {
-        let mut handled = false;
+    pub fn handle_event(&mut self, key: &OSKey, data: &Option<char>) -> bool {
+        let handled;
+        let get_str_insert_idx = |idx| {
+            if idx != self.buffer.borrow().len() {
+                let (i, c) = self.buffer.borrow().char_indices().nth(idx - 1).unwrap();
+                return i + c.len_utf8();
+            }
+            return self.idx;
+        };
         match key {
             OSKey::Keyboard(keycode) => {
                 let mut bufchanged = false;
                 match keycode {
                     OSKeyCode::KeyBackspace => {
-                        if self.idx > 0 {
+                        if self.idx > 1 {
+                            let byte_idx = get_str_insert_idx(self.idx - 1);
+                            self.buffer.borrow_mut().remove(byte_idx);
+                            bufchanged = true;
+                            self.update_cursor_loc(self.idx - 1);
+                        } else if self.idx > 0 {
                             self.buffer.borrow_mut().remove(self.idx - 1);
                             bufchanged = true;
                             self.update_cursor_loc(self.idx - 1);
@@ -155,7 +167,7 @@ impl IMUITextInputState {
                                         idx += self.cursor_col;
                                         break;
                                     }
-                                    idx += line.len() + 1; // +1 for '\n'
+                                    idx += line.chars().count() + 1; // +1 for '\n'
                                 }
                                 idx
                             };
@@ -177,7 +189,7 @@ impl IMUITextInputState {
                                         idx += std::cmp::min(line.len(), self.cursor_col);
                                         break;
                                     }
-                                    idx += line.len() + 1; // +1 for '\n'
+                                    idx += line.chars().count() + 1; // +1 for '\n'
                                 }
                                 idx
                             };
@@ -186,17 +198,19 @@ impl IMUITextInputState {
                     }
                     OSKeyCode::KeyEnter => {
                         if self.multiline {
-                            self.buffer.borrow_mut().insert_str(self.idx, "\n");
+                            let byte_idx = get_str_insert_idx(self.idx);
+                            self.buffer.borrow_mut().insert(byte_idx, '\n');
                             bufchanged = true;
                             self.update_cursor_loc(self.idx + 1);
                         }
                     }
                     _ => {
-                        self.buffer
-                            .borrow_mut()
-                            .insert_str(self.idx, chars.as_ref().unwrap().as_str());
-                        bufchanged = true;
-                        self.update_cursor_loc(self.idx + 1);
+                        if let Some(data) = data {
+                            let byte_idx = get_str_insert_idx(self.idx);
+                            self.buffer.borrow_mut().insert(byte_idx, *data);
+                            bufchanged = true;
+                            self.update_cursor_loc(self.idx + 1);
+                        }
                     }
                 }
 

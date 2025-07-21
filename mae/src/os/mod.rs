@@ -143,7 +143,7 @@ pub struct OSEvent {
     pub ty: OSEventType,
     pub key: OSKey,
     pub pos: Option<Point>,
-    pub chars: Option<String>,
+    pub chars: Option<char>,
 }
 
 pub type Window = os_impl::Window;

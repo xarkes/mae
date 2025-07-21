@@ -240,7 +240,7 @@ impl Window {
                             ty: OSEventType::Press,
                             key: macos_keycode_to_oskey(ev.keyCode()),
                             pos: None,
-                            chars: Some(ev.characters().unwrap().to_string()),
+                            chars: ev.characters().unwrap().to_string().chars().nth(0),
                         }),
                         NSEventType::LeftMouseDragged => Some(OSEvent {
                             ty: OSEventType::MouseMove,

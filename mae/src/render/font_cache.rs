@@ -174,6 +174,9 @@ impl FontCache {
         // let font = include_bytes!("/System/Library/Fonts/SFNS.ttf") as &[u8];
         #[cfg(target_os = "macos")]
         let font = include_bytes!("/System/Library/Fonts/Menlo.ttc") as &[u8];
+        // #[cfg(target_os = "macos")]
+        // let font = include_bytes!("/Users/user/Downloads/Noto_Sans/static/NotoSans-Regular.ttf")
+        //     as &[u8];
         #[cfg(target_os = "linux")]
         let font = include_bytes!("/usr/share/fonts/noto/NotoSansMono-Regular.ttf") as &[u8];
         #[cfg(target_os = "windows")]

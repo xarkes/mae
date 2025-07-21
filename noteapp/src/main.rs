@@ -61,7 +61,7 @@ impl Database {
                 let mut note = Note {
                     id: 0,
                     name: String::from(""),
-                    content,
+                    content: new_content,
                 };
                 self.conform_note(&mut note, true);
                 self.add_note(&note);
@@ -89,8 +89,10 @@ impl Database {
                 };
                 len -= 1;
             }
-            let content_slice = &note.content[..pos];
-            note.name = String::from(content_slice.replace('\n', ""));
+            if pos != usize::MAX {
+                let content_slice = &note.content[..pos];
+                note.name = String::from(content_slice.replace('\n', ""));
+            }
         }
         if note.name.len() == 0 && !writing {
             note.name = String::from("(empty note)");
