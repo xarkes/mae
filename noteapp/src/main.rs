@@ -17,6 +17,7 @@ const HOME_FOLDER: &str = "/home/user/notes";
 
 use rusqlite::{Connection, Result};
 
+#[derive(Clone)]
 struct Note {
     id: u64,
     name: String,
@@ -59,11 +60,10 @@ impl Database {
         }
 
         // xarkes: replace empty title with the beginning of the document
-        if note.name.len() == 0 {
-            let len = std::cmp::min(note.content.len(), 30);
-            let content_slice = &note.content[..len];
-            note.name = String::from(content_slice.replace('\n', ""));
-        }
+        // XXX: currently note name is useless
+        let len = std::cmp::min(note.content.len(), 30);
+        let content_slice = &note.content[..len];
+        note.name = String::from(content_slice.replace('\n', ""));
         if note.name.len() == 0 && !writing {
             note.name = String::from("(empty note)");
         }
@@ -149,14 +149,24 @@ impl NoteApp {
         }
     }
 
-    pub fn save(&mut self) {
+    fn save_current(&mut self) {
         self.notes.get_mut(&self.curnote).unwrap().content = self.buffer.borrow().clone();
+    }
+
+    pub fn save(&mut self) {
+        self.save_current();
         self.db.save_all(&mut self.notes);
+    }
+
+    pub fn open(&mut self, id: u64) {
+        self.save_current();
+        self.curnote = id;
+        self.buffer = Rc::new(RefCell::new(self.notes.get(&id).unwrap().content.clone()));
     }
 
     pub fn newnote(&mut self) {
         // xarkes: save current buffer to note
-        self.notes.get_mut(&self.curnote).unwrap().content = self.buffer.borrow().clone();
+        self.save_current();
 
         // get highest id
         let mut id = 0;
@@ -179,6 +189,10 @@ impl NoteApp {
         self.curnote = id;
         self.buffer = Rc::new(RefCell::new(String::from("")));
     }
+
+    pub fn notes(&self) -> Vec<Note> {
+        Vec::from_iter(self.notes.values().cloned())
+    }
 }
 
 fn main() {
@@ -190,7 +204,6 @@ fn main() {
 
     let mut show_search = false;
     let mut search = Rc::new(RefCell::new(String::from("")));
-    let mut search_result = Vec::new();
     ui.eventloop(|ui| {
         ui.params()
             .width(uisize!("100%"))
@@ -205,7 +218,7 @@ fn main() {
             .width(uisize!("100px"))
             .height(uisize!("40px"))
             .position((uisize!("90%"), uisize!("90%")));
-        if ui.button(Some("Save")).borrow().clicked() {
+        if ui.button("Save").borrow().clicked() {
             noteapp.save();
         };
 
@@ -213,7 +226,7 @@ fn main() {
             .width(uisize!("100px"))
             .height(uisize!("40px"))
             .position((uisize!("80%"), uisize!("90%")));
-        if ui.button(Some("New")).borrow().clicked() {
+        if ui.button("New").borrow().clicked() {
             noteapp.newnote();
         };
 
@@ -221,14 +234,9 @@ fn main() {
             .width(uisize!("100px"))
             .height(uisize!("40px"))
             .position((uisize!("70%"), uisize!("90%")));
-        if ui.button(Some("Search")).borrow().clicked() {
+        if ui.button("Search").borrow().clicked() {
             show_search = true;
             search = Rc::new(RefCell::new(String::from("")));
-            search_result.clear();
-            let notes = noteapp.db.all_notes();
-            for res in notes.values() {
-                search_result.push(format!("{}: {}", res.id, res.name));
-            }
         }
 
         // Prompts
@@ -238,10 +246,24 @@ fn main() {
                 .height(uisize!("50%"))
                 .position((uisize!("25%"), uisize!("40px")));
             ui.floating_box(|ui| {
-                ui.params().width(uisize!("100%"));
+                ui.params().width(uisize!("100%")).height(uisize!("20px"));
                 ui.line_edit(search.clone(), "#search");
-                for title in &search_result {
-                    ui.label(title.as_str());
+                ui.params().width(uisize!("100%")).height(uisize!("20px"));
+                let search_filter = search.borrow();
+                for note in &noteapp.notes() {
+                    if search_filter.len() > 0 {
+                        if !fuzzy_search(search_filter.as_str(), note.name.as_str()) {
+                            continue;
+                        }
+                    }
+                    if ui
+                        .button(format!("{}##button_label_{}", note.name, note.id).as_str())
+                        .borrow()
+                        .clicked()
+                    {
+                        noteapp.open(note.id);
+                        show_search = false;
+                    }
                 }
             });
         };
@@ -252,4 +274,9 @@ fn main() {
     // --> dropdown menu a la command palette
     // --> implement animation
     // --> add shortcuts
+}
+
+fn fuzzy_search(filter: &str, data: &str) -> bool {
+    // TODO(xarkes): Implement proper search
+    data.contains(filter)
 }

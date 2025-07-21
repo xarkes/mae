@@ -95,7 +95,7 @@ pub struct UIBox {
     pub(crate) depth: usize,
 }
 
-pub(crate) fn u64_hash_from_string(seed: u64, string: &String) -> u64 {
+pub(crate) fn u64_hash_from_string(seed: u64, string: &str) -> u64 {
     // dirty implementation, I just want to generate keys atm I don't care of the quality
     let p1 = 0x2B7E151628AED2A5u64;
     let p2 = 0x9E3793492EEDC3F7u64;

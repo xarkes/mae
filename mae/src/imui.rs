@@ -785,13 +785,26 @@ impl IMUI {
 
     fn add_box_from_string(&mut self, label: Option<&str>, flags: u64) -> UIBoxRef {
         let parent = self.parent_stack.last().unwrap();
-        let string = match label {
-            Some(str) => Some(String::from(str)),
-            None => None,
-        };
-        let key = match &string {
-            Some(string) => u64_hash_from_string(self.root.borrow().key, string),
-            None => 0,
+        let (key, string) = match label {
+            None => (0u64, None),
+            Some(label) => {
+                if let Some(idx) = label.find("###") {
+                    (
+                        u64_hash_from_string(self.root.borrow().key, &label[idx..]),
+                        Some(String::from(&label[..idx])),
+                    )
+                } else if let Some(idx) = label.find("##") {
+                    (
+                        u64_hash_from_string(self.root.borrow().key, label),
+                        Some(String::from(&label[..idx])),
+                    )
+                } else {
+                    (
+                        u64_hash_from_string(self.root.borrow().key, label),
+                        Some(String::from(label)),
+                    )
+                }
+            }
         };
         let uibox = match self.uiboxes.get(&key) {
             Some(uibox) => {
@@ -881,9 +894,9 @@ impl IMUI {
         }
     }
 
-    pub fn button(&mut self, label: Option<&str>) -> UIBoxRef {
+    pub fn button(&mut self, label: &str) -> UIBoxRef {
         let uibox = self.add_box_from_string(
-            label,
+            Some(label),
             UIBoxFlag::Clickable as u64
                 | UIBoxFlag::DrawBackground as u64
                 | UIBoxFlag::DrawBorder as u64
