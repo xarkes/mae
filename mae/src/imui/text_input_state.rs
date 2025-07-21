@@ -96,13 +96,11 @@ impl IMUITextInputState {
                 let mut length = 0.;
                 let mut col = 0;
                 for c in line.chars() {
-                    let (glyph, _) = fc.get(c, 12.); // XXX: font_size
-                    if let Some(glyph) = glyph {
-                        if curidx + col < self.idx {
-                            length += glyph.advance;
-                        } else {
-                            break;
-                        }
+                    let glyph = fc.get(c, 12.); // XXX: font_size
+                    if curidx + col < self.idx {
+                        length += glyph.advance;
+                    } else {
+                        break;
                     }
                     col += 1;
                 }

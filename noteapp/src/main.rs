@@ -46,8 +46,26 @@ impl Database {
             return Err(Error::new(ErrorKind::NotFound, "Markdown folder not found"));
         }
 
-        for file in std::fs::read_dir(folder) {
-            // TODO(xarkes) -> read all and import into database
+        for file in std::fs::read_dir(folder).unwrap() {
+            let file = file.unwrap();
+            if file.file_type().unwrap().is_file()
+                && file.file_name().into_string().unwrap().ends_with(".md")
+            {
+                // import single markdown file
+                let content = std::fs::read_to_string(file.path()).unwrap();
+                let mut new_content = String::new();
+                for line in content.lines() {
+                    new_content.push_str(line.trim_end());
+                    new_content.push('\n');
+                }
+                let mut note = Note {
+                    id: 0,
+                    name: String::from(""),
+                    content,
+                };
+                self.conform_note(&mut note, true);
+                self.add_note(&note);
+            }
         }
 
         Ok(())
@@ -61,9 +79,19 @@ impl Database {
 
         // xarkes: replace empty title with the beginning of the document
         // XXX: currently note name is useless
-        let len = std::cmp::min(note.content.len(), 30);
-        let content_slice = &note.content[..len];
-        note.name = String::from(content_slice.replace('\n', ""));
+        if note.name.len() == 0 {
+            let mut len = std::cmp::min(note.content.len(), 80);
+            let mut pos = usize::MAX;
+            while pos == usize::MAX && len > 0 {
+                pos = match note.content.char_indices().nth(len) {
+                    Some(idx) => idx.0,
+                    None => usize::MAX,
+                };
+                len -= 1;
+            }
+            let content_slice = &note.content[..pos];
+            note.name = String::from(content_slice.replace('\n', ""));
+        }
         if note.name.len() == 0 && !writing {
             note.name = String::from("(empty note)");
         }
@@ -92,16 +120,29 @@ impl Database {
         notes
     }
 
+    fn add_note(&self, note: &Note) {
+        self.conn
+            .execute(
+                "INSERT INTO note (name, content) VALUES (?1, ?2)",
+                (&note.name, &note.content),
+            )
+            .unwrap();
+    }
+
+    fn save_note(&self, note: &Note) {
+        self.conn
+            .execute(
+                "REPLACE INTO note (id, name, content) VALUES (?1, ?2, ?3)",
+                (&note.id, &note.name, &note.content),
+            )
+            .unwrap();
+    }
+
     pub fn save_all(&self, notes: &mut HashMap<u64, Note>) {
         for note in notes {
             let mut note = note.1;
             self.conform_note(&mut note, true);
-            self.conn
-                .execute(
-                    "REPLACE INTO note (id, name, content) VALUES (?1, ?2, ?3)",
-                    (&note.id, &note.name, &note.content),
-                )
-                .unwrap();
+            self.save_note(&note);
         }
     }
 }
@@ -140,11 +181,13 @@ impl NoteApp {
                 },
             );
         }
-        let buffer = Rc::new(RefCell::new(notes.get(&0).unwrap().content.clone()));
+        let first_note = notes.values().nth(0).unwrap();
+        let id = first_note.id;
+        let buffer = Rc::new(RefCell::new(first_note.content.clone()));
         NoteApp {
             db,
             notes,
-            curnote: 0,
+            curnote: id,
             buffer,
         }
     }
@@ -239,6 +282,19 @@ fn main() {
             search = Rc::new(RefCell::new(String::from("")));
         }
 
+        ui.params()
+            .width(uisize!("100px"))
+            .height(uisize!("40px"))
+            .position((uisize!("70%"), uisize!("95%")));
+        if ui.button("Click me!").borrow().clicked() {
+            noteapp
+                .db
+                .import_from_markdown(std::path::Path::new(
+                    "/Users/user/Downloads/AnyTypeDB/Anytype.20250720.222959.98",
+                ))
+                .unwrap();
+        }
+
         // Prompts
         if show_search {
             ui.params()
@@ -272,8 +328,9 @@ fn main() {
     // TODO:
     // Implement search/go to button
     // --> dropdown menu a la command palette
+    // --> implement scrolling
     // --> implement animation
-    // --> add shortcuts
+    // --> implement shortcuts
 }
 
 fn fuzzy_search(filter: &str, data: &str) -> bool {

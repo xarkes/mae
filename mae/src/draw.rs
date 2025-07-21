@@ -88,14 +88,11 @@ impl Drawer {
     pub fn get_text_size(&mut self, size: f32, text: &str, length: usize) -> (f32, f32) {
         // let scale_factor = self.renderer.win.dpi;
         // let size = size * scale_factor;
-        let (should_update, width, height) = self
+        let (width, height) = self
             .renderer
             .font_cache
             .borrow_mut()
             .get_text_size(size, text, length);
-        if should_update {
-            self.renderer.update_font_texture();
-        }
         (width, height)
     }
 
@@ -112,21 +109,6 @@ impl Drawer {
         let size = size * scale_factor;
         // xarkes: Generate glyph for each string character and update texture if needed
         // This is likely dumb, but that's it for now
-        {
-            let mut should_update = false;
-            for c in text.chars() {
-                if c == '\t' {
-                    continue;
-                }
-                let mut fc = self.renderer.font_cache.borrow_mut();
-                let (_, added) = fc.get(c, size);
-                should_update |= added;
-            }
-            if should_update {
-                self.renderer.update_font_texture();
-            }
-        }
-
         let xstart = x * scale_factor;
         let mut x = xstart;
         let y = y * scale_factor + size;
@@ -138,14 +120,7 @@ impl Drawer {
                 x += size;
                 continue;
             }
-            let glyph = {
-                let mut fc = self.renderer.font_cache.borrow_mut();
-                let (glyph, _) = fc.get(c, size);
-                if glyph.is_none() {
-                    continue;
-                }
-                *glyph.unwrap()
-            };
+            let glyph = *self.renderer.font_cache.borrow_mut().get(c, size);
 
             // xarkes: push a rect instruction for each character
             let w = (glyph.width) as f32;
@@ -171,6 +146,10 @@ impl Drawer {
                 });
             }
             x += glyph.advance;
+        }
+        if self.renderer.font_cache.borrow().dirty {
+            self.renderer.font_cache.borrow_mut().dirty = false;
+            self.renderer.update_font_texture();
         }
         x - xstart
     }

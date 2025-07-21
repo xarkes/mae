@@ -160,6 +160,7 @@ pub struct FontCache {
     font: fontdue::Font,
     glyph_cache: HashMap<u32, GlyphCache>,
     atlas: Atlas,
+    pub(crate) dirty: bool,
 }
 impl FontCache {
     pub fn new() -> Self {
@@ -189,45 +190,36 @@ impl FontCache {
             font,
             glyph_cache: HashMap::new(),
             atlas: Atlas::new(),
+            dirty: true,
         }
     }
 
     /// Add a glyph to the cache
     /// Must be called only if you are sure the glyph is not in the cache already
     fn add(&mut self, glyph: char, size: f32) -> Option<&Glyph> {
-        let keysize = size as u32;
+        let keysize = (size * 100.) as u32;
         if !self.font.has_glyph(glyph) {
-            return self.get('?', size).0;
+            return None;
         }
 
         let cache = self.glyph_cache.get_mut(&keysize).unwrap();
-        assert!(cache.table.get(&glyph).is_none());
+        debug_assert!(cache.table.get(&glyph).is_none());
         let (metrics, bitmap) = self.font.rasterize(glyph, size);
         let glyph_data = self.atlas.add_glyph(metrics, bitmap);
+        self.dirty = true;
         if glyph.len_utf8() == 1 {
             cache.table_ascii[glyph as u8 as usize] = glyph_data;
             Some(&cache.table_ascii[glyph as u8 as usize])
         } else {
             cache.table.set(glyph, glyph_data);
-            cache.table.get(&glyph)
-        }
-    }
-
-    fn get_ro(&self, glyph: char, size: f32) -> (&Glyph, bool) {
-        let keysize = size as u32;
-        let cache = self.glyph_cache.get(&keysize).unwrap();
-        if glyph.len_utf8() == 1 {
-            (&cache.table_ascii[glyph as u8 as usize], false)
-        } else {
-            (cache.table.get(&glyph).unwrap(), false)
+            Some(cache.table.get(&glyph).unwrap())
         }
     }
 
     /// Retrieve rasterized glyph
     /// If not in cache, add it
-    // TODO(xarkes): always return a glyph, if not found, return a '?' or square glyph
-    pub fn get(&mut self, glyph: char, size: f32) -> (Option<&Glyph>, bool) {
-        let keysize = size as u32;
+    fn get_internal(&mut self, glyph: char, size: f32) -> Option<&Glyph> {
+        let keysize = (size * 100.) as u32;
         if self.glyph_cache.get(&keysize).is_none() {
             // cache for specified size does not exist, create it
             self.glyph_cache.insert(
@@ -240,25 +232,30 @@ impl FontCache {
             for ccode in 0..=255u8 {
                 self.add(ccode as char, size);
             }
-            let out = self.get_ro(glyph, size);
-            return (Some(out.0), true);
+            return self.get_internal(glyph, size);
         }
 
         // xarkes: for perf purpose, ASCII table is in a separate cache
+        let cache = &self.glyph_cache.get(&keysize).unwrap();
         if glyph.len_utf8() == 1 {
-            let cache = &self.glyph_cache.get(&keysize).unwrap();
-            return (Some(&cache.table_ascii[glyph as u8 as usize]), false);
+            return Some(&cache.table_ascii[glyph as u8 as usize]);
         } else {
-            // TODO FIXME FIXME FIXME
-            // // TODO(xarkes): for perf, make the hasmap use an optimized hash function (I suspect the current one to be too slow for this task), or have your own hashmap
-            // let cache = &self.glyph_cache.get(&keysize).unwrap();
-            // let metrics =
-            // // let metrics = cache.table.get(&glyph);
-            // // if metrics.is_some() {
-            // //     return (metrics, false);
-            // // }
+            let metrics = cache.table.get(&glyph);
+            if metrics.is_some() {
+                return metrics;
+            }
         }
-        return (self.add(glyph, size), true);
+
+        None
+    }
+
+    pub fn get(&mut self, glyph: char, size: f32) -> &Glyph {
+        if self.get_internal(glyph, size).is_none() {
+            if self.add(glyph, size).is_none() {
+                return self.get_internal('?', size).unwrap();
+            }
+        }
+        self.get_internal(glyph, size).unwrap()
     }
 
     /// Retrieve the current atlas
@@ -271,22 +268,19 @@ impl FontCache {
         let mut length = 0.;
         let mut idx = 0;
         for c in text.chars() {
-            let (glyph, _) = self.get(c, size);
-            if let Some(glyph) = glyph {
-                if cursorx > length + glyph.advance / 2. {
-                    length += glyph.advance;
-                } else {
-                    break;
-                }
+            let glyph = self.get(c, size);
+            if cursorx > length + glyph.advance / 2. {
+                length += glyph.advance;
+            } else {
+                break;
             }
             idx += 1;
         }
         (length, idx)
     }
 
-    pub fn get_text_size(&mut self, size: f32, text: &str, length: usize) -> (bool, f32, f32) {
+    pub fn get_text_size(&mut self, size: f32, text: &str, length: usize) -> (f32, f32) {
         // TODO(xarkes): Usually we will call draw_text later on, so we can avoid useless heavy calls by caching what was done in this function
-        let mut should_update = false;
         let mut width = 0.;
         let mut height = 0;
         for (i, c) in text.char_indices() {
@@ -296,14 +290,11 @@ impl FontCache {
             if c == '\t' {
                 continue;
             }
-            let (glyph, added) = self.get(c, size);
-            should_update |= added;
-            if let Some(glyph) = glyph {
-                width += glyph.advance;
-                height = std::cmp::max(height, glyph.height);
-            }
+            let glyph = self.get(c, size);
+            width += glyph.advance;
+            height = std::cmp::max(height, glyph.height);
         }
-        (should_update, width, height as f32)
+        (width, height as f32)
     }
 
     pub fn line_height(&self, font_size: f32) -> f32 {
