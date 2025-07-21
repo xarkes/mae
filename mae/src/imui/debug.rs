@@ -19,35 +19,37 @@ impl IMUIDebug {
     }
 }
 
-// fn draw_node_info(ui: &mut IMUI, node: UIWidgetRef) {
-//     let mut i = 0;
-//     let mut worklist = vec![node];
-//     ui.label("-------------------");
-//     loop {
-//         let curnode = match worklist.pop() {
-//             Some(n) => n,
-//             None => {
-//                 break;
-//             }
-//         };
-//         for c in &curnode.borrow().children {
-//             worklist.push(c.clone());
-//         }
-//         ui.label(
-//             format!(
-//                 "{1:0$}Node {2} ({3:.1}x{4:.1}, {5} children)",
-//                 curnode.borrow().depth + 1,
-//                 " ",
-//                 i,
-//                 curnode.borrow().bounds.x0,
-//                 curnode.borrow().bounds.y0,
-//                 curnode.borrow().children.len()
-//             )
-//             .as_str(),
-//         );
-//         i += 1;
-//     }
-// }
+fn draw_node_info(ui: &mut IMUI, node: UIBoxRef) {
+    let mut i = 0;
+    let mut worklist = vec![node];
+    ui.label("-------------------");
+    loop {
+        let curnode = match worklist.pop() {
+            Some(n) => n,
+            None => {
+                break;
+            }
+        };
+        for c in &curnode.borrow().children {
+            worklist.push(c.clone());
+        }
+        ui.label(
+            format!(
+                "{1:0$}Node {2} ({3:.1},{4:.1}) ({5:.1}x{6:.1}), {7} children",
+                curnode.borrow().depth + 1,
+                " ",
+                i,
+                curnode.borrow().bounds.x0,
+                curnode.borrow().bounds.y0,
+                curnode.borrow().bounds.width(),
+                curnode.borrow().bounds.height(),
+                curnode.borrow().children.len()
+            )
+            .as_str(),
+        );
+        i += 1;
+    }
+}
 
 fn draw_debug_pane(ui: &mut IMUI, debug: &mut IMUIDebug, time: f64) {
     let xoff = ui.size.0 - 250.;
@@ -76,7 +78,7 @@ fn draw_debug_pane(ui: &mut IMUI, debug: &mut IMUIDebug, time: f64) {
         //     };
         //     ui.event.drag_cache.clear();
         // };
-        // draw_node_info(ui, ui.root.clone());
+        draw_node_info(ui, ui.root.clone());
     });
 
     ui.debug = debug.clone();

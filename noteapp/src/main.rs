@@ -52,6 +52,23 @@ impl Database {
         Ok(())
     }
 
+    fn conform_note(&self, note: &mut Note, writing: bool) {
+        // xarkes: always add newline at the end, this helps our textarea
+        if note.content.len() == 0 || note.content.chars().last().unwrap() != '\n' {
+            note.content.push_str("\n");
+        }
+
+        // xarkes: replace empty title with the beginning of the document
+        if note.name.len() == 0 {
+            let len = std::cmp::min(note.content.len(), 30);
+            let content_slice = &note.content[..len];
+            note.name = String::from(content_slice.replace('\n', ""));
+        }
+        if note.name.len() == 0 && !writing {
+            note.name = String::from("(empty note)");
+        }
+    }
+
     pub fn all_notes(&self) -> HashMap<u64, Note> {
         let mut stmt = self
             .conn
@@ -69,18 +86,16 @@ impl Database {
         let mut notes = HashMap::new();
         for note in note_iter {
             let mut note = note.unwrap();
-            // xarkes: always add newline at the end, this helps our textarea
-            if note.content.len() == 0 || note.content.chars().last().unwrap() != '\n' {
-                note.content.push_str("\n");
-            }
+            self.conform_note(&mut note, false);
             notes.insert(note.id, note);
         }
         notes
     }
 
-    pub fn save_all(&self, notes: &HashMap<u64, Note>) {
+    pub fn save_all(&self, notes: &mut HashMap<u64, Note>) {
         for note in notes {
-            let note = note.1;
+            let mut note = note.1;
+            self.conform_note(&mut note, true);
             self.conn
                 .execute(
                     "REPLACE INTO note (id, name, content) VALUES (?1, ?2, ?3)",
@@ -136,7 +151,7 @@ impl NoteApp {
 
     pub fn save(&mut self) {
         self.notes.get_mut(&self.curnote).unwrap().content = self.buffer.borrow().clone();
-        self.db.save_all(&self.notes);
+        self.db.save_all(&mut self.notes);
     }
 
     pub fn newnote(&mut self) {
@@ -175,6 +190,7 @@ fn main() {
 
     let mut show_search = false;
     let mut search = Rc::new(RefCell::new(String::from("")));
+    let mut search_result = Vec::new();
     ui.eventloop(|ui| {
         ui.params()
             .width(uisize!("100%"))
@@ -208,21 +224,25 @@ fn main() {
         if ui.button(Some("Search")).borrow().clicked() {
             show_search = true;
             search = Rc::new(RefCell::new(String::from("")));
+            search_result.clear();
+            let notes = noteapp.db.all_notes();
+            for res in notes.values() {
+                search_result.push(format!("{}: {}", res.id, res.name));
+            }
         }
 
         // Prompts
         if show_search {
-            // ui.floating_pane("search", |ui| {
             ui.params()
                 .width(uisize!("50%"))
                 .height(uisize!("50%"))
                 .position((uisize!("25%"), uisize!("40px")));
-            ui.vertical(|ui| {
+            ui.floating_box(|ui| {
+                ui.params().width(uisize!("100%"));
                 ui.line_edit(search.clone(), "#search");
-                ui.label("something 1");
-                ui.label("something 2");
-                ui.label("something 3");
-                ui.label("something 4");
+                for title in &search_result {
+                    ui.label(title.as_str());
+                }
             });
         };
     });

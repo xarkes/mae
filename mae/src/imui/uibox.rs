@@ -90,6 +90,9 @@ pub struct UIBox {
     pub(crate) string: Option<String>,
 
     pub(crate) style: UIBoxParams,
+
+    #[cfg(debug_assertions)]
+    pub(crate) depth: usize,
 }
 
 pub(crate) fn u64_hash_from_string(seed: u64, string: &String) -> u64 {
@@ -182,6 +185,8 @@ impl UIBox {
             events: 0,
             string: None,
             style: UIBoxParams::new(),
+            #[cfg(debug_assertions)]
+            depth: 0,
         }
     }
     pub fn hover(&self) -> bool {

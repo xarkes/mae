@@ -252,8 +252,6 @@ impl IMUI {
             {
                 self.root.borrow_mut().children.clear();
                 build_ui_func(self);
-                #[cfg(debug_assertions)]
-                draw_debug_info(self, self.debug.clone(), time);
             }
 
             // TODO: Apply layout here
@@ -263,6 +261,12 @@ impl IMUI {
             // how do you know you have nothing to do until the string is different? this involves checking for each frame anyways? idk.
             self.build_ui_end();
             self.layout_root();
+
+            #[cfg(debug_assertions)]
+            {
+                draw_debug_info(self, self.debug.clone(), time);
+                self.layout_root();
+            }
 
             // xarkes: draw interface and render
             {
@@ -298,7 +302,12 @@ impl IMUI {
                 + self.text_input_state.as_ref().unwrap().cursor_y;
 
             let color = self.style.active_color;
-            let height = self.style.text_size;
+            let height = self
+                .drawer
+                .renderer
+                .font_cache
+                .borrow()
+                .line_height(self.style.text_size);
             self.params()
                 .background_color(color)
                 .width(uisize!("2px"))
@@ -620,59 +629,6 @@ impl IMUI {
         self.params.reset();
         &mut self.params
     }
-    fn draw_text(&mut self, bounds: &RectCoords, text: &str, length: usize, size: f32) -> f32 {
-        let text_pos = match self.locale_kind {
-            UILocaleKind::LtrTtb => bounds.x0,
-            UILocaleKind::RtlTtb => bounds.x1 - self.drawer.get_text_size(size, text, length).0,
-            _ => {
-                unimplemented!("Text display is not implemented for this locale at the moment.");
-            }
-        };
-        self.drawer.draw_text(
-            text_pos,
-            bounds.y0,
-            size,
-            text,
-            length,
-            self.style.text_color,
-        )
-    }
-    // pub fn horizontal(
-    //     &mut self,
-    //     mut children: impl FnMut(&mut IMUI) -> UIWidgetRef,
-    // ) -> UIWidgetRef {
-    //     // process user params
-    //     let width = match self.params.width {
-    //         Some(width) => width,
-    //         None => UISize::Percents(1.),
-    //     };
-    //     let height = match self.params.height {
-    //         Some(height) => height,
-    //         None => UISize::Percents(1.),
-    //     };
-
-    //     // create widget
-    //     let layout = match self.params.layout {
-    //         Some(layout) => layout,
-    //         None => UILayout::Horizontal,
-    //     };
-    //     let pane = self.layout_new_widget(
-    //         None,
-    //         Some((UISize::DPixels(0.), UISize::DPixels(0.))),
-    //         (width, height),
-    //         0,
-    //         layout,
-    //     );
-    //     pane.borrow_mut().layout = UILayout::Horizontal;
-    //     self.parent_stack.push(pane.clone());
-    //     self.params.reset();
-    //     let out = children(self);
-    //     self.parent_stack.pop();
-    //     let mut pu = pane.borrow_mut();
-    //     // XXX: This is a hack, should we allow it?
-    //     pu.bounds.y1 = f32::min(pu.bounds.y1, out.borrow().bounds.y1);
-    //     out
-    // }
     pub fn vertical(&mut self, mut children: impl FnMut(&mut IMUI)) -> UIBoxRef {
         let pane = self.add_box_from_string(None, 0);
         pane.borrow_mut().layout = Some(UILayout::Vertical);
@@ -689,6 +645,23 @@ impl IMUI {
                 | UIBoxFlag::DrawBackground as u64
                 | UIBoxFlag::DrawBorder as u64
                 | UIBoxFlag::Draggable as u64,
+        );
+        uibox.borrow_mut().layout = Some(UILayout::Vertical);
+        self.parent_stack.push(uibox.clone());
+        self.params.reset();
+        self.label(title);
+        children(self);
+        self.parent_stack.pop();
+        uibox
+    }
+    pub fn floating_box(&mut self, mut children: impl FnMut(&mut IMUI)) -> UIBoxRef {
+        let uibox = self.add_box_from_string(
+            None,
+            UIBoxFlag::Clickable as u64
+                | UIBoxFlag::DrawBackground as u64
+                | UIBoxFlag::DrawBorder as u64
+                | UIBoxFlag::Draggable as u64
+                | UIBoxFlag::DrawHot as u64,
         );
         uibox.borrow_mut().layout = Some(UILayout::Vertical);
         self.parent_stack.push(uibox.clone());
@@ -757,6 +730,7 @@ impl IMUI {
                 | UIBoxFlag::DrawBackground as u64
                 | UIBoxFlag::DrawBorder as u64,
         );
+        line_edit.borrow_mut().layout = Some(UILayout::Vertical);
         let multiline = false;
         self.text_edit_impl(line_edit, text_buffer, multiline)
     }
@@ -831,6 +805,8 @@ impl IMUI {
                     key,
                     bounds: RectCoords::from_size(0., 0., 0., 0.),
                     children: Vec::new(),
+                    #[cfg(debug_assertions)]
+                    depth: parent.borrow().depth + 1,
                     parent: Some(parent.clone()),
                     previous: None,
                     layout: None,
