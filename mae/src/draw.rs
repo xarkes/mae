@@ -106,6 +106,7 @@ impl Drawer {
         xmax: f32,
         ymax: f32,
         color: V4f32,
+        underflow: bool,
     ) -> f32 {
         let scale_factor = self.renderer.win.dpi;
         let size = size * scale_factor;
@@ -138,23 +139,36 @@ impl Drawer {
                 let width_trunc = f32::min(w, avail_width);
                 let avail_height = ymax - ypos;
                 let height_trunc = f32::min(h, avail_height);
-                self.renderer.current_batch().add_rect(Rect2DInst {
-                    dst: RectCoords {
-                        x0: xpos,
-                        y0: ypos,
-                        x1: xpos + width_trunc,
-                        y1: ypos + height_trunc,
-                    },
-                    src: RectCoords {
+                // xarkes: handle aligned truncation
+                let src = match underflow {
+                    false => RectCoords {
                         x0: glyph.x0,
                         y0: glyph.y0,
                         // XXX: we use here atlas relative coords, maybe renderer should rework texture coordinates?
                         x1: glyph.x0 + width_trunc / 1024.,
                         y1: glyph.y0 + height_trunc / 1024.,
                     },
+                    // XXX: This is wrong but I think I need to rework the whole API anyways :')
+                    true => RectCoords {
+                        x0: glyph.x1 - width_trunc / 1024.,
+                        y0: glyph.y1 - height_trunc / 1024.,
+                        // XXX: we use here atlas relative coords, maybe renderer should rework texture coordinates?
+                        x1: glyph.x1,
+                        y1: glyph.y1,
+                    },
+                };
+                let rect = Rect2DInst {
+                    dst: RectCoords {
+                        x0: xpos,
+                        y0: ypos,
+                        x1: xpos + width_trunc,
+                        y1: ypos + height_trunc,
+                    },
+                    src,
                     colors: [color, color, color, color],
                     extra: Extra::new(false),
-                });
+                };
+                self.renderer.current_batch().add_rect(rect);
             }
             x += glyph.advance;
         }

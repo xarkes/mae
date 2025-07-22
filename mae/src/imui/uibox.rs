@@ -301,6 +301,7 @@ impl UIBox {
         (self.flags & UIBoxFlag::ScrollableY as u64) == UIBoxFlag::ScrollableY as u64
     }
 
+    /// Returns false if size is 0
     pub fn visible(&self) -> bool {
         self.visible && self.size.width > 0. && self.size.height > 0.
     }

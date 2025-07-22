@@ -344,7 +344,7 @@ impl IMUI {
         }
     }
 
-    fn layout_standalone(&self, root: UIBoxRef, axis: Axis) {
+    fn layout_resize_standalone(&self, root: UIBoxRef, axis: Axis) {
         iter_root(root, |nodeptr| {
             let mut node = nodeptr.borrow_mut();
 
@@ -383,7 +383,7 @@ impl IMUI {
             false
         });
     }
-    fn layout_upward_dependents(&self, root: UIBoxRef, axis: Axis) {
+    fn layout_resize_upward_dependents(&self, root: UIBoxRef, axis: Axis) {
         iter_root(root, |nodeptr| {
             let mut node = nodeptr.borrow_mut();
 
@@ -412,7 +412,8 @@ impl IMUI {
                 return false;
             }
             let mut node = nodeptr.borrow_mut();
-            let layout = node.parent.as_ref().unwrap().borrow().layout;
+            let parent = node.parent.as_ref().unwrap();
+            let layout = parent.borrow().layout;
             if layout.is_none() {
                 println!("Warning: box has children but no layout");
                 return true;
@@ -421,13 +422,23 @@ impl IMUI {
 
             match layout {
                 UILayout::VerticalLtr => {
-                    let insert_point = match node.previous.as_ref() {
+                    let mut insert_point = match node.previous.as_ref() {
                         Some(prev) => Point::new(
-                            prev.borrow().origin.x,
+                            parent.borrow().origin.x,
                             prev.borrow().origin.y + prev.borrow().size.height,
                         ),
-                        None => node.parent.as_ref().unwrap().borrow().origin,
+                        None => {
+                            let origin = parent.borrow().origin;
+                            Point::new(
+                                origin.x + parent.borrow().scrollx,
+                                origin.y + parent.borrow().scrolly,
+                            )
+                        }
                     };
+                    // insert_point.x += node.scrollx;
+                    // insert_point.y += node.scrolly;
+                    // insert_point.x += node.parent.as_ref().unwrap().borrow().scrollx;
+                    // insert_point.y += node.parent.as_ref().unwrap().borrow().scrolly;
 
                     node.origin = insert_point;
                 }
@@ -445,19 +456,20 @@ impl IMUI {
             if node.parent.is_none() {
                 return false;
             }
+            debug_assert!(*node.size.axis(axis) >= 0.);
 
-            // xarkes: handle out of viewport item
             let parent_size = *node.parent.as_ref().unwrap().borrow().size.axis(axis);
             let parent_origin = *node.parent.as_ref().unwrap().borrow().origin.axis(axis);
             let parent_bound = parent_origin + parent_size;
-            if node.origin.axis(axis) > &parent_bound {
-                *node.size.axis_mut(axis) = 0.;
-            }
 
             // xarkes: handle overflow, reduce children size
             let bound = node.origin.axis(axis) + node.size.axis(axis);
             if bound > parent_bound {
                 *node.size.axis_mut(axis) = f32::max(parent_bound - node.origin.axis(axis), 0.);
+            }
+            // xarkes: handle underflow
+            if bound < parent_origin {
+                *node.size.axis_mut(axis) = 0.;
             }
             false
         });
@@ -465,8 +477,8 @@ impl IMUI {
 
     fn layout_root(&mut self, root: UIBoxRef) {
         for axis in [Axis::X, Axis::Y] {
-            self.layout_standalone(root.clone(), axis);
-            self.layout_upward_dependents(root.clone(), axis);
+            self.layout_resize_standalone(root.clone(), axis);
+            self.layout_resize_upward_dependents(root.clone(), axis);
             self.apply_layout(root.clone(), axis);
             self.resolve_constraints(root.clone(), axis);
         }
@@ -505,16 +517,36 @@ impl IMUI {
 
             if curnode.draw_text() {
                 if let Some(string) = &curnode.string {
-                    self.drawer.draw_text(
-                        bounds.x0,
-                        bounds.y0,
-                        self.style.text_size,
-                        string.as_str(),
-                        string.len(),
-                        bounds.x1,
-                        bounds.y1,
-                        self.style.text_color,
-                    );
+                    // XXX: maybe check underflow in the layout algorithm and store in the uibox
+                    // XXX: check that the underflow on X is working too
+                    let underflow = bounds.y0
+                        < curnode.parent.as_ref().unwrap().borrow().bounds().y0
+                        || bounds.x0 < curnode.parent.as_ref().unwrap().borrow().bounds().x0;
+                    if !underflow {
+                        self.drawer.draw_text(
+                            bounds.x0,
+                            bounds.y0,
+                            self.style.text_size,
+                            string.as_str(),
+                            string.len(),
+                            bounds.x1,
+                            bounds.y1,
+                            self.style.text_color,
+                            false,
+                        );
+                    } else {
+                        self.drawer.draw_text(
+                            curnode.parent.as_ref().unwrap().borrow().bounds().x0,
+                            curnode.parent.as_ref().unwrap().borrow().bounds().y0,
+                            self.style.text_size,
+                            string.as_str(),
+                            string.len(),
+                            bounds.x1,
+                            bounds.y1,
+                            self.style.text_color,
+                            true,
+                        );
+                    }
                 }
             }
 
@@ -539,6 +571,7 @@ impl IMUI {
                         curnode.origin.x + curnode.size.width,
                         curnode.origin.y + curnode.size.height,
                         color_rgb(255, 255, 0),
+                        false,
                     );
                     self.drawer.draw_text(
                         self.size.width / 2.,
@@ -549,6 +582,7 @@ impl IMUI {
                         self.size.width,
                         self.size.height,
                         color_rgb(255, 255, 0),
+                        false,
                     );
                 }
             }
@@ -783,8 +817,12 @@ impl IMUI {
         let uibox = match self.uiboxes.get(&key) {
             Some(uibox) => {
                 // xarkes: clear previous frame event info
-                uibox.borrow_mut().events = 0;
-                uibox.borrow_mut().children.clear();
+                {
+                    let mut uibox = uibox.borrow_mut();
+                    uibox.events = 0;
+                    uibox.children.clear();
+                    uibox.parent = Some(parent.clone());
+                }
                 uibox.clone()
             }
             None => {
