@@ -425,39 +425,36 @@ impl IMUI {
                                 self.size.1,
                                 1,
                             ),
-                            // curnode.compute_size(&curnode.style.position.unwrap().0, &self.drawer),
-                            // curnode.compute_size(&curnode.style.position.unwrap().1),
-                            // curnode.compute_size(&curnode.style.width.unwrap()),
-                            // curnode.compute_size(&curnode.style.height.unwrap()),
-
-                            // curnode.style.position.unwrap().0.pixels(self.size.0),
-                            // curnode.style.position.unwrap().1.pixels(self.size.1),
-                            // curnode.style.width.unwrap().pixels(self.size.0),
-                            // curnode.style.height.unwrap().pixels(self.size.1),
                         ),
                         UILayout::VerticalLtr => {
                             let insert_point = match &curnode.previous {
                                 Some(prev) => (prev.borrow().bounds.x0, prev.borrow().bounds.y1),
                                 None => (parent.bounds.x0, parent.bounds.y0),
                             };
-                            RectCoords::from_size(
-                                insert_point.0,
-                                insert_point.1,
-                                compute_size(
-                                    self,
-                                    curnode_r.clone(),
-                                    &req_size.0,
-                                    parent.bounds.width(),
-                                    0,
-                                ),
-                                compute_size(
-                                    self,
-                                    curnode_r.clone(),
-                                    &req_size.1,
-                                    parent.bounds.height(),
-                                    1,
-                                ),
-                            )
+                            let allow_overflow = false;
+                            let mut width = compute_size(
+                                self,
+                                curnode_r.clone(),
+                                &req_size.0,
+                                parent.bounds.width(),
+                                0,
+                            );
+                            if !allow_overflow {
+                                width = f32::min(width, parent.bounds.width());
+                            }
+                            let mut height = compute_size(
+                                self,
+                                curnode_r.clone(),
+                                &req_size.1,
+                                parent.bounds.height(),
+                                1,
+                            );
+                            if !allow_overflow {
+                                let remaining_height =
+                                    parent.bounds.height() - (insert_point.1 - parent.bounds.y0);
+                                height = f32::min(height, f32::max(0., remaining_height));
+                            }
+                            RectCoords::from_size(insert_point.0, insert_point.1, width, height)
                         }
                         // UILayout::VerticalRtl => {
                         //     let insert_point = match parent.children.last() {
@@ -531,7 +528,7 @@ impl IMUI {
         iter_root(self.root.clone(), |curnode| {
             let curnode = curnode.borrow();
 
-            if !curnode.visible {
+            if !curnode.visible() {
                 return true;
             }
 
@@ -564,14 +561,50 @@ impl IMUI {
                         self.style.text_size,
                         string.as_str(),
                         string.len(),
+                        curnode.bounds.x1,
+                        curnode.bounds.y1,
                         self.style.text_color,
                     );
                 }
             }
 
             // if debug.hints
-            // self.drawer
-            //     .draw_empty_rect(&curnode.bounds, color_rgb(255, 0, 0), 2.0, true);
+            if false {
+                let col = match curnode.hover() {
+                    true => color_rgb(0, 255, 0),
+                    false => color_rgb(255, 0, 0),
+                };
+                self.drawer.draw_empty_rect(&curnode.bounds, col, 1.2, true);
+                if curnode.hover() {
+                    let txt = format!(
+                        "({},{}) {}x{}",
+                        curnode.bounds.x0,
+                        curnode.bounds.y0,
+                        curnode.bounds.width(),
+                        curnode.bounds.height()
+                    );
+                    self.drawer.draw_text(
+                        curnode.bounds.x0 + 2.,
+                        curnode.bounds.y1 + 2.,
+                        10.,
+                        txt.as_str(),
+                        txt.len(),
+                        curnode.bounds.x1,
+                        curnode.bounds.y1,
+                        color_rgb(255, 255, 0),
+                    );
+                    self.drawer.draw_text(
+                        self.size.0 / 2.,
+                        self.size.1 / 2.,
+                        10.,
+                        txt.as_str(),
+                        txt.len(),
+                        curnode.bounds.x1,
+                        curnode.bounds.y1,
+                        color_rgb(255, 255, 0),
+                    );
+                }
+            }
             return false;
         });
     }
@@ -646,7 +679,9 @@ impl IMUI {
             UIBoxFlag::Clickable as u64
                 | UIBoxFlag::DrawBackground as u64
                 | UIBoxFlag::DrawBorder as u64
-                | UIBoxFlag::Draggable as u64,
+                | UIBoxFlag::Draggable as u64
+                | UIBoxFlag::Resizable as u64
+                | UIBoxFlag::Scrollable as u64,
         );
         uibox.borrow_mut().layout = Some(UILayout::Vertical);
         self.parent_stack.push(uibox.clone());
@@ -664,6 +699,8 @@ impl IMUI {
             }
         }
         self.label(title);
+        self.params.width = Some(uisize!("100%"));
+        self.params.height = Some(uisize!("100%"));
         self.frame(foldable_frame_id.as_str(), |ui| {
             children(ui);
         });

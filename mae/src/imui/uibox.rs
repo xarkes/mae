@@ -1,18 +1,17 @@
-use std::{
-    cell::RefCell,
-    io::{BufRead, Read},
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 use super::{Color, RelPoint, UILayout, UISize};
-use crate::{draw::Drawer, render::RectCoords};
+use crate::render::RectCoords;
 pub type UIBoxRef = Rc<RefCell<UIBox>>;
 
 #[repr(u64)]
 pub(crate) enum UIBoxFlag {
     Clickable = 1u64,
-    Draggable = 2u64 + 1, // Draggable implies clickable
-    Resizable = 4u64 + 1, // Resizable implies clickable
+    Draggable = 2u64 | UIBoxFlag::Clickable as u64, // Draggable implies clickable
+    Resizable = 4u64 | UIBoxFlag::Clickable as u64, // Resizable implies clickable
+    ScrollableX = 8u64,
+    ScrollableY = 16u64,
+    Scrollable = UIBoxFlag::ScrollableX as u64 | UIBoxFlag::ScrollableY as u64,
 
     DrawBackground = 64u64,
     DrawBorder = 128u64,
@@ -222,15 +221,15 @@ impl UIBox {
     pub(crate) fn draw_hot(&self) -> bool {
         (self.flags & UIBoxFlag::DrawHot as u64) == UIBoxFlag::DrawHot as u64
     }
+    pub(crate) fn scrollable_x(&self) -> bool {
+        (self.flags & UIBoxFlag::ScrollableX as u64) == UIBoxFlag::ScrollableX as u64
+    }
+    pub(crate) fn scrollable_y(&self) -> bool {
+        (self.flags & UIBoxFlag::ScrollableY as u64) == UIBoxFlag::ScrollableY as u64
+    }
 
-    // pub fn compute_size(&self, size: &UISize, drawer: &Drawer) -> f32 {
-    //     match size {
-    //         UISize::DPixels(val) => val,
-    //         UISize::Percents(val) => val * self.parent.unwrap().borrow().bounds,
-    //         UISize::TextContent => {
-    //             drawer.get_text_size(self.style.text_size, self.string, self.string.len())
-    //         }
-    //     }
-    //     100.
-    // }
+    pub fn visible(&self) -> bool {
+        // TODO: Also check viewport bounds?
+        self.visible && self.bounds.width() > 0. && self.bounds.height() > 0.
+    }
 }

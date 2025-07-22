@@ -103,17 +103,23 @@ impl Drawer {
         size: f32,
         text: &str,
         length: usize,
+        xmax: f32,
+        ymax: f32,
         color: V4f32,
     ) -> f32 {
         let scale_factor = self.renderer.win.dpi;
         let size = size * scale_factor;
-        // xarkes: Generate glyph for each string character and update texture if needed
-        // This is likely dumb, but that's it for now
         let xstart = x * scale_factor;
+        let xmax = xmax * scale_factor;
+        let ymax = ymax * scale_factor;
+
         let mut x = xstart;
         let y = y * scale_factor + size;
         for (i, c) in text.char_indices() {
             if i >= length {
+                break;
+            }
+            if x >= xmax {
                 break;
             }
             if c == '\t' {
@@ -128,18 +134,23 @@ impl Drawer {
             let xpos = x + glyph.xoff;
             let ypos = y + glyph.yoff;
             {
+                let avail_width = xmax - xpos;
+                let width_trunc = f32::min(w, avail_width);
+                let avail_height = ymax - ypos;
+                let height_trunc = f32::min(h, avail_height);
                 self.renderer.current_batch().add_rect(Rect2DInst {
                     dst: RectCoords {
                         x0: xpos,
                         y0: ypos,
-                        x1: xpos + w,
-                        y1: ypos + h,
+                        x1: xpos + width_trunc,
+                        y1: ypos + height_trunc,
                     },
                     src: RectCoords {
                         x0: glyph.x0,
                         y0: glyph.y0,
-                        x1: glyph.x1,
-                        y1: glyph.y1,
+                        // XXX: we use here atlas relative coords, maybe renderer should rework texture coordinates?
+                        x1: glyph.x0 + width_trunc / 1024.,
+                        y1: glyph.y0 + height_trunc / 1024.,
                     },
                     colors: [color, color, color, color],
                     extra: Extra::new(false),
