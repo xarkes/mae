@@ -1,5 +1,7 @@
 extern crate objc2;
 
+use crate::imui::Point;
+
 use super::{OSEvent, OSEventType, OSKey, OSKeyCode};
 use std::cell::OnceCell;
 
@@ -185,8 +187,8 @@ impl Window {
     }
 
     /// Translate event location to screen coords
-    fn translate_loc(&self, point: NSPoint) -> (f32, f32) {
-        (point.x as f32, self.get_size().1 - point.y as f32)
+    fn translate_loc(&self, point: NSPoint) -> Point {
+        Point::new(point.x as f32, self.get_size().1 - point.y as f32)
     }
 
     pub fn get_size(&self) -> (f32, f32) {
@@ -223,30 +225,42 @@ impl Window {
                             key: OSKey::LeftMouseButton,
                             pos: Some(self.translate_loc(ev.locationInWindow())),
                             chars: None,
+                            delta: 0.,
                         }),
                         NSEventType::LeftMouseDown => Some(OSEvent {
                             ty: OSEventType::Press,
                             key: OSKey::LeftMouseButton,
                             pos: Some(self.translate_loc(ev.locationInWindow())),
                             chars: None,
+                            delta: 0.,
                         }),
                         NSEventType::LeftMouseUp => Some(OSEvent {
                             ty: OSEventType::Release,
                             key: OSKey::LeftMouseButton,
                             pos: Some(self.translate_loc(ev.locationInWindow())),
                             chars: None,
+                            delta: 0.,
                         }),
                         NSEventType::KeyDown => Some(OSEvent {
                             ty: OSEventType::Press,
                             key: macos_keycode_to_oskey(ev.keyCode()),
                             pos: None,
                             chars: ev.characters().unwrap().to_string().chars().nth(0),
+                            delta: 0.,
                         }),
                         NSEventType::LeftMouseDragged => Some(OSEvent {
                             ty: OSEventType::MouseMove,
                             key: OSKey::LeftMouseButton,
                             pos: Some(self.translate_loc(ev.locationInWindow())),
                             chars: None,
+                            delta: 0.,
+                        }),
+                        NSEventType::ScrollWheel => Some(OSEvent {
+                            ty: OSEventType::Scroll,
+                            key: OSKey::LeftMouseButton,
+                            pos: Some(self.translate_loc(ev.locationInWindow())),
+                            chars: None,
+                            delta: ev.deltaY() as f32,
                         }),
                         // NSEventType::FlagsChanged => Some(OSEvent {
 

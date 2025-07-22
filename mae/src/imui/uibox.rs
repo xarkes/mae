@@ -1,9 +1,79 @@
 use std::{cell::RefCell, rc::Rc};
 
-use super::{Color, RelPoint, UILayout, UISize};
-use crate::render::RectCoords;
+use crate::render::{RectCoords, V4f32};
+
+use super::{Point, Size, UILayout, UISize};
 pub type UIBoxRef = Rc<RefCell<UIBox>>;
 
+pub type Color = V4f32;
+impl Color {
+    pub fn from_text(text: &str) -> Self {
+        if text.len() < 4 {
+            Color {
+                r: 1.,
+                g: 1.,
+                b: 1.,
+                a: 1.,
+            }
+        } else if text.len() == 4 && text.as_bytes()[0] == b'#' {
+            let bytes = text.as_bytes();
+            let mut vals: [f32; 3] = [0., 0., 0.];
+            for i in 0..3 {
+                let b = bytes[1 + i];
+                let mut val = 0;
+                if b >= b'0' && b <= b'9' {
+                    val = b - b'0';
+                } else if b >= b'a' && b <= b'f' {
+                    val = b - b'a' + 10;
+                } else if b >= b'A' && b <= b'F' {
+                    val = b - b'A' + 10;
+                }
+                vals[i] = val as f32 / 16.;
+            }
+            Color {
+                r: vals[0],
+                g: vals[1],
+                b: vals[2],
+                a: 1.,
+            }
+        } else if text.len() == 7 && text.as_bytes()[0] == b'#' {
+            let bytes = text.as_bytes();
+            let mut vals: [f32; 3] = [0., 0., 0.];
+            for i in 0..3 {
+                let mut val = 0;
+                for j in 0..2 {
+                    let b = bytes[1 + i * 2 + j];
+                    let v;
+                    if b >= b'0' && b <= b'9' {
+                        v = b - b'0';
+                    } else if b >= b'a' && b <= b'f' {
+                        v = b - b'a' + 10;
+                    } else if b >= b'A' && b <= b'F' {
+                        v = b - b'A' + 10;
+                    } else {
+                        v = 0;
+                    }
+                    let v = (1 << (1 - j as u8) * 4) * v;
+                    val += v;
+                }
+                vals[i] = val as f32 / 256.;
+            }
+            Color {
+                r: vals[0],
+                g: vals[1],
+                b: vals[2],
+                a: 1.,
+            }
+        } else {
+            Color {
+                r: 1.,
+                g: 1.,
+                b: 1.,
+                a: 1.,
+            }
+        }
+    }
+}
 #[repr(u64)]
 pub(crate) enum UIBoxFlag {
     Clickable = 1u64,
@@ -24,7 +94,7 @@ pub(crate) enum UIBoxEvent {
     MouseOver = 1u64,
     MouseClicked = 2u64,
     MouseReleased = 4u64,
-    // KeyPressed = 8u64,
+    KeyPressed = 8u64,
 }
 
 #[derive(Clone)]
@@ -32,7 +102,6 @@ pub struct UIBoxParams {
     pub(crate) width: Option<UISize>,
     pub(crate) height: Option<UISize>,
     pub(crate) layout: Option<UILayout>,
-    pub(crate) position: Option<RelPoint>,
     pub(crate) bg_col: Option<Color>,
 }
 impl UIBoxParams {
@@ -41,7 +110,6 @@ impl UIBoxParams {
             width: None,
             height: None,
             layout: None,
-            position: None,
             bg_col: None,
         }
     }
@@ -57,10 +125,6 @@ impl UIBoxParams {
         self.layout = Some(layout);
         self
     }
-    pub fn position(&mut self, position: RelPoint) -> &mut Self {
-        self.position = Some(position);
-        self
-    }
     pub fn background_color(&mut self, bg_col: Color) -> &mut Self {
         self.bg_col = Some(bg_col);
         self
@@ -69,30 +133,35 @@ impl UIBoxParams {
         self.width = None;
         self.height = None;
         self.layout = None;
-        self.position = None;
         self.bg_col = None;
     }
 }
 
 pub struct UIBox {
+    // persistent data
     pub(crate) key: u64,
-    pub(crate) bounds: RectCoords,
+
+    // per-build links
     pub(crate) children: Vec<UIBoxRef>,
     pub(crate) parent: Option<UIBoxRef>,
     pub(crate) previous: Option<UIBoxRef>,
-    pub(crate) layout: Option<UILayout>,
 
-    // event flags
+    // per-build data
+    pub(crate) origin: Point,
+    pub(crate) pref_size: Option<(UISize, UISize)>,
+    pub(crate) size: Size,
     pub(crate) flags: u64,
     pub(crate) events: u64,
-
     pub(crate) string: Option<String>,
-
-    pub(crate) style: UIBoxParams,
     pub(crate) visible: bool,
-
     #[cfg(debug_assertions)]
     pub(crate) depth: usize,
+    pub(crate) layout: Option<UILayout>,
+    pub(crate) font_size: f32,
+
+    // persistent data
+    pub(crate) scrollx: f32,
+    pub(crate) scrolly: f32,
 }
 
 pub(crate) fn u64_hash_from_string(seed: u64, string: &str) -> u64 {
@@ -176,18 +245,22 @@ impl UIBox {
     pub fn root() -> Self {
         UIBox {
             key: u64_hash_from_string(1234, &String::from("#root")),
-            bounds: RectCoords::from_size(0., 0., 0., 0.),
+            pref_size: None,
+            origin: Point::default(),
+            size: Size::default(),
             parent: None,
             previous: None,
             children: Vec::new(),
-            layout: Some(UILayout::Root),
+            layout: Some(UILayout::Vertical),
             visible: true,
             flags: 0,
             events: 0,
             string: None,
-            style: UIBoxParams::new(),
             #[cfg(debug_assertions)]
             depth: 0,
+            scrollx: 0.,
+            scrolly: 0.,
+            font_size: 12.,
         }
     }
     pub fn hover(&self) -> bool {
@@ -229,7 +302,15 @@ impl UIBox {
     }
 
     pub fn visible(&self) -> bool {
-        // TODO: Also check viewport bounds?
-        self.visible && self.bounds.width() > 0. && self.bounds.height() > 0.
+        self.visible && self.size.width > 0. && self.size.height > 0.
+    }
+
+    pub fn bounds(&self) -> RectCoords {
+        RectCoords {
+            x0: self.origin.x,
+            y0: self.origin.y,
+            x1: self.origin.x + self.size.width,
+            y1: self.origin.y + self.size.height,
+        }
     }
 }

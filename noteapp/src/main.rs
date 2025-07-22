@@ -253,78 +253,78 @@ fn main() {
         ui.params()
             .width(uisize!("100%"))
             .height(uisize!("100%"))
-            .position((uisize!("0px"), uisize!("0px")))
+            // .position((uisize!("0px"), uisize!("0px")))
             .background_color(color_rgb(10, 20, 30));
         ui.textarea(noteapp.buffer.clone(), "#textarea");
 
-        ui.params()
-            // .width(UISize::TextContent)
-            // .height(UISize::TextContent)
-            .width(uisize!("100px"))
-            .height(uisize!("40px"))
-            .position((uisize!("90%"), uisize!("90%")));
-        if ui.button("Save").borrow().clicked() {
-            noteapp.save();
-        };
+        // ui.params()
+        //     // .width(UISize::TextContent)
+        //     // .height(UISize::TextContent)
+        //     .width(uisize!("100px"))
+        //     .height(uisize!("40px"))
+        //     .position((uisize!("90%"), uisize!("90%")));
+        // if ui.button("Save").borrow().clicked() {
+        //     noteapp.save();
+        // };
 
-        ui.params()
-            .width(uisize!("100px"))
-            .height(uisize!("40px"))
-            .position((uisize!("80%"), uisize!("90%")));
-        if ui.button("New").borrow().clicked() {
-            noteapp.newnote();
-        };
+        // ui.params()
+        //     .width(uisize!("100px"))
+        //     .height(uisize!("40px"))
+        //     .position((uisize!("80%"), uisize!("90%")));
+        // if ui.button("New").borrow().clicked() {
+        //     noteapp.newnote();
+        // };
 
-        ui.params()
-            .width(uisize!("100px"))
-            .height(uisize!("40px"))
-            .position((uisize!("70%"), uisize!("90%")));
-        if ui.button("Search").borrow().clicked() {
-            show_search = true;
-            search = Rc::new(RefCell::new(String::from("")));
-        }
+        // ui.params()
+        //     .width(uisize!("100px"))
+        //     .height(uisize!("40px"))
+        //     .position((uisize!("70%"), uisize!("90%")));
+        // if ui.button("Search").borrow().clicked() {
+        //     show_search = true;
+        //     search = Rc::new(RefCell::new(String::from("")));
+        // }
 
-        ui.params()
-            .width(uisize!("100px"))
-            .height(uisize!("40px"))
-            .position((uisize!("70%"), uisize!("95%")));
-        if ui.button("Click me!").borrow().clicked() {
-            noteapp
-                .db
-                .import_from_markdown(std::path::Path::new(
-                    "/Users/user/Downloads/AnyTypeDB/Anytype.20250720.222959.98",
-                ))
-                .unwrap();
-        }
+        // ui.params()
+        //     .width(uisize!("100px"))
+        //     .height(uisize!("40px"))
+        //     .position((uisize!("70%"), uisize!("95%")));
+        // if ui.button("Click me!").borrow().clicked() {
+        //     noteapp
+        //         .db
+        //         .import_from_markdown(std::path::Path::new(
+        //             "/Users/user/Downloads/AnyTypeDB/Anytype.20250720.222959.98",
+        //         ))
+        //         .unwrap();
+        // }
 
-        // Prompts
-        if show_search {
-            ui.params()
-                .width(uisize!("50%"))
-                .height(uisize!("50%"))
-                .position((uisize!("25%"), uisize!("40px")));
-            ui.floating_box(|ui| {
-                ui.params().width(uisize!("100%")).height(uisize!("20px"));
-                ui.line_edit(search.clone(), "#search");
-                ui.params().width(uisize!("100%")).height(uisize!("20px"));
-                let search_filter = search.borrow();
-                for note in &noteapp.notes() {
-                    if search_filter.len() > 0 {
-                        if !fuzzy_search(search_filter.as_str(), note.name.as_str()) {
-                            continue;
-                        }
-                    }
-                    if ui
-                        .button(format!("{}##button_label_{}", note.name, note.id).as_str())
-                        .borrow()
-                        .clicked()
-                    {
-                        noteapp.open(note.id);
-                        show_search = false;
-                    }
-                }
-            });
-        };
+        // // Prompts
+        // if show_search {
+        //     ui.params()
+        //         .width(uisize!("50%"))
+        //         .height(uisize!("50%"))
+        //         .position((uisize!("25%"), uisize!("40px")));
+        //     ui.floating_box(|ui| {
+        //         ui.params().width(uisize!("100%")).height(uisize!("20px"));
+        //         ui.line_edit(search.clone(), "#search");
+        //         ui.params().width(uisize!("100%")).height(uisize!("20px"));
+        //         let search_filter = search.borrow();
+        //         for note in &noteapp.notes() {
+        //             if search_filter.len() > 0 {
+        //                 if !fuzzy_search(search_filter.as_str(), note.name.as_str()) {
+        //                     continue;
+        //                 }
+        //             }
+        //             if ui
+        //                 .button(format!("{}##button_label_{}", note.name, note.id).as_str())
+        //                 .borrow()
+        //                 .clicked()
+        //             {
+        //                 noteapp.open(note.id);
+        //                 show_search = false;
+        //             }
+        //         }
+        //     });
+        // };
     });
 
     // TODO:

@@ -85,7 +85,7 @@ impl Drawer {
         batch.add_rect(rect);
     }
 
-    pub fn get_text_size(&mut self, size: f32, text: &str, length: usize) -> (f32, f32) {
+    pub fn get_text_size(&self, size: f32, text: &str, length: usize) -> (f32, f32) {
         // let scale_factor = self.renderer.win.dpi;
         // let size = size * scale_factor;
         let (width, height) = self

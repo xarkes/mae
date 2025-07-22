@@ -1,4 +1,4 @@
-use super::{Color, IMUI, UIBoxRef, UILocaleKind, UISize};
+use super::{Color, IMUI, Point, Size, UIBoxRef, UILocaleKind, UISize, iter_root};
 
 #[derive(Clone)]
 pub(crate) struct IMUIDebug {
@@ -21,65 +21,57 @@ impl IMUIDebug {
 
 fn draw_node_info(ui: &mut IMUI, node: UIBoxRef) {
     let mut i = 0;
-    let mut worklist = vec![node];
-    ui.label("-------------------");
-    loop {
-        let curnode = match worklist.pop() {
-            Some(n) => n,
-            None => {
-                break;
-            }
-        };
-        for c in &curnode.borrow().children {
-            worklist.push(c.clone());
-        }
+    iter_root(node, |node| {
+        let curnode = node.borrow();
         ui.label(
             format!(
                 "{1:0$}Node {2} ({3:.1},{4:.1}) ({5:.1}x{6:.1}), {7} children",
-                curnode.borrow().depth + 1,
+                curnode.depth + 1,
                 " ",
                 i,
-                curnode.borrow().bounds.x0,
-                curnode.borrow().bounds.y0,
-                curnode.borrow().bounds.width(),
-                curnode.borrow().bounds.height(),
-                curnode.borrow().children.len()
+                curnode.origin.x,
+                curnode.origin.y,
+                curnode.size.width,
+                curnode.size.height,
+                curnode.children.len()
             )
             .as_str(),
         );
         i += 1;
-    }
+        return false;
+    });
 }
 
 fn draw_debug_pane(ui: &mut IMUI, debug: &mut IMUIDebug, time: f64) {
-    let xoff = ui.size.0 - 250. - 20.;
-    ui.params()
-        .width(UISize::DPixels(250.))
-        .height(UISize::DPixels(150.))
-        .position((UISize::DPixels(xoff), UISize::DPixels(40.)));
-    ui.floating_pane("Debug metrics", |ui| {
-        if debug.fps {
-            let fps = 1f64 / time * 1000f64;
-            let text = format!("Render: {:.2}ms - {}fps", time, fps as u64);
-            // ui.label(text.as_str());
-        }
-        // ui.checkbox("Show hints", &mut debug.hints);
-        // if ui
-        //     .checkbox("Enable VSync", &mut debug.vsync)
-        //     .borrow()
-        //     .clicked()
-        // {
-        //     ui.drawer.renderer.vsync(debug.vsync);
-        // };
-        // if ui.checkbox("LTR", &mut debug.locale).borrow().clicked() {
-        //     ui.locale_kind = match debug.locale {
-        //         true => super::UILocaleKind::LtrTtb,
-        //         false => super::UILocaleKind::RtlTtb,
-        //     };
-        //     ui.event.drag_cache.clear();
-        // };
-        draw_node_info(ui, ui.root.clone());
-    });
+    let xoff = ui.size.width - 250. - 20.;
+    ui.floating_pane(
+        Point::new(xoff, 40.),
+        Size::from((250., 150.)),
+        "Debug metrics",
+        |ui| {
+            if debug.fps {
+                let fps = 1f64 / time * 1000f64;
+                let text = format!("Render: {:.2}ms - {}fps", time, fps as u64);
+                ui.label(text.as_str());
+            }
+            // ui.checkbox("Show hints", &mut debug.hints);
+            // if ui
+            //     .checkbox("Enable VSync", &mut debug.vsync)
+            //     .borrow()
+            //     .clicked()
+            // {
+            //     ui.drawer.renderer.vsync(debug.vsync);
+            // };
+            // if ui.checkbox("LTR", &mut debug.locale).borrow().clicked() {
+            //     ui.locale_kind = match debug.locale {
+            //         true => super::UILocaleKind::LtrTtb,
+            //         false => super::UILocaleKind::RtlTtb,
+            //     };
+            //     ui.event.drag_cache.clear();
+            // };
+            draw_node_info(ui, ui.root.clone());
+        },
+    );
 
     ui.debug = debug.clone();
 }
@@ -103,7 +95,7 @@ fn draw_debug_hints(ui: &mut IMUI, start: UIBoxRef) {
         },
     };
     ui.drawer
-        .draw_empty_rect(&start.borrow().bounds, color, 1.0, true);
+        .draw_empty_rect(&start.borrow().bounds(), color, 1.0, true);
 }
 
 pub fn draw_debug_info(ui: &mut IMUI, mut debug: IMUIDebug, time: f64) {

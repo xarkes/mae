@@ -2,10 +2,10 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     os::{OSKey, OSKeyCode},
-    render::{Point, RectCoords},
+    render::RectCoords,
 };
 
-use super::{FontCache, uibox::UIBoxRef};
+use super::{FontCache, Point, uibox::UIBoxRef};
 
 pub struct IMUITextInputState {
     // focus: String,
@@ -49,8 +49,8 @@ impl IMUITextInputState {
         font_size: f32,
         point: Point,
     ) {
-        let relative_x = point.0 - bounds.x0;
-        let relative_y = point.1 - bounds.y0;
+        let relative_x = point.x - bounds.x0;
+        let relative_y = point.y - bounds.y0;
         if relative_x < 0. || relative_y < 0. {
             return;
         }

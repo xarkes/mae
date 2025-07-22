@@ -12,8 +12,6 @@ pub struct RenderBatch {
     bytes_count: isize,
 }
 
-pub type Point = (f32, f32);
-
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct RectCoords {
@@ -31,14 +29,6 @@ impl RectCoords {
             y1: y + h,
         }
     }
-    // pub fn from_point(p: &Point, size: f32) -> Self {
-    //     RectCoords {
-    //         x0: p.0,
-    //         y0: p.1,
-    //         x1: p.0 + size,
-    //         y1: p.1 + size,
-    //     }
-    // }
     pub fn width(&self) -> f32 {
         self.x1 - self.x0
     }
@@ -51,6 +41,14 @@ impl RectCoords {
             y0: self.y0,
             x1: self.x1 + xval,
             y1: self.y1,
+        }
+    }
+    pub fn y(&self, yval: f32) -> RectCoords {
+        RectCoords {
+            x0: self.x0,
+            y0: self.y0 + yval,
+            x1: self.x1,
+            y1: self.y1 + yval,
         }
     }
     pub fn mul(&self, coef: f32) -> RectCoords {

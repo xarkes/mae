@@ -1,5 +1,3 @@
-use crate::render::Point;
-
 #[cfg(all(
     not(target_os = "macos"),
     not(target_os = "linux"),
@@ -14,11 +12,14 @@ compile_error!("Support for targeted OS is not implemented!",);
 #[cfg_attr(target_os = "android", path = "android.rs")]
 mod os_impl;
 
+use super::imui::Point;
+
 #[derive(PartialEq, Eq)]
 pub enum OSEventType {
     MouseMove,
     Press,
     Release,
+    Scroll,
 }
 #[derive(PartialEq, Eq, Debug)]
 pub enum OSKeyCode {
@@ -144,6 +145,7 @@ pub struct OSEvent {
     pub key: OSKey,
     pub pos: Option<Point>,
     pub chars: Option<char>,
+    pub delta: f32,
 }
 
 pub type Window = os_impl::Window;
