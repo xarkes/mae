@@ -90,6 +90,7 @@ pub struct UIBox {
     pub(crate) string: Option<String>,
 
     pub(crate) style: UIBoxParams,
+    pub(crate) visible: bool,
 
     #[cfg(debug_assertions)]
     pub(crate) depth: usize,
@@ -181,6 +182,7 @@ impl UIBox {
             previous: None,
             children: Vec::new(),
             layout: Some(UILayout::Root),
+            visible: true,
             flags: 0,
             events: 0,
             string: None,

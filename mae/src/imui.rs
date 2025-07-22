@@ -338,12 +338,12 @@ impl IMUI {
                 let curnode = curnode_r.borrow();
                 // xarkes: compute bounds depending on layout and requested size
                 if curnode.parent.is_none() {
-                    return;
+                    return false;
                 }
                 let parent = curnode.parent.as_ref().unwrap().borrow();
                 if parent.layout.is_none() {
                     println!("Warning: box has children but no layout");
-                    return;
+                    return false;
                 }
                 let layout = match parent.layout.unwrap() {
                     UILayout::Vertical => match self.locale_kind {
@@ -393,155 +393,146 @@ impl IMUI {
                         }
                     }
                 }
-                let bounds = match layout {
-                    UILayout::Root => RectCoords::from_size(
-                        compute_size(
-                            self,
-                            curnode_r.clone(),
-                            &curnode.style.position.unwrap().0,
-                            self.size.0,
-                            0,
-                        ),
-                        compute_size(
-                            self,
-                            curnode_r.clone(),
-                            &curnode.style.position.unwrap().1,
-                            self.size.1,
-                            1,
-                        ),
-                        compute_size(
-                            self,
-                            curnode_r.clone(),
-                            &curnode.style.width.unwrap(),
-                            self.size.0,
-                            0,
-                        ),
-                        compute_size(
-                            self,
-                            curnode_r.clone(),
-                            &curnode.style.height.unwrap(),
-                            self.size.1,
-                            1,
-                        ),
-                        // curnode.compute_size(&curnode.style.position.unwrap().0, &self.drawer),
-                        // curnode.compute_size(&curnode.style.position.unwrap().1),
-                        // curnode.compute_size(&curnode.style.width.unwrap()),
-                        // curnode.compute_size(&curnode.style.height.unwrap()),
-
-                        // curnode.style.position.unwrap().0.pixels(self.size.0),
-                        // curnode.style.position.unwrap().1.pixels(self.size.1),
-                        // curnode.style.width.unwrap().pixels(self.size.0),
-                        // curnode.style.height.unwrap().pixels(self.size.1),
-                    ),
-                    UILayout::VerticalLtr => {
-                        let insert_point = match &curnode.previous {
-                            Some(prev) => (prev.borrow().bounds.x0, prev.borrow().bounds.y1),
-                            None => (parent.bounds.x0, parent.bounds.y0),
-                        };
-                        RectCoords::from_size(
-                            insert_point.0,
-                            insert_point.1,
+                let bounds = match curnode.visible {
+                    false => RectCoords::from_size(0., 0., 0., 0.),
+                    true => match layout {
+                        UILayout::Root => RectCoords::from_size(
                             compute_size(
                                 self,
                                 curnode_r.clone(),
-                                &req_size.0,
-                                parent.bounds.width(),
+                                &curnode.style.position.unwrap().0,
+                                self.size.0,
                                 0,
                             ),
                             compute_size(
                                 self,
                                 curnode_r.clone(),
-                                &req_size.1,
-                                parent.bounds.height(),
+                                &curnode.style.position.unwrap().1,
+                                self.size.1,
                                 1,
                             ),
-                        )
-                    }
-                    // UILayout::VerticalRtl => {
-                    //     let insert_point = match parent.children.last() {
-                    //         Some(child) => (
-                    //             child.borrow().bounds.x1 - size.0.pixels(parent.bounds.width()),
-                    //             child.borrow().bounds.y1,
-                    //         ),
-                    //         None => (
-                    //             parent.bounds.x1 - size.0.pixels(parent.bounds.width()),
-                    //             parent.bounds.y0,
-                    //         ),
-                    //     };
+                            compute_size(
+                                self,
+                                curnode_r.clone(),
+                                &curnode.style.width.unwrap(),
+                                self.size.0,
+                                0,
+                            ),
+                            compute_size(
+                                self,
+                                curnode_r.clone(),
+                                &curnode.style.height.unwrap(),
+                                self.size.1,
+                                1,
+                            ),
+                            // curnode.compute_size(&curnode.style.position.unwrap().0, &self.drawer),
+                            // curnode.compute_size(&curnode.style.position.unwrap().1),
+                            // curnode.compute_size(&curnode.style.width.unwrap()),
+                            // curnode.compute_size(&curnode.style.height.unwrap()),
 
-                    //     RectCoords::from_size(
-                    //         insert_point.0,
-                    //         insert_point.1,
-                    //         f32::min(parent.bounds.width(), size.0.pixels(parent.bounds.width())),
-                    //         f32::min(
-                    //             parent.bounds.height(),
-                    //             size.1.pixels(parent.bounds.height()),
-                    //         ),
-                    //     )
-                    // }
-                    // UILayout::HorizontalLtr => {
-                    //     let insert_point = match parent.children.last() {
-                    //         Some(child) => (child.borrow().bounds.x1, child.borrow().bounds.y0),
-                    //         None => (parent.bounds.x0, parent.bounds.y0),
-                    //     };
-                    //     RectCoords::from_size(
-                    //         insert_point.0,
-                    //         insert_point.1,
-                    //         f32::min(parent.bounds.width(), size.0.pixels(parent.bounds.width())),
-                    //         f32::min(
-                    //             parent.bounds.height(),
-                    //             size.1.pixels(parent.bounds.height()),
-                    //         ),
-                    //     )
-                    // }
-                    // UILayout::HorizontalRtl => {
-                    //     let insert_point = match parent.children.last() {
-                    //         Some(child) => (
-                    //             child.borrow().bounds.x0 - size.0.pixels(parent.bounds.width()),
-                    //             child.borrow().bounds.y0,
-                    //         ),
-                    //         None => (
-                    //             parent.bounds.x1 - size.0.pixels(parent.bounds.width()),
-                    //             parent.bounds.y0,
-                    //         ),
-                    //     };
-                    //     RectCoords::from_size(
-                    //         insert_point.0,
-                    //         insert_point.1,
-                    //         f32::min(parent.bounds.width(), size.0.pixels(parent.bounds.width())),
-                    //         f32::min(
-                    //             parent.bounds.height(),
-                    //             size.1.pixels(parent.bounds.height()),
-                    //         ),
-                    //     )
-                    // }
-                    _ => unreachable!("Generic layout impossible here!"),
+                            // curnode.style.position.unwrap().0.pixels(self.size.0),
+                            // curnode.style.position.unwrap().1.pixels(self.size.1),
+                            // curnode.style.width.unwrap().pixels(self.size.0),
+                            // curnode.style.height.unwrap().pixels(self.size.1),
+                        ),
+                        UILayout::VerticalLtr => {
+                            let insert_point = match &curnode.previous {
+                                Some(prev) => (prev.borrow().bounds.x0, prev.borrow().bounds.y1),
+                                None => (parent.bounds.x0, parent.bounds.y0),
+                            };
+                            RectCoords::from_size(
+                                insert_point.0,
+                                insert_point.1,
+                                compute_size(
+                                    self,
+                                    curnode_r.clone(),
+                                    &req_size.0,
+                                    parent.bounds.width(),
+                                    0,
+                                ),
+                                compute_size(
+                                    self,
+                                    curnode_r.clone(),
+                                    &req_size.1,
+                                    parent.bounds.height(),
+                                    1,
+                                ),
+                            )
+                        }
+                        // UILayout::VerticalRtl => {
+                        //     let insert_point = match parent.children.last() {
+                        //         Some(child) => (
+                        //             child.borrow().bounds.x1 - size.0.pixels(parent.bounds.width()),
+                        //             child.borrow().bounds.y1,
+                        //         ),
+                        //         None => (
+                        //             parent.bounds.x1 - size.0.pixels(parent.bounds.width()),
+                        //             parent.bounds.y0,
+                        //         ),
+                        //     };
+
+                        //     RectCoords::from_size(
+                        //         insert_point.0,
+                        //         insert_point.1,
+                        //         f32::min(parent.bounds.width(), size.0.pixels(parent.bounds.width())),
+                        //         f32::min(
+                        //             parent.bounds.height(),
+                        //             size.1.pixels(parent.bounds.height()),
+                        //         ),
+                        //     )
+                        // }
+                        // UILayout::HorizontalLtr => {
+                        //     let insert_point = match parent.children.last() {
+                        //         Some(child) => (child.borrow().bounds.x1, child.borrow().bounds.y0),
+                        //         None => (parent.bounds.x0, parent.bounds.y0),
+                        //     };
+                        //     RectCoords::from_size(
+                        //         insert_point.0,
+                        //         insert_point.1,
+                        //         f32::min(parent.bounds.width(), size.0.pixels(parent.bounds.width())),
+                        //         f32::min(
+                        //             parent.bounds.height(),
+                        //             size.1.pixels(parent.bounds.height()),
+                        //         ),
+                        //     )
+                        // }
+                        // UILayout::HorizontalRtl => {
+                        //     let insert_point = match parent.children.last() {
+                        //         Some(child) => (
+                        //             child.borrow().bounds.x0 - size.0.pixels(parent.bounds.width()),
+                        //             child.borrow().bounds.y0,
+                        //         ),
+                        //         None => (
+                        //             parent.bounds.x1 - size.0.pixels(parent.bounds.width()),
+                        //             parent.bounds.y0,
+                        //         ),
+                        //     };
+                        //     RectCoords::from_size(
+                        //         insert_point.0,
+                        //         insert_point.1,
+                        //         f32::min(parent.bounds.width(), size.0.pixels(parent.bounds.width())),
+                        //         f32::min(
+                        //             parent.bounds.height(),
+                        //             size.1.pixels(parent.bounds.height()),
+                        //         ),
+                        //     )
+                        // }
+                        _ => unreachable!("Generic layout impossible here!"),
+                    },
                 };
                 bounds
             };
             curnode_r.borrow_mut().bounds = bounds;
+            return !curnode_r.borrow().visible;
         });
     }
 
     fn draw_ui(&mut self) {
-        // xarkes: iterate created boxes from root (lowest), breadth first search (BFS)
-        let mut worklist = Vec::new();
-        let mut start = self.root.borrow().children.clone();
-        start.reverse();
-        for c in start {
-            worklist.push(c.clone());
-        }
-        loop {
-            let curnode = match worklist.pop() {
-                Some(n) => n,
-                None => {
-                    break;
-                }
-            };
+        iter_root(self.root.clone(), |curnode| {
             let curnode = curnode.borrow();
-            for c in &curnode.children {
-                worklist.push(c.clone());
-                // worklist.insert(0, c.clone());
+
+            if !curnode.visible {
+                return true;
             }
 
             // xarkes: for each box, send the proper draw commands
@@ -581,7 +572,8 @@ impl IMUI {
             // if debug.hints
             // self.drawer
             //     .draw_empty_rect(&curnode.bounds, color_rgb(255, 0, 0), 2.0, true);
-        }
+            return false;
+        });
     }
 
     /////////////////////////////////
@@ -638,6 +630,16 @@ impl IMUI {
         self.parent_stack.pop();
         pane
     }
+    // same as vertical but you can specify an id to get persistence
+    pub fn frame(&mut self, id: &str, mut children: impl FnMut(&mut IMUI)) -> UIBoxRef {
+        let pane = self.add_box_from_string(Some(id), 0);
+        pane.borrow_mut().layout = Some(UILayout::Vertical);
+        self.parent_stack.push(pane.clone());
+        self.params.reset();
+        children(self);
+        self.parent_stack.pop();
+        pane
+    }
     pub fn floating_pane(&mut self, title: &str, mut children: impl FnMut(&mut IMUI)) -> UIBoxRef {
         let uibox = self.add_box_from_string(
             None,
@@ -649,8 +651,22 @@ impl IMUI {
         uibox.borrow_mut().layout = Some(UILayout::Vertical);
         self.parent_stack.push(uibox.clone());
         self.params.reset();
+        let foldable_frame_id = format!("fp_frame_{}", title);
+        if self
+            .button(format!("Fold##fp_fold_{}", title).as_str())
+            .borrow()
+            .clicked()
+        {
+            let (key, _) = self.get_key_from_string(Some(foldable_frame_id.as_str()));
+            if let Some(uibox) = self.uiboxes.get(&key) {
+                let old_visible = uibox.borrow().visible;
+                uibox.borrow_mut().visible = !old_visible;
+            }
+        }
         self.label(title);
-        children(self);
+        self.frame(foldable_frame_id.as_str(), |ui| {
+            children(ui);
+        });
         self.parent_stack.pop();
         uibox
     }
@@ -783,9 +799,8 @@ impl IMUI {
         textarea.clone()
     }
 
-    fn add_box_from_string(&mut self, label: Option<&str>, flags: u64) -> UIBoxRef {
-        let parent = self.parent_stack.last().unwrap();
-        let (key, string) = match label {
+    fn get_key_from_string(&self, label: Option<&str>) -> (u64, Option<String>) {
+        match label {
             None => (0u64, None),
             Some(label) => {
                 if let Some(idx) = label.find("###") {
@@ -805,7 +820,12 @@ impl IMUI {
                     )
                 }
             }
-        };
+        }
+    }
+
+    fn add_box_from_string(&mut self, label: Option<&str>, flags: u64) -> UIBoxRef {
+        let parent = self.parent_stack.last().unwrap();
+        let (key, string) = self.get_key_from_string(label);
         let uibox = match self.uiboxes.get(&key) {
             Some(uibox) => {
                 // xarkes: clear previous frame event info
@@ -823,6 +843,7 @@ impl IMUI {
                     parent: Some(parent.clone()),
                     previous: None,
                     layout: None,
+                    visible: true,
 
                     flags,
                     events: 0,
@@ -924,7 +945,7 @@ pub fn color_rgb(r: u8, g: u8, b: u8) -> V4f32 {
     }
 }
 
-fn iter_root(start_node: UIBoxRef, mut handle_node: impl FnMut(UIBoxRef)) {
+fn iter_root(start_node: UIBoxRef, mut handle_node: impl FnMut(UIBoxRef) -> bool) {
     // xarkes: iterate created boxes from root (lowest), breadth first search (BFS)
     let mut worklist = Vec::new();
     let mut start = start_node.borrow().children.clone();
@@ -939,12 +960,12 @@ fn iter_root(start_node: UIBoxRef, mut handle_node: impl FnMut(UIBoxRef)) {
                 break;
             }
         };
-        {
+
+        let skip_children = handle_node(curnode_r.clone());
+        if !skip_children {
             for c in &curnode_r.borrow().children {
                 worklist.insert(0, c.clone());
             }
         }
-
-        handle_node(curnode_r);
     }
 }

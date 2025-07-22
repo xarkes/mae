@@ -106,7 +106,7 @@ impl GLContext {
             gl::ClearColor(117. / 256., 139. / 256., 153. / 256., 0.);
 
             // xarkes: disable VSync
-            // os_impl::ogl_toggle_vsync(&ctx, false);
+            os_impl::ogl_toggle_vsync(&ctx, false);
         }
 
         // xarkes: enable gl debugging
