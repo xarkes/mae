@@ -137,35 +137,6 @@ impl UIBoxParams {
     }
 }
 
-pub struct UIBox {
-    // persistent data
-    pub(crate) key: u64,
-
-    // per-build links
-    pub(crate) children: Vec<UIBoxRef>,
-    pub(crate) parent: Option<UIBoxRef>,
-    pub(crate) previous: Option<UIBoxRef>,
-
-    // per-build data
-    pub(crate) origin: Point,
-    pub(crate) pref_size: Option<(UISize, UISize)>,
-    pub(crate) size: Size,
-    pub(crate) flags: u64,
-    pub(crate) events: u64,
-    pub(crate) string: Option<String>,
-    pub(crate) visible: bool,
-    #[cfg(debug_assertions)]
-    pub(crate) depth: usize,
-    pub(crate) layout: Option<UILayout>,
-    // per-build styling
-    pub(crate) font_size: f32,
-    pub(crate) bg_color: Color,
-
-    // persistent data
-    pub(crate) scrollx: f32,
-    pub(crate) scrolly: f32,
-}
-
 pub(crate) fn u64_hash_from_string(seed: u64, string: &str) -> u64 {
     // dirty implementation, I just want to generate keys atm I don't care of the quality
     let p1 = 0x2B7E151628AED2A5u64;
@@ -243,12 +214,45 @@ pub(crate) fn u64_hash_from_string(seed: u64, string: &str) -> u64 {
     x.0
 }
 
+pub struct UIBox {
+    // persistent data
+    pub(crate) key: u64,
+
+    // per-build links
+    pub(crate) children: Vec<UIBoxRef>,
+    pub(crate) parent: Option<UIBoxRef>,
+    pub(crate) previous: Option<UIBoxRef>,
+
+    // per-build data
+    pub(crate) fixed_origin: Point,
+    pub(crate) resize_delta: Point,
+    pub(crate) origin: Point,
+    pub(crate) pref_size: Option<(UISize, UISize)>,
+    pub(crate) size: Size,
+    pub(crate) flags: u64,
+    pub(crate) events: u64,
+    pub(crate) string: Option<String>,
+    pub(crate) visible: bool,
+    #[cfg(debug_assertions)]
+    pub(crate) depth: usize,
+    pub(crate) layout: Option<UILayout>,
+    // per-build styling
+    pub(crate) font_size: f32,
+    pub(crate) bg_color: Color,
+
+    // persistent data
+    pub(crate) scrollx: f32,
+    pub(crate) scrolly: f32,
+}
+
 impl UIBox {
     pub fn root(id: String) -> Self {
         UIBox {
             key: u64_hash_from_string(1234, id.as_str()),
             pref_size: None,
             origin: Point::default(),
+            fixed_origin: Point::default(), // TODO: rename as drag_position
+            resize_delta: Point::default(),
             size: Size::default(),
             parent: None,
             previous: None,

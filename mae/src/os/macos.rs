@@ -227,6 +227,13 @@ impl Window {
                             chars: None,
                             delta: 0.,
                         }),
+                        NSEventType::RightMouseDragged => Some(OSEvent {
+                            ty: OSEventType::MouseMove,
+                            key: OSKey::RightMouseButton,
+                            pos: Some(self.translate_loc(ev.locationInWindow())),
+                            chars: None,
+                            delta: 0.,
+                        }),
                         NSEventType::LeftMouseDown => Some(OSEvent {
                             ty: OSEventType::Press,
                             key: OSKey::LeftMouseButton,
@@ -237,6 +244,20 @@ impl Window {
                         NSEventType::LeftMouseUp => Some(OSEvent {
                             ty: OSEventType::Release,
                             key: OSKey::LeftMouseButton,
+                            pos: Some(self.translate_loc(ev.locationInWindow())),
+                            chars: None,
+                            delta: 0.,
+                        }),
+                        NSEventType::RightMouseDown => Some(OSEvent {
+                            ty: OSEventType::Press,
+                            key: OSKey::RightMouseButton,
+                            pos: Some(self.translate_loc(ev.locationInWindow())),
+                            chars: None,
+                            delta: 0.,
+                        }),
+                        NSEventType::RightMouseUp => Some(OSEvent {
+                            ty: OSEventType::Release,
+                            key: OSKey::RightMouseButton,
                             pos: Some(self.translate_loc(ev.locationInWindow())),
                             chars: None,
                             delta: 0.,

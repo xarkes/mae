@@ -137,6 +137,7 @@ pub enum OSKeyCode {
 #[derive(PartialEq, Eq, Debug)]
 pub enum OSKey {
     LeftMouseButton,
+    RightMouseButton,
     Keyboard(OSKeyCode),
 }
 
