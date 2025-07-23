@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::render::{RectCoords, V4f32};
 
-use super::{Point, Size, UILayout, UISize};
+use super::{Point, Size, UILayout, UISize, color_rgb};
 pub type UIBoxRef = Rc<RefCell<UIBox>>;
 
 pub type Color = V4f32;
@@ -102,7 +102,7 @@ pub struct UIBoxParams {
     pub(crate) width: Option<UISize>,
     pub(crate) height: Option<UISize>,
     pub(crate) layout: Option<UILayout>,
-    pub(crate) bg_col: Option<Color>,
+    pub(crate) bg_color: Option<Color>,
 }
 impl UIBoxParams {
     pub fn new() -> Self {
@@ -110,7 +110,7 @@ impl UIBoxParams {
             width: None,
             height: None,
             layout: None,
-            bg_col: None,
+            bg_color: None,
         }
     }
     pub fn width(&mut self, width: UISize) -> &mut Self {
@@ -126,14 +126,14 @@ impl UIBoxParams {
         self
     }
     pub fn background_color(&mut self, bg_col: Color) -> &mut Self {
-        self.bg_col = Some(bg_col);
+        self.bg_color = Some(bg_col);
         self
     }
     pub fn reset(&mut self) {
         self.width = None;
         self.height = None;
         self.layout = None;
-        self.bg_col = None;
+        self.bg_color = None;
     }
 }
 
@@ -157,7 +157,9 @@ pub struct UIBox {
     #[cfg(debug_assertions)]
     pub(crate) depth: usize,
     pub(crate) layout: Option<UILayout>,
+    // per-build styling
     pub(crate) font_size: f32,
+    pub(crate) bg_color: Color,
 
     // persistent data
     pub(crate) scrollx: f32,
@@ -242,9 +244,9 @@ pub(crate) fn u64_hash_from_string(seed: u64, string: &str) -> u64 {
 }
 
 impl UIBox {
-    pub fn root() -> Self {
+    pub fn root(id: String) -> Self {
         UIBox {
-            key: u64_hash_from_string(1234, &String::from("#root")),
+            key: u64_hash_from_string(1234, id.as_str()),
             pref_size: None,
             origin: Point::default(),
             size: Size::default(),
@@ -260,7 +262,9 @@ impl UIBox {
             depth: 0,
             scrollx: 0.,
             scrolly: 0.,
+
             font_size: 12.,
+            bg_color: color_rgb(0, 255, 255),
         }
     }
     pub fn hover(&self) -> bool {

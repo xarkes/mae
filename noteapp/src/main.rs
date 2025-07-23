@@ -6,6 +6,8 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use mae::imui::IMUI;
+use mae::imui::Point;
+use mae::imui::Size;
 use mae::imui::UISize;
 use mae::imui::color_rgb;
 use mae::uisize;
@@ -253,56 +255,39 @@ fn main() {
         ui.params()
             .width(uisize!("100%"))
             .height(uisize!("100%"))
-            // .position((uisize!("0px"), uisize!("0px")))
-            .background_color(color_rgb(10, 20, 30));
+            .background_color(color_rgb(67, 72, 77));
         ui.textarea(noteapp.buffer.clone(), "#textarea");
 
-        // ui.params()
-        //     // .width(UISize::TextContent)
-        //     // .height(UISize::TextContent)
-        //     .width(uisize!("100px"))
-        //     .height(uisize!("40px"))
-        //     .position((uisize!("90%"), uisize!("90%")));
-        // if ui.button("Save").borrow().clicked() {
-        //     noteapp.save();
-        // };
-
-        // ui.params()
-        //     .width(uisize!("100px"))
-        //     .height(uisize!("40px"))
-        //     .position((uisize!("80%"), uisize!("90%")));
-        // if ui.button("New").borrow().clicked() {
-        //     noteapp.newnote();
-        // };
-
-        // ui.params()
-        //     .width(uisize!("100px"))
-        //     .height(uisize!("40px"))
-        //     .position((uisize!("70%"), uisize!("90%")));
-        // if ui.button("Search").borrow().clicked() {
-        //     show_search = true;
-        //     search = Rc::new(RefCell::new(String::from("")));
-        // }
-
-        // ui.params()
-        //     .width(uisize!("100px"))
-        //     .height(uisize!("40px"))
-        //     .position((uisize!("70%"), uisize!("95%")));
-        // if ui.button("Click me!").borrow().clicked() {
-        //     noteapp
-        //         .db
-        //         .import_from_markdown(std::path::Path::new(
-        //             "/Users/user/Downloads/AnyTypeDB/Anytype.20250720.222959.98",
-        //         ))
-        //         .unwrap();
-        // }
+        // ui.floating_pane(
+        //     Point::new(1024. - 200., 768. - 240.),
+        //     Size::from((200., 240.)),
+        //     "tmp",
+        //     |ui| {
+        //         if ui.button("Save").borrow().clicked() {
+        //             noteapp.save();
+        //         }
+        //         if ui.button("New").borrow().clicked() {
+        //             noteapp.newnote();
+        //         }
+        //         if ui.button("Search").borrow().clicked() {
+        //             show_search = true;
+        //             search = Rc::new(RefCell::new(String::from("")));
+        //         }
+        //         if ui.button("Import").borrow().clicked() {
+        //             noteapp
+        //                 .db
+        //                 .import_from_markdown(std::path::Path::new(
+        //                     "/Users/user/Downloads/AnyTypeDB/Anytype.20250720.222959.98",
+        //                 ))
+        //                 .unwrap();
+        //         }
+        //     },
+        // );
 
         // // Prompts
         // if show_search {
-        //     ui.params()
-        //         .width(uisize!("50%"))
-        //         .height(uisize!("50%"))
-        //         .position((uisize!("25%"), uisize!("40px")));
+        //     ui.params().width(uisize!("50%")).height(uisize!("50%"));
+        //     // .position((uisize!("25%"), uisize!("40px")));
         //     ui.floating_box(|ui| {
         //         ui.params().width(uisize!("100%")).height(uisize!("20px"));
         //         ui.line_edit(search.clone(), "#search");
@@ -331,6 +316,8 @@ fn main() {
     // Implement search/go to button
     // --> dropdown menu a la command palette
     // --> implement scrolling
+    // --> fix event handling and consuming, it is still fucking wrong
+    // --> re-implement dragging
     // --> implement animation
     // --> implement shortcuts
 }

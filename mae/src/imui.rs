@@ -25,7 +25,7 @@ pub enum UITextAlign {
 }
 
 #[derive(Clone, Copy)]
-enum Axis {
+pub enum Axis {
     X,
     Y,
 }
@@ -242,7 +242,7 @@ impl IMUI {
         let renderer = render::Renderer::new(window);
         let drawer = draw::Drawer::new(renderer);
 
-        let root = Rc::new(RefCell::new(UIBox::root()));
+        let root = Rc::new(RefCell::new(UIBox::root(String::from("#root"))));
         IMUI {
             drawer,
             #[cfg(debug_assertions)]
@@ -408,7 +408,6 @@ impl IMUI {
     fn apply_layout(&self, root: UIBoxRef, axis: Axis) {
         iter_root(root, |nodeptr| {
             if nodeptr.borrow().parent.is_none() {
-                debug_assert!(nodeptr.borrow().key == self.root.borrow().key);
                 return false;
             }
             let mut node = nodeptr.borrow_mut();
@@ -416,15 +415,18 @@ impl IMUI {
             let layout = parent.borrow().layout;
             if layout.is_none() {
                 println!("Warning: box has children but no layout");
-                return true;
+                // // xarkes: no layout means we will just position things relatively to parent
+                // let bounds = parent.borrow().bounds();
+                // node.origin = Point::new(bounds.x0, bounds.y0);
+                return false;
             }
             let layout = layout.unwrap().specialize(self.locale_kind);
 
             match layout {
                 UILayout::VerticalLtr => {
-                    let mut insert_point = match node.previous.as_ref() {
+                    let insert_point = match node.previous.as_ref() {
                         Some(prev) => Point::new(
-                            parent.borrow().origin.x,
+                            prev.borrow().origin.x,
                             prev.borrow().origin.y + prev.borrow().size.height,
                         ),
                         None => {
@@ -435,11 +437,22 @@ impl IMUI {
                             )
                         }
                     };
-                    // insert_point.x += node.scrollx;
-                    // insert_point.y += node.scrolly;
-                    // insert_point.x += node.parent.as_ref().unwrap().borrow().scrollx;
-                    // insert_point.y += node.parent.as_ref().unwrap().borrow().scrolly;
-
+                    node.origin = insert_point;
+                }
+                UILayout::HorizontalLtr => {
+                    let insert_point = match node.previous.as_ref() {
+                        Some(prev) => Point::new(
+                            prev.borrow().origin.x + prev.borrow().size.width,
+                            prev.borrow().origin.y,
+                        ),
+                        None => {
+                            let origin = parent.borrow().origin;
+                            Point::new(
+                                origin.x + parent.borrow().scrollx,
+                                origin.y + parent.borrow().scrolly,
+                            )
+                        }
+                    };
                     node.origin = insert_point;
                 }
                 _ => {
@@ -456,6 +469,7 @@ impl IMUI {
             if node.parent.is_none() {
                 return false;
             }
+            // xarkes: make sure the previous positioning did not generate wrong data
             debug_assert!(*node.size.axis(axis) >= 0.);
 
             let parent_size = *node.parent.as_ref().unwrap().borrow().size.axis(axis);
@@ -503,7 +517,18 @@ impl IMUI {
 
             // xarkes: for each box, send the proper draw commands
             if curnode.draw_background() {
-                let color = self.style.bg_color;
+                let color = match curnode.clickable() && curnode.hover() {
+                    true => {
+                        let col = curnode.bg_color;
+                        Color {
+                            r: col.r + 50. / 256.,
+                            g: col.g + 50. / 256.,
+                            b: col.b + 50. / 256.,
+                            a: col.a,
+                        }
+                    }
+                    false => curnode.bg_color,
+                };
                 self.drawer.draw_rect(&bounds, color);
             }
 
@@ -515,13 +540,20 @@ impl IMUI {
                 self.drawer.draw_empty_rect(&bounds, color, 1.0, false);
             }
 
+            // TODO(xarkes):
+            // So I tried to implement clipping like a noob :')
+            // I think what I need to do is to have the clipping handled by the
+            // renderer
+            // Otherwise it will add too much complexity to get an accurate result
+            // not mentioning performance degradation
             if curnode.draw_text() {
                 if let Some(string) = &curnode.string {
                     // XXX: maybe check underflow in the layout algorithm and store in the uibox
                     // XXX: check that the underflow on X is working too
-                    let underflow = bounds.y0
-                        < curnode.parent.as_ref().unwrap().borrow().bounds().y0
-                        || bounds.x0 < curnode.parent.as_ref().unwrap().borrow().bounds().x0;
+                    // let underflow = bounds.y0
+                    //     < curnode.parent.as_ref().unwrap().borrow().bounds().y0
+                    //     || bounds.x0 < curnode.parent.as_ref().unwrap().borrow().bounds().x0;
+                    let underflow = false;
                     if !underflow {
                         self.drawer.draw_text(
                             bounds.x0,
@@ -643,15 +675,59 @@ impl IMUI {
         self.parent_stack.pop();
         pane
     }
+    fn scrollbar(&mut self, scrollable: UIBoxRef) {
+        debug_assert!(scrollable.borrow().scrollable_x());
+        // XXX: not yet resilient against multiple scrollbars in one root -> key collision
+        self.params()
+            .height(uisize!("20px"))
+            .width(uisize!("100%"))
+            .background_color(color_rgb(255, 0, 0));
+        let container = self.add_box_from_string(None, UIBoxFlag::DrawBackground as u64);
+        container.borrow_mut().layout = Some(UILayout::Horizontal);
+        self.parent_stack.push(container);
+        {
+            let scroll_pos = f32::max(0., scrollable.borrow().scrollx);
+            self.params()
+                .width(UISize::DPixels(scroll_pos))
+                // .width(uisize!("140px"))
+                .height(uisize!("19px"))
+                .background_color(color_rgb(0, 250, 0));
+            let pre_scrollbar = self
+                .add_box_from_string(Some("#scrollbar_pre_x"), UIBoxFlag::DrawBackground as u64);
+            self.params()
+                .height(uisize!("18px"))
+                .width(uisize!("10px"))
+                .background_color(color_rgb(0, 0, 0));
+            let scrollbar = self.add_box_from_string(
+                Some("#scrollbar_bar_x"),
+                UIBoxFlag::DrawBackground as u64 | UIBoxFlag::Clickable as u64,
+            );
+            self.params()
+                .width(uisize!("100%"))
+                .background_color(color_rgb(255, 0, 255));
+            let post_scrollbar = self
+                .add_box_from_string(Some("#scrollbar_post_x"), UIBoxFlag::DrawBackground as u64);
+        }
+        self.parent_stack.pop();
+    }
     // same as vertical but you can specify an id to get persistence
     pub fn frame(&mut self, id: &str, mut children: impl FnMut(&mut IMUI)) -> UIBoxRef {
-        let frame = self.add_box_from_string(Some(id), UIBoxFlag::Scrollable as u64);
+        let container = self.add_box_from_string(Some(id), 0);
+        container.borrow_mut().layout = Some(UILayout::Vertical);
+        self.parent_stack.push(container.clone());
+        self.params.height = Some(uisize!("80%"));
+        let frame = self.add_box_from_string(
+            Some(format!("{}_frame", id).as_str()),
+            UIBoxFlag::Scrollable as u64,
+        );
         frame.borrow_mut().layout = Some(UILayout::Vertical);
         self.parent_stack.push(frame.clone());
         self.params.reset();
         children(self);
         self.parent_stack.pop();
-        frame
+        self.scrollbar(frame);
+        self.parent_stack.pop();
+        container
     }
     pub fn floating_pane(
         &mut self,
@@ -666,13 +742,9 @@ impl IMUI {
         {
             self.parent_stack.push(uibox.clone());
             self.params.reset();
-            let foldable_frame_id = format!("fp_frame_{}", title);
-            if self
-                .button(format!("Fold##fp_fold_{}", title).as_str())
-                .borrow()
-                .clicked()
-            {
-                let (key, _) = self.get_key_from_string(Some(foldable_frame_id.as_str()));
+            let foldable_frame_id = "fp_frame";
+            if self.button("Fold##fp_fold").borrow().clicked() {
+                let (key, _) = self.get_key_from_string(Some(foldable_frame_id), uibox.clone());
                 if let Some(uibox) = self.uiboxes.get(&key) {
                     let old_visible = uibox.borrow().visible;
                     uibox.borrow_mut().visible = !old_visible;
@@ -681,7 +753,7 @@ impl IMUI {
             self.label(title);
             self.params.width = Some(uisize!("100%"));
             self.params.height = Some(uisize!("100%"));
-            self.frame(foldable_frame_id.as_str(), |ui| {
+            self.frame(foldable_frame_id, |ui| {
                 children(ui);
             });
             self.parent_stack.pop();
@@ -767,36 +839,48 @@ impl IMUI {
         textarea.clone()
     }
 
-    fn get_key_from_string(&self, label: Option<&str>) -> (u64, Option<String>) {
+    fn get_key_from_string(&self, label: Option<&str>, parent: UIBoxRef) -> (u64, Option<String>) {
+        // xarkes: generate per-root keys
+        let mut parent = parent;
+        loop {
+            let maybe_parent = parent.borrow().parent.clone();
+            parent = match maybe_parent {
+                Some(parent) => parent.clone(),
+                None => {
+                    break;
+                }
+            };
+        }
+        let seed = parent.borrow().key;
+
+        // xarkes: parse key string and extract hash and printable string
         match label {
             None => (0u64, None),
             Some(label) => {
                 if let Some(idx) = label.find("###") {
                     (
-                        u64_hash_from_string(self.root.borrow().key, &label[idx..]),
+                        u64_hash_from_string(seed, &label[idx..]),
                         Some(String::from(&label[..idx])),
                     )
                 } else if let Some(idx) = label.find("##") {
                     (
-                        u64_hash_from_string(self.root.borrow().key, label),
+                        u64_hash_from_string(seed, label),
                         Some(String::from(&label[..idx])),
                     )
                 } else {
-                    (
-                        u64_hash_from_string(self.root.borrow().key, label),
-                        Some(String::from(label)),
-                    )
+                    (u64_hash_from_string(seed, label), Some(String::from(label)))
                 }
             }
         }
     }
 
     fn new_floating_root(&mut self, position: Point, size: Size) -> UIBoxRef {
-        let mut root = UIBox::root();
+        let mut root = UIBox::root(format!("floating_root_{}", self.floating_roots.len()));
         root.origin = position;
         root.pref_size = Some((UISize::DPixels(size.width), UISize::DPixels(size.height)));
         root.size = size;
         root.flags = UIBoxFlag::DrawBackground as u64;
+        root.bg_color = self.style.bg_color;
         let root_ref = Rc::new(RefCell::new(root));
         self.floating_roots.push(root_ref.clone());
         root_ref
@@ -804,7 +888,7 @@ impl IMUI {
 
     fn add_box_from_string(&mut self, label: Option<&str>, flags: u64) -> UIBoxRef {
         let parent = self.parent_stack.last().unwrap();
-        let (key, string) = self.get_key_from_string(label);
+        let (key, string) = self.get_key_from_string(label, parent.clone());
         let pref_size;
         if self.params.width.is_some() || self.params.height.is_some() {
             pref_size = Some((
@@ -822,6 +906,24 @@ impl IMUI {
                     uibox.events = 0;
                     uibox.children.clear();
                     uibox.parent = Some(parent.clone());
+                    if let Some(width) = self.params.width {
+                        uibox.pref_size = Some((
+                            width,
+                            uibox
+                                .pref_size
+                                .unwrap_or((UISize::TextContent, UISize::TextContent))
+                                .1,
+                        ));
+                    }
+                    if let Some(height) = self.params.height {
+                        uibox.pref_size = Some((
+                            uibox
+                                .pref_size
+                                .unwrap_or((UISize::TextContent, UISize::TextContent))
+                                .0,
+                            height,
+                        ));
+                    }
                 }
                 uibox.clone()
             }
@@ -847,6 +949,7 @@ impl IMUI {
                     scrollx: 0.,
                     scrolly: 0.,
                     font_size: self.style.text_size,
+                    bg_color: self.params.bg_color.unwrap_or(self.style.bg_color),
                 }));
                 if key != 0 {
                     self.uiboxes.insert(key, uibox.clone());
@@ -902,8 +1005,21 @@ impl IMUI {
                 self.event.mouse = ev.pos;
             }
 
-            if uibox.borrow().scrollable_y() && ev.ty == OSEventType::Scroll {
-                uibox.borrow_mut().scrolly += ev.delta;
+            // xarkes: scroll behavior
+            if uibox.borrow().scrollable_x() && ev.ty == OSEventType::Scroll && in_bounds {
+                let mut uibox_mut = uibox.borrow_mut();
+                uibox_mut.scrollx += ev.delta;
+                // if uibox_mut.scrollx > 0. {
+                //     uibox_mut.scrollx = 0.;
+                // }
+                // TODO: This actually depends on the last children's position, but works for now - this may not work because at this point in the program we don't know about the children
+                let scroll_limit = match uibox_mut.children.last() {
+                    Some(child) => -1. * child.borrow().bounds().y1,
+                    None => 0.,
+                };
+                // if uibox_mut.scrollx < scroll_limit {
+                //     uibox_mut.scrollx = scroll_limit;
+                // }
             }
         }
 
