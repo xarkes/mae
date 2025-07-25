@@ -76,17 +76,18 @@ impl Color {
 }
 #[repr(u64)]
 pub(crate) enum UIBoxFlag {
+    // event related
     Clickable = 1u64,
-    Draggable = 2u64 | UIBoxFlag::Clickable as u64, // Draggable implies clickable
-    Resizable = 4u64 | UIBoxFlag::Clickable as u64, // Resizable implies clickable
     ScrollableX = 8u64,
     ScrollableY = 16u64,
-    Scrollable = UIBoxFlag::ScrollableX as u64 | UIBoxFlag::ScrollableY as u64,
 
+    // drawing related
     DrawBackground = 64u64,
     DrawBorder = 128u64,
     DrawText = 256u64,
     DrawHot = 512u64,
+
+    Scrollable = UIBoxFlag::ScrollableX as u64 | UIBoxFlag::ScrollableY as u64,
 }
 
 #[repr(u64)]
@@ -94,10 +95,11 @@ pub(crate) enum UIBoxEvent {
     MouseOver = 1u64,
     MouseClicked = 2u64,
     MouseReleased = 4u64,
-    KeyPressed = 8u64,
+    Dragged = 8u64,
+    KeyPressed = 16u64,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct UIBoxParams {
     pub(crate) width: Option<UISize>,
     pub(crate) height: Option<UISize>,
@@ -125,8 +127,8 @@ impl UIBoxParams {
         self.layout = Some(layout);
         self
     }
-    pub fn background_color(&mut self, bg_col: Color) -> &mut Self {
-        self.bg_color = Some(bg_col);
+    pub fn bg_color(&mut self, bg_color: Color) -> &mut Self {
+        self.bg_color = Some(bg_color);
         self
     }
     pub fn reset(&mut self) {
@@ -214,6 +216,24 @@ pub(crate) fn u64_hash_from_string(seed: u64, string: &str) -> u64 {
     x.0
 }
 
+#[derive(Debug)]
+pub struct UIBoxStyle {
+    pub(crate) margin: f32,
+    pub(crate) border_size: f32,
+    pub(crate) font_size: f32,
+    pub(crate) bg_color: Color,
+}
+impl UIBoxStyle {
+    pub fn default() -> Self {
+        UIBoxStyle {
+            margin: 2.,
+            border_size: 2.,
+            font_size: 40.,
+            bg_color: color_rgb(255, 0, 255),
+        }
+    }
+}
+
 pub struct UIBox {
     // persistent data
     pub(crate) key: u64,
@@ -227,7 +247,7 @@ pub struct UIBox {
     pub(crate) fixed_origin: Point,
     pub(crate) resize_delta: Point,
     pub(crate) origin: Point,
-    pub(crate) pref_size: Option<(UISize, UISize)>,
+    pub(crate) pref_size: (UISize, UISize),
     pub(crate) size: Size,
     pub(crate) flags: u64,
     pub(crate) events: u64,
@@ -237,8 +257,7 @@ pub struct UIBox {
     pub(crate) depth: usize,
     pub(crate) layout: Option<UILayout>,
     // per-build styling
-    pub(crate) font_size: f32,
-    pub(crate) bg_color: Color,
+    pub(crate) style: UIBoxStyle,
 
     // persistent data
     pub(crate) scrollx: f32,
@@ -249,7 +268,7 @@ impl UIBox {
     pub fn root(id: String) -> Self {
         UIBox {
             key: u64_hash_from_string(1234, id.as_str()),
-            pref_size: None,
+            pref_size: (UISize::Children, UISize::Children),
             origin: Point::default(),
             fixed_origin: Point::default(), // TODO: rename as drag_position
             resize_delta: Point::default(),
@@ -267,8 +286,7 @@ impl UIBox {
             scrollx: 0.,
             scrolly: 0.,
 
-            font_size: 12.,
-            bg_color: color_rgb(0, 255, 255),
+            style: UIBoxStyle::default(),
         }
     }
     pub fn hover(&self) -> bool {
@@ -283,12 +301,6 @@ impl UIBox {
 
     pub(crate) fn clickable(&self) -> bool {
         (self.flags & UIBoxFlag::Clickable as u64) == UIBoxFlag::Clickable as u64
-    }
-    pub(crate) fn draggable(&self) -> bool {
-        (self.flags & UIBoxFlag::Draggable as u64) == UIBoxFlag::Draggable as u64
-    }
-    pub(crate) fn resizable(&self) -> bool {
-        (self.flags & UIBoxFlag::Resizable as u64) == UIBoxFlag::Resizable as u64
     }
     pub(crate) fn draw_background(&self) -> bool {
         (self.flags & UIBoxFlag::DrawBackground as u64) == UIBoxFlag::DrawBackground as u64

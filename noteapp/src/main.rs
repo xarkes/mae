@@ -252,11 +252,12 @@ fn main() {
     let mut show_search = false;
     let mut search = Rc::new(RefCell::new(String::from("")));
     ui.eventloop(|ui| {
-        ui.params()
-            .width(uisize!("100%"))
-            .height(uisize!("100%"))
-            .background_color(color_rgb(67, 72, 77));
-        ui.textarea(noteapp.buffer.clone(), "#textarea");
+        // ui.params()
+        //     .width(uisize!("100%"))
+        //     .height(uisize!("100%"))
+        //     .bg_color(color_rgb(67, 72, 77));
+        // ui.textarea(noteapp.buffer.clone(), "#textarea");
+        // ui.params().reset();
 
         // ui.floating_pane(
         //     Point::new(1024. - 200., 768. - 240.),

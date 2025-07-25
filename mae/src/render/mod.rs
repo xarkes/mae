@@ -62,7 +62,7 @@ impl RectCoords {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct V4f32 {
     pub r: f32,
     pub g: f32,

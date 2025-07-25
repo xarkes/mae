@@ -2,10 +2,11 @@ use super::{Color, IMUI, Point, Size, UIBoxRef, UILocaleKind, UISize, iter_root}
 
 #[derive(Clone)]
 pub(crate) struct IMUIDebug {
-    pub fps: bool,
-    pub hints: bool,
-    pub vsync: bool,
-    pub locale: bool,
+    pub(crate) fps: bool,
+    pub(crate) hints: bool,
+    pub(crate) vsync: bool,
+    pub(crate) locale: bool,
+    pub(crate) target: Option<UIBoxRef>,
 }
 
 impl IMUIDebug {
@@ -15,6 +16,7 @@ impl IMUIDebug {
             hints: false,
             vsync: false,
             locale: true,
+            target: None,
         }
     }
 }
@@ -42,11 +44,22 @@ fn draw_node_info(ui: &mut IMUI, node: UIBoxRef) {
     });
 }
 
+fn draw_target_node_info(ui: &mut IMUI) {
+    if ui.debug.target.is_none() {
+        ui.label("Target: None");
+        ui.label("-");
+        return;
+    }
+    let target = ui.debug.target.as_ref().unwrap().clone();
+    ui.label(format!("Target: {:x}", target.borrow().key).as_str());
+    ui.label(format!("  {:?}", target.borrow().style).as_str());
+}
+
 fn draw_debug_pane(ui: &mut IMUI, debug: &mut IMUIDebug, time: f64) {
-    let xoff = ui.size.width / 4.;
+    let xoff = ui.size.width - 200.;
     ui.floating_pane(
         Point::new(xoff, 40.),
-        Size::from((550., 550.)),
+        Size::from((200., 250.)),
         "Debug metrics",
         |ui| {
             if debug.fps {
@@ -69,6 +82,7 @@ fn draw_debug_pane(ui: &mut IMUI, debug: &mut IMUIDebug, time: f64) {
             //     };
             //     ui.event.drag_cache.clear();
             // };
+            draw_target_node_info(ui);
             draw_node_info(ui, ui.root.clone());
         },
     );
