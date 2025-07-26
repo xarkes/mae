@@ -1,7 +1,11 @@
-use crate::imui::{UILayout, uibox::UIBoxFlag};
+use crate::{
+    imui::UISize,
+    imui::{UILayout, uibox::UIBoxFlag},
+    uisize,
+};
 
 use super::{
-    IMUI, Point, Size,
+    IMUI, Point, Size, color_rgb,
     uibox::{UIBoxRef, u64_hash_from_string},
 };
 
@@ -15,10 +19,10 @@ impl IMUI {
     ) -> UIBoxRef {
         let key = u64_hash_from_string(4736251, title);
         let uibox = self.new_floating_root(key, pos, size);
+        // uibox.borrow_mut().pref_size = (UISize::Children, UISize::Children);
         self.handle_uibox_event(uibox.clone());
-
+        self.parent_stack.push(uibox.clone());
         {
-            self.parent_stack.push(uibox.clone());
             let foldable_frame_id = "fp_frame";
 
             // xarkes: draw floating pane horizontal title bar
@@ -39,9 +43,23 @@ impl IMUI {
             );
 
             // xarkes: draw pane content
+            let (key, _) = self.get_key_from_string(Some(foldable_frame_id), uibox.clone());
+            let frame = self.get_or_create_box_from_key(key, None, 0, false);
+            self.parent_stack
+                .last()
+                .unwrap()
+                .borrow_mut()
+                .children
+                .push(frame.clone());
+            frame.borrow_mut().layout = Some(UILayout::Vertical);
+            frame.borrow_mut().pref_size = (uisize!("100%"), uisize!("100%"));
+            frame.borrow_mut().style.bg_color = color_rgb(255, 255, 0);
+            self.parent_stack.push(frame);
+            self.label("");
             children(self);
             self.parent_stack.pop();
         }
+        self.parent_stack.pop();
         uibox
     }
 

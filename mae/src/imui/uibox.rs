@@ -334,4 +334,8 @@ impl UIBox {
             y1: self.origin.y + self.size.height,
         }
     }
+
+    pub fn set_pref_size(&mut self, size: (UISize, UISize)) {
+        self.pref_size = size;
+    }
 }

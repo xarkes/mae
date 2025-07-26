@@ -570,7 +570,7 @@ impl IMUI {
             let mut margin = 0.;
             if curnode.draw_background() {
                 margin = curnode.style.margin;
-                let color = match curnode.clickable() && curnode.hover() {
+                let color = match curnode.clickable() && curnode.draw_hot() && curnode.hover() {
                     true => {
                         let col = curnode.style.bg_color;
                         Color {
