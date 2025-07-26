@@ -216,7 +216,7 @@ pub(crate) fn u64_hash_from_string(seed: u64, string: &str) -> u64 {
     x.0
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct UIBoxStyle {
     pub(crate) margin: f32,
     pub(crate) border_size: f32,
@@ -226,10 +226,10 @@ pub struct UIBoxStyle {
 impl UIBoxStyle {
     pub fn default() -> Self {
         UIBoxStyle {
-            margin: 2.,
-            border_size: 2.,
-            font_size: 40.,
-            bg_color: color_rgb(255, 0, 255),
+            margin: 4.,
+            border_size: 1.,
+            font_size: 12.,
+            bg_color: color_rgb(30, 30, 30),
         }
     }
 }
@@ -244,7 +244,6 @@ pub struct UIBox {
     pub(crate) previous: Option<UIBoxRef>,
 
     // per-build data
-    pub(crate) fixed_origin: Point,
     pub(crate) resize_delta: Point,
     pub(crate) origin: Point,
     pub(crate) pref_size: (UISize, UISize),
@@ -270,7 +269,6 @@ impl UIBox {
             key: u64_hash_from_string(1234, id.as_str()),
             pref_size: (UISize::Children, UISize::Children),
             origin: Point::default(),
-            fixed_origin: Point::default(), // TODO: rename as drag_position
             resize_delta: Point::default(),
             size: Size::default(),
             parent: None,

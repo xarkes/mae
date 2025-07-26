@@ -1,4 +1,6 @@
-use super::{Color, IMUI, Point, Size, UIBoxRef, UILocaleKind, UISize, iter_root};
+use super::{
+    Color, IMUI, Point, Size, UIBoxRef, UILocaleKind, UISize, iter_root, uibox::UIBoxStyle,
+};
 
 #[derive(Clone)]
 pub(crate) struct IMUIDebug {
@@ -23,6 +25,7 @@ impl IMUIDebug {
 
 fn draw_node_info(ui: &mut IMUI, node: UIBoxRef) {
     let mut i = 0;
+    let style = UIBoxStyle::default();
     iter_root(node, |node| {
         let curnode = node.borrow();
         ui.label(
@@ -38,6 +41,7 @@ fn draw_node_info(ui: &mut IMUI, node: UIBoxRef) {
                 curnode.children.len()
             )
             .as_str(),
+            style,
         );
         i += 1;
         return false;
@@ -45,18 +49,20 @@ fn draw_node_info(ui: &mut IMUI, node: UIBoxRef) {
 }
 
 fn draw_target_node_info(ui: &mut IMUI) {
+    let style = UIBoxStyle::default();
     if ui.debug.target.is_none() {
-        ui.label("Target: None");
-        ui.label("-");
+        ui.label("Target: None", style);
+        ui.label("-", style);
         return;
     }
     let target = ui.debug.target.as_ref().unwrap().clone();
-    ui.label(format!("Target: {:x}", target.borrow().key).as_str());
-    ui.label(format!("  {:?}", target.borrow().style).as_str());
+    ui.label(format!("Target: {:x}", target.borrow().key).as_str(), style);
+    ui.label(format!("  {:?}", target.borrow().style).as_str(), style);
 }
 
 fn draw_debug_pane(ui: &mut IMUI, debug: &mut IMUIDebug, time: f64) {
     let xoff = ui.size.width - 200.;
+    let style = UIBoxStyle::default();
     ui.floating_pane(
         Point::new(xoff, 40.),
         Size::from((200., 250.)),
@@ -65,7 +71,7 @@ fn draw_debug_pane(ui: &mut IMUI, debug: &mut IMUIDebug, time: f64) {
             if debug.fps {
                 let fps = 1f64 / time * 1000f64;
                 let text = format!("Render: {:.2}ms - {}fps", time, fps as u64);
-                ui.label(text.as_str());
+                ui.label(text.as_str(), style);
             }
             // ui.checkbox("Show hints", &mut debug.hints);
             // if ui
