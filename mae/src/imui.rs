@@ -1,5 +1,5 @@
 mod text_input_state;
-pub(crate) mod uibox;
+mod uibox;
 mod widgets;
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
@@ -309,8 +309,8 @@ impl IMUI {
             #[cfg(debug_assertions)]
             {
                 // xarkes: second draw and layout when debugging -> allows debug information on boxes to be accurate
-                // draw_debug_info(self, self.debug.clone(), time);
-                // self.layout_all();
+                draw_debug_info(self, self.debug.clone(), time);
+                self.layout_all();
             }
 
             // xarkes: draw interface and render
@@ -428,24 +428,28 @@ impl IMUI {
         });
     }
     fn layout_resize_downward_dependents(&self, root: UIBoxRef, axis: Axis) {
-        iter_root(root, |nodeptr| {
-            let mut node = nodeptr.borrow_mut();
+        // iter_root(root, |nodeptr| {
+        //     let mut node = nodeptr.borrow_mut();
 
-            let pref_size = [node.pref_size.0, node.pref_size.1];
-            match pref_size[axis.val()] {
-                UISize::Children => {
-                    let mut max_size = 0.;
-                    for child in &node.children {
-                        max_size = f32::max(max_size, *child.borrow().size.axis(axis));
-                    }
-                    *node.size.axis_mut(axis) = max_size;
-                }
-                _ => {
-                    // xarkes: other units are not considered downward dependents, or already computed
-                }
-            };
-            false
-        });
+        //     let pref_size = node
+        //         .pref_size
+        //         .unwrap_or((UISize::TextContent, UISize::TextContent));
+        //     let pref_size = [pref_size.0, pref_size.1];
+
+        //     match pref_size[axis.val()] {
+        //         UISize::Children => {
+        //             let mut max_size = 0.;
+        //             for child in &node.children {
+        //                 max_size = f32::max(max_size, *child.borrow().size.axis(axis));
+        //             }
+        //             *node.size.axis_mut(axis) = max_size;
+        //         }
+        //         _ => {
+        //             // xarkes: other units are not considered downward dependents, or already computed
+        //         }
+        //     };
+        //     false
+        // });
     }
     fn apply_layout(&self, root: UIBoxRef) {
         iter_root(root, |nodeptr| {
@@ -480,6 +484,34 @@ impl IMUI {
                         }
                     };
                     node.origin = insert_point;
+
+                    // XXX: This is a hack due to the way we wanted layouts to be handled...
+                    // Maybe we should have the layout parsing happen when creating the uibox, and thus it will tell that for current locale the prefsize will be Children, FixedHeight or FixedHeight, Children for the asked layout
+                    // --^ does this idea work for the ordering? maybe if you add a field "way" or idk
+                    // this allows to split the layout logic from the human logic
+                    // human says VertLTR -> means size will be (MaxChild, SumChild)? how do you handle extra constraints on size?
+                    let pref_size = node.pref_size;
+                    match pref_size.0 {
+                        UISize::Children => {
+                            let mut children_max_width = 0.;
+                            for c in &node.children {
+                                children_max_width =
+                                    f32::max(children_max_width, c.borrow().size.width);
+                            }
+                            node.size.width = children_max_width;
+                        }
+                        _ => {}
+                    }
+                    match pref_size.1 {
+                        UISize::Children => {
+                            let mut children_sum = 0.;
+                            for c in &node.children {
+                                children_sum += c.borrow().size.height;
+                            }
+                            node.size.height = children_sum;
+                        }
+                        _ => {}
+                    }
                 }
                 UILayout::HorizontalLtr => {
                     let insert_point = match node.previous.as_ref() {
@@ -496,6 +528,30 @@ impl IMUI {
                         }
                     };
                     node.origin = insert_point;
+
+                    let pref_size = node.pref_size;
+                    match pref_size.0 {
+                        UISize::Children => {
+                            let mut children_sum = 0.;
+                            for c in &node.children {
+                                children_sum += c.borrow().size.height;
+                            }
+                            node.size.width = children_sum;
+                        }
+                        _ => {}
+                    }
+                    match pref_size.1 {
+                        UISize::Children => {
+                            let mut children_max_height = 0.;
+                            for c in &node.children {
+                                children_max_height =
+                                    f32::max(children_max_height, c.borrow().size.height);
+                            }
+                            node.size.height = children_max_height;
+                        }
+                        _ => {}
+                    }
+                    println!("horizontal layout: {:?} {:?}", node.origin, node.size);
                 }
                 _ => {
                     println!("Unsupported layout");
@@ -512,7 +568,7 @@ impl IMUI {
                 return false;
             }
             // xarkes: make sure the previous positioning did not generate wrong data
-            debug_assert!(*node.size.axis(axis) > 0.);
+            debug_assert!(*node.size.axis(axis) >= 0.);
 
             let parent_size = *node.parent.as_ref().unwrap().borrow().size.axis(axis);
             let parent_origin = *node.parent.as_ref().unwrap().borrow().origin.axis(axis);
@@ -559,7 +615,6 @@ impl IMUI {
             let curnode = curnode.borrow();
 
             if !curnode.visible() {
-                println!("Not visible node: {:?}", curnode.size);
                 return true;
             }
 
@@ -695,10 +750,7 @@ impl IMUI {
         &mut self.params
     }
     pub fn horizontal(&mut self, mut children: impl FnMut(&mut IMUI)) -> UIBoxRef {
-        // let style = self.parent().borrow().style.clone();
-        let style = UIBoxStyle::default();
-        let container =
-            self.add_box_from_string((UISize::Children, UISize::Children), None, style, 0);
+        let container = self.add_box_from_string(None, 0);
         container.borrow_mut().layout = Some(UILayout::Horizontal);
         self.parent_stack.push(container.clone());
         children(self);
@@ -706,53 +758,59 @@ impl IMUI {
         container
     }
     pub fn vertical(&mut self, mut children: impl FnMut(&mut IMUI)) -> UIBoxRef {
-        let container = self.add_box_from_string(
-            (UISize::Children, UISize::Children),
-            None,
-            self.parent().borrow().style.clone(),
-            0,
-        );
+        let container = self.add_box_from_string(None, 0);
         container.borrow_mut().layout = Some(UILayout::Vertical);
         self.parent_stack.push(container.clone());
         children(self);
         self.parent_stack.pop();
         container
     }
+    // same as vertical but you can specify an id to get persistence
+    pub fn frame(&mut self, id: &str, mut children: impl FnMut(&mut IMUI)) -> UIBoxRef {
+        let container = self.add_box_from_string(Some(id), 0);
+        container.borrow_mut().layout = Some(UILayout::Vertical);
+        self.parent_stack.push(container.clone());
+        let frame = self.add_box_from_string(
+            Some(format!("{}_frame", id).as_str()),
+            UIBoxFlag::Scrollable as u64,
+        );
+        frame.borrow_mut().layout = Some(UILayout::Vertical);
+        self.parent_stack.push(frame.clone());
+        children(self);
+        self.parent_stack.pop();
+        // TODO: Do we want this in the future? If so, tell the scrollbar how many lines|cols it can display
+        // self.scrollbar(frame);
+        self.parent_stack.pop();
+        container
+    }
 
     pub fn line_edit(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIBoxRef {
-        let style = self.parent().borrow().style.clone();
         let line_edit = self.add_box_from_string(
-            (UISize::TextContent, UISize::TextContent),
             Some(id),
-            style,
             UIBoxFlag::Clickable as u64
                 | UIBoxFlag::DrawBackground as u64
                 | UIBoxFlag::DrawBorder as u64,
         );
         line_edit.borrow_mut().layout = Some(UILayout::Vertical);
         let multiline = false;
-        self.text_edit_impl(line_edit, text_buffer, multiline, style)
+        self.text_edit_impl(line_edit, text_buffer, multiline)
     }
     pub fn textarea(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIBoxRef {
-        let style = self.parent().borrow().style.clone();
         let textarea = self.add_box_from_string(
-            (UISize::TextContent, UISize::TextContent),
             Some(id),
-            style,
             UIBoxFlag::Clickable as u64
                 | UIBoxFlag::DrawBackground as u64
                 | UIBoxFlag::Scrollable as u64,
         );
         textarea.borrow_mut().layout = Some(UILayout::Vertical);
         let multiline = true;
-        self.text_edit_impl(textarea, text_buffer, multiline, style)
+        self.text_edit_impl(textarea, text_buffer, multiline)
     }
     fn text_edit_impl(
         &mut self,
         textarea: UIBoxRef,
         text_buffer: Rc<RefCell<String>>,
         multiline: bool,
-        style: UIBoxStyle,
     ) -> UIBoxRef {
         if textarea.borrow().clicked() {
             // xarkes: update the text input global state
@@ -777,10 +835,10 @@ impl IMUI {
         self.parent_stack.push(textarea.clone());
         if multiline {
             for line in text_buffer.borrow().lines() {
-                self.label(line, style);
+                self.label(line);
             }
         } else {
-            self.label(text_buffer.borrow().as_str(), style);
+            self.label(text_buffer.borrow().as_str());
         }
         self.parent_stack.pop();
 
@@ -822,23 +880,14 @@ impl IMUI {
         }
     }
 
-    fn new_floating_root(
-        &mut self,
-        key: u64,
-        position: Point,
-        size: Size,
-        style: UIBoxStyle,
-    ) -> UIBoxRef {
-        let root = self.get_or_create_box_from_key(
-            key,
-            (UISize::DPixels(size.width), UISize::DPixels(size.height)),
-            None,
-            style,
-            UIBoxFlag::DrawBackground as u64,
-            true,
-        );
+    fn new_floating_root(&mut self, key: u64, position: Point, size: Size) -> UIBoxRef {
+        let root =
+            self.get_or_create_box_from_key(key, None, UIBoxFlag::DrawBackground as u64, true);
         root.borrow_mut().layout = Some(UILayout::Vertical);
+        root.borrow_mut().fixed_origin = position;
         root.borrow_mut().origin = position;
+        root.borrow_mut().pref_size = (UISize::DPixels(size.width), UISize::DPixels(size.height));
+        // root.borrow_mut().pref_size = Some((UISize::Children, UISize::Children));
         self.floating_roots.push(root.clone());
         root
     }
@@ -846,12 +895,14 @@ impl IMUI {
     fn get_or_create_box_from_key(
         &mut self,
         key: u64,
-        size: (UISize, UISize),
         string: Option<String>,
-        style: UIBoxStyle,
         flags: u64,
         root: bool,
     ) -> UIBoxRef {
+        let pref_size_default = (
+            self.params.width.unwrap_or(UISize::TextContent),
+            self.params.height.unwrap_or(UISize::TextContent),
+        );
         let uibox = match self.uiboxes.get(&key) {
             Some(uibox) => {
                 // xarkes: clear previous frame event info
@@ -862,17 +913,16 @@ impl IMUI {
                     if !root {
                         uibox.parent = Some(self.parent_stack.last().unwrap().clone());
                     }
-                    uibox.style = style;
-                    uibox.pref_size = size;
                 }
                 uibox.clone()
             }
             None => {
                 let uibox = Rc::new(RefCell::new(UIBox {
                     key,
-                    pref_size: size,
+                    pref_size: pref_size_default,
                     size: Size::default(),
                     origin: Point::default(),
+                    fixed_origin: Point::default(),
                     resize_delta: Point::default(),
                     children: Vec::new(),
                     #[cfg(debug_assertions)]
@@ -889,7 +939,12 @@ impl IMUI {
 
                     scrollx: 0.,
                     scrolly: 0.,
-                    style,
+                    style: UIBoxStyle {
+                        margin: self.style.margin,
+                        font_size: self.style.text_size,
+                        border_size: self.style.border_size,
+                        bg_color: self.style.bg_color,
+                    },
                 }));
                 if key != 0 {
                     self.uiboxes.insert(key, uibox.clone());
@@ -904,21 +959,21 @@ impl IMUI {
         uibox
     }
 
-    fn add_box_from_string(
-        &mut self,
-        size: (UISize, UISize),
-        label: Option<&str>,
-        style: UIBoxStyle,
-        flags: u64,
-    ) -> UIBoxRef {
+    fn add_box_from_string(&mut self, label: Option<&str>, flags: u64) -> UIBoxRef {
         let parent = self.parent_stack.last().unwrap().clone();
         let (key, string) = self.get_key_from_string(label, parent.clone());
 
-        let uibox = self.get_or_create_box_from_key(key, size, string, style, flags, false);
+        let uibox = self.get_or_create_box_from_key(key, string, flags, false);
 
         uibox.borrow_mut().previous = parent.borrow().children.last().cloned();
         parent.borrow_mut().children.push(uibox.clone());
         self.handle_uibox_event(uibox.clone());
+        uibox
+    }
+
+    pub fn label(&mut self, label: &str) -> UIBoxRef {
+        let uibox = self.add_box_from_string(None, UIBoxFlag::DrawText as u64);
+        uibox.borrow_mut().string = Some(String::from(label));
         uibox
     }
 
@@ -1002,27 +1057,40 @@ impl IMUI {
             }
         }
 
+        // // XXX: dirty - the whole event handling is dirty... god help me
+        // if uibox.borrow().resizable() && self.event.rmouse.is_some() {
+        //     if self.event.rclick.is_some() {
+        //         let delta_x = self.event.rmouse.unwrap().x - self.event.rclick.unwrap().x;
+        //         let delta_y = self.event.rmouse.unwrap().y - self.event.rclick.unwrap().y;
+        //         uibox.borrow_mut().resize_delta = Point::new(delta_x, delta_y);
+        //     } else if uibox.borrow().clicked() {
+        //         let sz = uibox.borrow().size;
+        //         uibox.borrow_mut().pref_size =
+        //             Some((UISize::DPixels(sz.width), UISize::DPixels(sz.height)));
+        //         uibox.borrow_mut().resize_delta = Point::default();
+        //     }
+        // }
+        // if uibox.borrow().draggable() && self.event.mouse.is_some() {
+        //     if self.event.click.is_some() {
+        //         // XXX: direct write to origin only works for floating panes
+        //         let delta_x = self.event.click.unwrap().x - self.event.mouse.unwrap().x;
+        //         let delta_y = self.event.click.unwrap().y - self.event.mouse.unwrap().y;
+        //         let fixed_origin = uibox.borrow().fixed_origin;
+        //         uibox.borrow_mut().origin =
+        //             Point::new(fixed_origin.x - delta_x, fixed_origin.y - delta_y);
+        //     } else if uibox.borrow().clicked() {
+        //         let mut uibox = uibox.borrow_mut();
+        //         uibox.fixed_origin = uibox.origin;
+        //     }
+        // }
         if point_in_rect(&uibox.borrow().bounds(), self.event.mouse) {
             uibox.borrow_mut().events |= UIBoxEvent::MouseOver as u64;
         }
     }
 
-    pub fn label(&mut self, label: &str, style: UIBoxStyle) -> UIBoxRef {
+    pub fn button(&mut self, label: &str) -> UIBoxRef {
         let uibox = self.add_box_from_string(
-            (UISize::TextContent, UISize::TextContent),
-            None,
-            style,
-            UIBoxFlag::DrawText as u64,
-        );
-        uibox.borrow_mut().string = Some(String::from(label));
-        uibox
-    }
-
-    pub fn button(&mut self, size: (UISize, UISize), label: &str, style: UIBoxStyle) -> UIBoxRef {
-        let uibox = self.add_box_from_string(
-            size,
             Some(label),
-            style,
             UIBoxFlag::Clickable as u64
                 | UIBoxFlag::DrawBackground as u64
                 | UIBoxFlag::DrawBorder as u64
@@ -1030,10 +1098,6 @@ impl IMUI {
                 | UIBoxFlag::DrawHot as u64,
         );
         uibox
-    }
-
-    fn parent(&self) -> UIBoxRef {
-        self.parent_stack.last().unwrap().clone()
     }
 }
 
