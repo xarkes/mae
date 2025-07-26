@@ -21,27 +21,13 @@ impl IMUIDebug {
     }
 }
 
-fn draw_node_info(ui: &mut IMUI, node: UIBoxRef) {
-    let mut i = 0;
+fn draw_root_info(ui: &mut IMUI, node: UIBoxRef) {
+    let mut count = 0;
     iter_root(node, |node| {
-        let curnode = node.borrow();
-        ui.label(
-            format!(
-                "{1:0$}Node {2} ({3:.1},{4:.1}) ({5:.1}x{6:.1}), {7} children",
-                curnode.depth + 1,
-                " ",
-                i,
-                curnode.origin.x,
-                curnode.origin.y,
-                curnode.size.width,
-                curnode.size.height,
-                curnode.children.len()
-            )
-            .as_str(),
-        );
-        i += 1;
+        count += 1;
         return false;
     });
+    ui.label(&format!("{} nodes", count));
 }
 
 fn draw_target_node_info(ui: &mut IMUI) {
@@ -83,7 +69,10 @@ fn draw_debug_pane(ui: &mut IMUI, debug: &mut IMUIDebug, time: f64) {
             //     ui.event.drag_cache.clear();
             // };
             draw_target_node_info(ui);
-            draw_node_info(ui, ui.root.clone());
+            draw_root_info(ui, ui.root.clone());
+            for root in ui.floating_roots.clone() {
+                draw_root_info(ui, root);
+            }
         },
     );
 

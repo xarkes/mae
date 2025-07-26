@@ -13,8 +13,6 @@ fn main() {
         "Some multiline text\nTry me!\n:p",
     )));
     ui.eventloop(|ui| {
-        ui.label("Label here");
-        ui.button("suce");
         ui.floating_pane(
             Point::new(300., 300.),
             Size::from((400., 400.)),

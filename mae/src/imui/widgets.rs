@@ -22,18 +22,21 @@ impl IMUI {
             let foldable_frame_id = "fp_frame";
 
             // xarkes: draw floating pane horizontal title bar
-            self.label("before horizontal");
-            self.vertical(|ui| {
-                if ui.button("Fold >##fp_fold").borrow().clicked() {
-                    let (key, _) = ui.get_key_from_string(Some(foldable_frame_id), uibox.clone());
-                    if let Some(uibox) = ui.uiboxes.get(&key) {
-                        let old_visible = uibox.borrow().visible;
-                        uibox.borrow_mut().visible = !old_visible;
+            self.container(
+                UILayout::Horizontal,
+                UIBoxFlag::DrawBackground as u64,
+                |ui| {
+                    if ui.button("Fold >##fp_fold").borrow().clicked() {
+                        let (key, _) =
+                            ui.get_key_from_string(Some(foldable_frame_id), uibox.clone());
+                        if let Some(uibox) = ui.uiboxes.get(&key) {
+                            let old_visible = uibox.borrow().visible;
+                            uibox.borrow_mut().visible = !old_visible;
+                        }
                     }
-                }
-                ui.label(title);
-            });
-            self.label("after horizontal");
+                    ui.label(title);
+                },
+            );
 
             // xarkes: draw pane content
             children(self);

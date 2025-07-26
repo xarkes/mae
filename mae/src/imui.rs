@@ -428,28 +428,26 @@ impl IMUI {
         });
     }
     fn layout_resize_downward_dependents(&self, root: UIBoxRef, axis: Axis) {
-        // iter_root(root, |nodeptr| {
-        //     let mut node = nodeptr.borrow_mut();
+        iter_root(root, |nodeptr| {
+            let mut node = nodeptr.borrow_mut();
 
-        //     let pref_size = node
-        //         .pref_size
-        //         .unwrap_or((UISize::TextContent, UISize::TextContent));
-        //     let pref_size = [pref_size.0, pref_size.1];
+            let pref_size = node.pref_size;
+            let pref_size = [pref_size.0, pref_size.1];
 
-        //     match pref_size[axis.val()] {
-        //         UISize::Children => {
-        //             let mut max_size = 0.;
-        //             for child in &node.children {
-        //                 max_size = f32::max(max_size, *child.borrow().size.axis(axis));
-        //             }
-        //             *node.size.axis_mut(axis) = max_size;
-        //         }
-        //         _ => {
-        //             // xarkes: other units are not considered downward dependents, or already computed
-        //         }
-        //     };
-        //     false
-        // });
+            match pref_size[axis.val()] {
+                UISize::Children => {
+                    let mut max_size = 0.;
+                    for child in &node.children {
+                        max_size = f32::max(max_size, *child.borrow().size.axis(axis));
+                    }
+                    *node.size.axis_mut(axis) = max_size;
+                }
+                _ => {
+                    // xarkes: other units are not considered downward dependents, or already computed
+                }
+            };
+            false
+        });
     }
     fn apply_layout(&self, root: UIBoxRef) {
         iter_root(root, |nodeptr| {
@@ -484,34 +482,6 @@ impl IMUI {
                         }
                     };
                     node.origin = insert_point;
-
-                    // XXX: This is a hack due to the way we wanted layouts to be handled...
-                    // Maybe we should have the layout parsing happen when creating the uibox, and thus it will tell that for current locale the prefsize will be Children, FixedHeight or FixedHeight, Children for the asked layout
-                    // --^ does this idea work for the ordering? maybe if you add a field "way" or idk
-                    // this allows to split the layout logic from the human logic
-                    // human says VertLTR -> means size will be (MaxChild, SumChild)? how do you handle extra constraints on size?
-                    let pref_size = node.pref_size;
-                    match pref_size.0 {
-                        UISize::Children => {
-                            let mut children_max_width = 0.;
-                            for c in &node.children {
-                                children_max_width =
-                                    f32::max(children_max_width, c.borrow().size.width);
-                            }
-                            node.size.width = children_max_width;
-                        }
-                        _ => {}
-                    }
-                    match pref_size.1 {
-                        UISize::Children => {
-                            let mut children_sum = 0.;
-                            for c in &node.children {
-                                children_sum += c.borrow().size.height;
-                            }
-                            node.size.height = children_sum;
-                        }
-                        _ => {}
-                    }
                 }
                 UILayout::HorizontalLtr => {
                     let insert_point = match node.previous.as_ref() {
@@ -528,30 +498,6 @@ impl IMUI {
                         }
                     };
                     node.origin = insert_point;
-
-                    let pref_size = node.pref_size;
-                    match pref_size.0 {
-                        UISize::Children => {
-                            let mut children_sum = 0.;
-                            for c in &node.children {
-                                children_sum += c.borrow().size.height;
-                            }
-                            node.size.width = children_sum;
-                        }
-                        _ => {}
-                    }
-                    match pref_size.1 {
-                        UISize::Children => {
-                            let mut children_max_height = 0.;
-                            for c in &node.children {
-                                children_max_height =
-                                    f32::max(children_max_height, c.borrow().size.height);
-                            }
-                            node.size.height = children_max_height;
-                        }
-                        _ => {}
-                    }
-                    println!("horizontal layout: {:?} {:?}", node.origin, node.size);
                 }
                 _ => {
                     println!("Unsupported layout");
@@ -746,40 +692,18 @@ impl IMUI {
 
     /////////////////////////////////
     //// Widgets functions
-    pub fn params(&mut self) -> &mut UIBoxParams {
-        &mut self.params
-    }
-    pub fn horizontal(&mut self, mut children: impl FnMut(&mut IMUI)) -> UIBoxRef {
-        let container = self.add_box_from_string(None, 0);
-        container.borrow_mut().layout = Some(UILayout::Horizontal);
+    pub fn container(
+        &mut self,
+        layout: UILayout,
+        flags: u64,
+        mut children: impl FnMut(&mut IMUI),
+    ) -> UIBoxRef {
+        let container = self.add_box_from_string(None, flags);
+        container.borrow_mut().pref_size = (UISize::Percents(1.), UISize::Children);
+        container.borrow_mut().layout = Some(layout);
+        container.borrow_mut().style.bg_color = self.style.main_color;
         self.parent_stack.push(container.clone());
         children(self);
-        self.parent_stack.pop();
-        container
-    }
-    pub fn vertical(&mut self, mut children: impl FnMut(&mut IMUI)) -> UIBoxRef {
-        let container = self.add_box_from_string(None, 0);
-        container.borrow_mut().layout = Some(UILayout::Vertical);
-        self.parent_stack.push(container.clone());
-        children(self);
-        self.parent_stack.pop();
-        container
-    }
-    // same as vertical but you can specify an id to get persistence
-    pub fn frame(&mut self, id: &str, mut children: impl FnMut(&mut IMUI)) -> UIBoxRef {
-        let container = self.add_box_from_string(Some(id), 0);
-        container.borrow_mut().layout = Some(UILayout::Vertical);
-        self.parent_stack.push(container.clone());
-        let frame = self.add_box_from_string(
-            Some(format!("{}_frame", id).as_str()),
-            UIBoxFlag::Scrollable as u64,
-        );
-        frame.borrow_mut().layout = Some(UILayout::Vertical);
-        self.parent_stack.push(frame.clone());
-        children(self);
-        self.parent_stack.pop();
-        // TODO: Do we want this in the future? If so, tell the scrollbar how many lines|cols it can display
-        // self.scrollbar(frame);
         self.parent_stack.pop();
         container
     }
@@ -887,7 +811,7 @@ impl IMUI {
         root.borrow_mut().fixed_origin = position;
         root.borrow_mut().origin = position;
         root.borrow_mut().pref_size = (UISize::DPixels(size.width), UISize::DPixels(size.height));
-        // root.borrow_mut().pref_size = Some((UISize::Children, UISize::Children));
+        // root.borrow_mut().pref_size = (UISize::Children, UISize::Children);
         self.floating_roots.push(root.clone());
         root
     }
@@ -899,10 +823,7 @@ impl IMUI {
         flags: u64,
         root: bool,
     ) -> UIBoxRef {
-        let pref_size_default = (
-            self.params.width.unwrap_or(UISize::TextContent),
-            self.params.height.unwrap_or(UISize::TextContent),
-        );
+        let pref_size_default = (UISize::TextContent, UISize::TextContent);
         let uibox = match self.uiboxes.get(&key) {
             Some(uibox) => {
                 // xarkes: clear previous frame event info
@@ -1097,6 +1018,7 @@ impl IMUI {
                 | UIBoxFlag::DrawText as u64
                 | UIBoxFlag::DrawHot as u64,
         );
+        uibox.borrow_mut().style.bg_color = self.style.main_color;
         uibox
     }
 }
