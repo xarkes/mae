@@ -43,11 +43,32 @@ impl IMUI {
                         }
                     }
                     ui.label(title);
+                    if ui.button("X##fp_quit").borrow().clicked() {
+                        uibox.borrow_mut().visible = false;
+                    }
                 },
             );
 
             // xarkes: draw pane content
             self.container(Some(foldable_frame_id), UILayout::Vertical, 0, children);
+        }
+        self.parent_stack.pop();
+        uibox
+    }
+
+    pub fn prompt(&mut self, title: &str, mut children: impl FnMut(&mut IMUI)) -> UIBoxRef {
+        let key = u64_hash_from_string(4736251, title);
+        let uibox = self.new_floating_root(
+            key,
+            Point::new(self.size.width / 4., self.size.height / 10.),
+        );
+        uibox.borrow_mut().pref_size = (
+            UISize::DPixels(self.size.width / 2.),
+            UISize::DPixels(self.size.height / 4.),
+        );
+        self.parent_stack.push(uibox.clone());
+        {
+            children(self);
         }
         self.parent_stack.pop();
         uibox

@@ -23,14 +23,14 @@ pub struct IMUITextInputState {
 impl IMUITextInputState {
     pub fn new(
         // id: String,
-        id: UIBoxRef,
+        uibox: UIBoxRef,
         font_cache: Rc<RefCell<FontCache>>,
         text_buffer: Rc<RefCell<String>>,
         multiline: bool,
     ) -> Self {
         IMUITextInputState {
             // focus: String::from(id),
-            focus: id,
+            focus: uibox,
             buffer: text_buffer.clone(),
             idx: 0,
             cursor_col: 0,
@@ -67,7 +67,7 @@ impl IMUITextInputState {
         let mut cursor_x = 0.;
         for (i, line) in lines.enumerate() {
             if i < self.cursor_row {
-                buffer_idx += line.chars().count() + 1;
+                buffer_idx += line.chars().count() + 1; // +1 for '\n'
                 continue;
             }
             let idx;

@@ -123,6 +123,7 @@ pub enum UILayout {
     Horizontal,
     HorizontalLtr,
     HorizontalRtl,
+    Absolute, // Specify a node be positionned at specific location
 }
 impl UILayout {
     pub fn specialize(&self, localekind: UILocaleKind) -> Self {
@@ -413,6 +414,19 @@ impl IMUI {
                 return false;
             }
             let mut node = nodeptr.borrow_mut();
+
+            // First special case: node has absolute position used for e.g. cursor
+            // XXX: This is where we need a position attribute rather than using layout to do this...
+            if let Some(layout) = node.layout {
+                match layout {
+                    UILayout::Absolute => {
+                        node.origin = node.fixed_origin;
+                        return false;
+                    }
+                    _ => {}
+                }
+            }
+
             let parent = node.parent.as_ref().unwrap();
             let layout = parent.borrow().layout;
             if layout.is_none() {
@@ -732,14 +746,34 @@ impl IMUI {
             self.text_input_state = Some(state);
         }
 
-        // text
         self.parent_stack.push(textarea.clone());
-        if multiline {
-            for line in text_buffer.borrow().lines() {
-                self.label(line);
+        {
+            // text
+            if multiline {
+                for line in text_buffer.borrow().lines() {
+                    self.label(line);
+                }
+            } else {
+                self.label(text_buffer.borrow().as_str());
             }
-        } else {
-            self.label(text_buffer.borrow().as_str());
+            // cursor
+            if let Some(tis) = &self.text_input_state {
+                if tis.focus.borrow().key == textarea.borrow().key {
+                    let cx = tis.cursor_x;
+                    let cy = tis.cursor_y;
+                    let cursor_box =
+                        self.add_box_from_string(None, UIBoxFlag::DrawBackground as u64);
+                    cursor_box.borrow_mut().set_pref_size((
+                        UISize::DPixels(textarea.borrow().style.font_size / 6.),
+                        UISize::DPixels(textarea.borrow().style.font_size),
+                    ));
+                    let bounds = textarea.borrow().bounds();
+                    cursor_box.borrow_mut().layout = Some(UILayout::Absolute);
+                    cursor_box.borrow_mut().fixed_origin =
+                        Point::new(bounds.x0 + cx, bounds.y0 + cy);
+                    cursor_box.borrow_mut().style.bg_color = self.style.active_color;
+                }
+            }
         }
         self.parent_stack.pop();
 

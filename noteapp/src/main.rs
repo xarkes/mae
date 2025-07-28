@@ -260,58 +260,56 @@ fn main() {
             .borrow_mut()
             .set_pref_size((uisize!("100%"), uisize!("100%")));
 
-        // ui.floating_pane(
-        //     Point::new(1024. - 200., 768. - 240.),
-        //     Size::from((200., 240.)),
-        //     "tmp",
-        //     |ui| {
-        //         if ui.button("Save").borrow().clicked() {
-        //             noteapp.save();
-        //         }
-        //         if ui.button("New").borrow().clicked() {
-        //             noteapp.newnote();
-        //         }
-        //         if ui.button("Search").borrow().clicked() {
-        //             show_search = true;
-        //             search = Rc::new(RefCell::new(String::from("")));
-        //         }
-        //         if ui.button("Import").borrow().clicked() {
-        //             noteapp
-        //                 .db
-        //                 .import_from_markdown(std::path::Path::new(
-        //                     "/Users/user/Downloads/AnyTypeDB/Anytype.20250720.222959.98",
-        //                 ))
-        //                 .unwrap();
-        //         }
-        //     },
-        // );
+        ui.floating_pane(
+            Point::new(1024. - 200., 768. - 240.),
+            Size::from((200., 240.)),
+            "tmp",
+            |ui| {
+                if ui.button("Save").borrow().clicked() {
+                    noteapp.save();
+                }
+                if ui.button("New").borrow().clicked() {
+                    noteapp.newnote();
+                }
+                if ui.button("Search").borrow().clicked() {
+                    show_search = true;
+                    search = Rc::new(RefCell::new(String::from("")));
+                }
+                if ui.button("Import").borrow().clicked() {
+                    noteapp
+                        .db
+                        .import_from_markdown(std::path::Path::new(
+                            "/Users/user/Downloads/AnyTypeDB/Anytype.20250720.222959.98",
+                        ))
+                        .unwrap();
+                }
+            },
+        );
 
-        // // Prompts
-        // if show_search {
-        //     ui.params().width(uisize!("50%")).height(uisize!("50%"));
-        //     // .position((uisize!("25%"), uisize!("40px")));
-        //     ui.floating_box(|ui| {
-        //         ui.params().width(uisize!("100%")).height(uisize!("20px"));
-        //         ui.line_edit(search.clone(), "#search");
-        //         ui.params().width(uisize!("100%")).height(uisize!("20px"));
-        //         let search_filter = search.borrow();
-        //         for note in &noteapp.notes() {
-        //             if search_filter.len() > 0 {
-        //                 if !fuzzy_search(search_filter.as_str(), note.name.as_str()) {
-        //                     continue;
-        //                 }
-        //             }
-        //             if ui
-        //                 .button(format!("{}##button_label_{}", note.name, note.id).as_str())
-        //                 .borrow()
-        //                 .clicked()
-        //             {
-        //                 noteapp.open(note.id);
-        //                 show_search = false;
-        //             }
-        //         }
-        //     });
-        // };
+        // Prompts
+        if show_search {
+            // .position((uisize!("25%"), uisize!("40px")));
+            ui.prompt("#search_prompt", |ui| {
+                ui.label("Search for notes");
+                ui.line_edit(search.clone(), "#search");
+                let search_filter = search.borrow();
+                for note in &noteapp.notes() {
+                    if search_filter.len() > 0 {
+                        if !fuzzy_search(search_filter.as_str(), note.name.as_str()) {
+                            continue;
+                        }
+                    }
+                    if ui
+                        .button(format!("{}##button_label_{}", note.name, note.id).as_str())
+                        .borrow()
+                        .clicked()
+                    {
+                        noteapp.open(note.id);
+                        show_search = false;
+                    }
+                }
+            });
+        };
     });
 
     // TODO:
