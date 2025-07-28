@@ -15,27 +15,31 @@ impl IMUI {
         pos: Point,
         size: Size,
         title: &str,
-        mut children: impl FnMut(&mut IMUI),
+        children: impl FnMut(&mut IMUI),
     ) -> UIBoxRef {
         let key = u64_hash_from_string(4736251, title);
-        let uibox = self.new_floating_root(key, pos, size);
-        // uibox.borrow_mut().pref_size = (UISize::Children, UISize::Children);
+        let uibox = self.new_floating_root(key, pos);
+        uibox.borrow_mut().pref_size = (UISize::DPixels(size.width), UISize::Children);
         self.handle_uibox_event(uibox.clone());
         self.parent_stack.push(uibox.clone());
         {
             let foldable_frame_id = "fp_frame";
 
             // xarkes: draw floating pane horizontal title bar
-            self.container(
+            let bla = self.container(
+                None,
                 UILayout::Horizontal,
                 UIBoxFlag::DrawBackground as u64,
                 |ui| {
-                    if ui.button("Fold >##fp_fold").borrow().clicked() {
+                    if ui.button("Fold > ##fp_fold").borrow().clicked() {
                         let (key, _) =
                             ui.get_key_from_string(Some(foldable_frame_id), uibox.clone());
                         if let Some(uibox) = ui.uiboxes.get(&key) {
-                            let old_visible = uibox.borrow().visible;
-                            uibox.borrow_mut().visible = !old_visible;
+                            let old_size = uibox.borrow().pref_size;
+                            uibox.borrow_mut().pref_size.1 = match old_size.1 {
+                                UISize::Children => UISize::DPixels(0.),
+                                _ => UISize::Children,
+                            };
                         }
                     }
                     ui.label(title);
@@ -43,21 +47,7 @@ impl IMUI {
             );
 
             // xarkes: draw pane content
-            let (key, _) = self.get_key_from_string(Some(foldable_frame_id), uibox.clone());
-            let frame = self.get_or_create_box_from_key(key, None, 0, false);
-            self.parent_stack
-                .last()
-                .unwrap()
-                .borrow_mut()
-                .children
-                .push(frame.clone());
-            frame.borrow_mut().layout = Some(UILayout::Vertical);
-            frame.borrow_mut().pref_size = (uisize!("100%"), uisize!("100%"));
-            frame.borrow_mut().style.bg_color = color_rgb(255, 255, 0);
-            self.parent_stack.push(frame);
-            self.label("");
-            children(self);
-            self.parent_stack.pop();
+            self.container(Some(foldable_frame_id), UILayout::Vertical, 0, children);
         }
         self.parent_stack.pop();
         uibox

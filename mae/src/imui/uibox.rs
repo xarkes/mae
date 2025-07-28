@@ -75,7 +75,7 @@ impl Color {
     }
 }
 #[repr(u64)]
-pub(crate) enum UIBoxFlag {
+pub enum UIBoxFlag {
     // event related
     Clickable = 1u64,
     ScrollableX = 8u64,

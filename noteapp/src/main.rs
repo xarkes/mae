@@ -8,8 +8,10 @@ use std::rc::Rc;
 use mae::imui::IMUI;
 use mae::imui::Point;
 use mae::imui::Size;
+use mae::imui::UILayout;
 use mae::imui::UISize;
 use mae::imui::color_rgb;
+use mae::imui::uibox::UIBoxFlag;
 use mae::uisize;
 
 #[cfg(target_os = "macos")]
@@ -252,12 +254,11 @@ fn main() {
     let mut show_search = false;
     let mut search = Rc::new(RefCell::new(String::from("")));
     ui.eventloop(|ui| {
-        // ui.params()
-        //     .width(uisize!("100%"))
-        //     .height(uisize!("100%"))
-        //     .bg_color(color_rgb(67, 72, 77));
-        // ui.textarea(noteapp.buffer.clone(), "#textarea");
-        // ui.params().reset();
+        // main content
+        let txtarea = ui.textarea(noteapp.buffer.clone(), "#textarea");
+        txtarea
+            .borrow_mut()
+            .set_pref_size((uisize!("100%"), uisize!("100%")));
 
         // ui.floating_pane(
         //     Point::new(1024. - 200., 768. - 240.),

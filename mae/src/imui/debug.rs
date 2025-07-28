@@ -43,7 +43,7 @@ fn draw_target_node_info(ui: &mut IMUI) {
 
 fn draw_debug_pane(ui: &mut IMUI, debug: &mut IMUIDebug, time: f64) {
     let xoff = ui.size.width - 200.;
-    ui.floating_pane(
+    let mut fp = ui.floating_pane(
         Point::new(xoff, 40.),
         Size::from((200., 250.)),
         "Debug metrics",
@@ -75,7 +75,8 @@ fn draw_debug_pane(ui: &mut IMUI, debug: &mut IMUIDebug, time: f64) {
             }
         },
     );
-
+    fp.borrow_mut().pref_size = (UISize::DPixels(200.), UISize::Children);
+    // fp.borrow_mut().pref_size = (UISize::DPixels(200.), UISize::Children);
     ui.debug = debug.clone();
 }
 

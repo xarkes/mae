@@ -1,5 +1,5 @@
 mod text_input_state;
-mod uibox;
+pub mod uibox;
 mod widgets;
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
@@ -99,7 +99,8 @@ pub enum UISize {
     DPixels(f32),  // DPI scaled pixels; in current implementation all draws are dpi scaled
     Percents(f32), // Percentages of parent's size
     TextContent,   // Adapt to fit text attached to box
-    Children,      // Adapt to fit children's size
+    Children,      // Compute the sum of all children
+    ChildrenMax,   // Get the biggest child
 }
 #[macro_export]
 macro_rules! uisize {
@@ -112,16 +113,6 @@ macro_rules! uisize {
             panic!("Unrecognized unit")
         }
     };
-}
-impl UISize {
-    pub fn pixels(&self) -> f32 {
-        match self {
-            UISize::DPixels(val) => *val,
-            _ => {
-                panic!("Cannot use pixels() API on non DPixels!")
-            }
-        }
-    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -302,7 +293,6 @@ impl IMUI {
             // xarkes: build interface
             {
                 build_ui_func(self);
-                self.build_ui_end();
                 self.layout_all();
             }
 
@@ -322,45 +312,6 @@ impl IMUI {
             let end = os::timer_value();
             time = (end - start) as f64 * 1_000_000.0 / freq;
             start = end;
-        }
-    }
-
-    fn build_ui_end(&mut self) {
-        // show cursor if any
-        if let Some(text_input_state) = &self.text_input_state {
-            let cursorx = match self.locale_kind {
-                UILocaleKind::LtrTtb => {
-                    text_input_state.focus.borrow().origin.x
-                        + self.text_input_state.as_ref().unwrap().cursor_x
-                }
-                UILocaleKind::RtlTtb => {
-                    text_input_state.focus.borrow().origin.x
-                        + text_input_state.focus.borrow().size.width
-                        - self.text_input_state.as_ref().unwrap().cursor_x
-                }
-                _ => {
-                    println!("Textarea cursor localekind not handled!");
-                    text_input_state.focus.borrow().origin.x
-                        + self.text_input_state.as_ref().unwrap().cursor_x
-                }
-            };
-            let cursory = text_input_state.focus.borrow().origin.y
-                + self.text_input_state.as_ref().unwrap().cursor_y;
-
-            let color = self.style.active_color;
-            let height = self
-                .drawer
-                .renderer
-                .font_cache
-                .borrow()
-                .line_height(self.style.text_size);
-            // TODO: draw cursor in the textarea
-            // self.params()
-            //     .background_color(color)
-            //     .width(uisize!("2px"))
-            //     .height(UISize::DPixels(height))
-            //     .position((UISize::DPixels(cursorx), UISize::DPixels(cursory)));
-            // self.add_box_from_string(None, UIBoxFlag::DrawBackground as u64);
         }
     }
 
@@ -436,11 +387,18 @@ impl IMUI {
 
             match pref_size[axis.val()] {
                 UISize::Children => {
-                    let mut max_size = 0.;
+                    let mut size = 0.;
                     for child in &node.children {
-                        max_size = f32::max(max_size, *child.borrow().size.axis(axis));
+                        size += *child.borrow().size.axis(axis);
                     }
-                    *node.size.axis_mut(axis) = max_size;
+                    *node.size.axis_mut(axis) = size;
+                }
+                UISize::ChildrenMax => {
+                    let mut size_max = 0.;
+                    for child in &node.children {
+                        size_max = f32::max(size_max, *child.borrow().size.axis(axis));
+                    }
+                    *node.size.axis_mut(axis) = size_max;
                 }
                 _ => {
                     // xarkes: other units are not considered downward dependents, or already computed
@@ -541,6 +499,8 @@ impl IMUI {
         for axis in [Axis::X, Axis::Y] {
             self.layout_resize_standalone(root.clone(), axis);
             self.layout_resize_upward_dependents(root.clone(), axis);
+            // XXX: we should iterate from the deepest node up to the root, but instead I compute it twice :>
+            self.layout_resize_downward_dependents(root.clone(), axis);
             self.layout_resize_downward_dependents(root.clone(), axis);
         }
         self.apply_layout(root.clone());
@@ -694,12 +654,29 @@ impl IMUI {
     //// Widgets functions
     pub fn container(
         &mut self,
+        key: Option<&str>,
         layout: UILayout,
         flags: u64,
         mut children: impl FnMut(&mut IMUI),
     ) -> UIBoxRef {
-        let container = self.add_box_from_string(None, flags);
-        container.borrow_mut().pref_size = (UISize::Percents(1.), UISize::Children);
+        let node = self.parent_stack.last().unwrap().clone();
+        let first_frame = self
+            .uiboxes
+            .get(&self.get_key_from_string(key, node).0)
+            .is_none();
+        let container = self.add_box_from_string(key, flags);
+
+        if (key.is_some() && first_frame) || key.is_none() {
+            container.borrow_mut().pref_size = match layout.specialize(self.locale_kind) {
+                UILayout::VerticalLtr => (UISize::Percents(1.), UISize::Children),
+                UILayout::HorizontalLtr => (UISize::Percents(1.), UISize::ChildrenMax),
+                _ => {
+                    println!("Unsupported layout");
+                    (UISize::Percents(1.), UISize::Children)
+                }
+            };
+        }
+
         container.borrow_mut().layout = Some(layout);
         container.borrow_mut().style.bg_color = self.style.main_color;
         self.parent_stack.push(container.clone());
@@ -804,14 +781,12 @@ impl IMUI {
         }
     }
 
-    fn new_floating_root(&mut self, key: u64, position: Point, size: Size) -> UIBoxRef {
+    fn new_floating_root(&mut self, key: u64, position: Point) -> UIBoxRef {
         let root =
             self.get_or_create_box_from_key(key, None, UIBoxFlag::DrawBackground as u64, true);
         root.borrow_mut().layout = Some(UILayout::Vertical);
         root.borrow_mut().fixed_origin = position;
         root.borrow_mut().origin = position;
-        root.borrow_mut().pref_size = (UISize::DPixels(size.width), UISize::DPixels(size.height));
-        // root.borrow_mut().pref_size = (UISize::Children, UISize::Children);
         self.floating_roots.push(root.clone());
         root
     }
