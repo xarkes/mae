@@ -745,27 +745,59 @@ impl IMUI {
             * self.drawer.renderer.font_cache.borrow().line_height(12.);
 
         let container = self.container(None, UILayout::Vertical, 0, params, |ui| {
-            let mut textarea = ui.root.clone();
+            let mut textarea = None;
             ui.container(None, UILayout::Horizontal, 0, params, |ui| {
-                textarea = ui.add_box_from_string(
+                let mut textarea_ = ui.add_box_from_string(
                     Some(id),
                     UIBoxFlag::Clickable as u64
                         | UIBoxFlag::DrawBackground as u64
                         | UIBoxFlag::Scrollable as u64,
                 );
-                textarea.borrow_mut().layout = Some(UILayout::Vertical);
-                textarea
+                textarea_.borrow_mut().layout = Some(UILayout::Vertical);
+                textarea_
                     .borrow_mut()
                     .set_pref_size((uisize!("90%"), uisize!("90%")));
                 let multiline = true;
-                ui.text_edit_impl(textarea.clone(), text_buffer.clone(), multiline);
-                if max_size_y > textarea.borrow().size.height {
-                    ui.scrollbar(textarea.clone(), max_size_y, Axis::Y);
+
+                // xarkes: fixup scrolling, event handler does not know the child's logic
+                {
+                    let mut textarea = textarea_.borrow_mut();
+                    let can_scroll_y = max_size_y > textarea.size.height;
+                    let can_scroll_x = max_size_x > textarea.size.width;
+
+                    if can_scroll_y {
+                        let max_scroll_y = textarea.size.height - max_size_y;
+                        if textarea.scrolly > 0. {
+                            textarea.scrolly = 0.;
+                        } else if textarea.scrolly < max_scroll_y {
+                            textarea.scrolly = max_scroll_y;
+                        }
+                    } else {
+                        textarea.scrolly = 0.;
+                    }
+                    if can_scroll_x {
+                        let max_scroll_x = textarea.size.width - max_size_x;
+                        if textarea.scrollx > 0. {
+                            textarea.scrollx = 0.;
+                        } else if textarea.scrollx < max_scroll_x {
+                            textarea.scrollx = max_scroll_x;
+                        }
+                    } else {
+                        textarea.scrollx = 0.;
+                    }
                 }
+
+                ui.text_edit_impl(textarea_.clone(), text_buffer.clone(), multiline);
+
+                if max_size_y > textarea_.borrow().size.height {
+                    ui.scrollbar(textarea_.clone(), max_size_y, Axis::Y);
+                }
+                textarea = Some(textarea_.clone());
             });
 
-            if max_size_x > textarea.borrow().size.width {
-                ui.scrollbar(textarea.clone(), max_size_x, Axis::X);
+            let textarea_ref = textarea.unwrap();
+            if max_size_x > textarea_ref.borrow().size.width {
+                ui.scrollbar(textarea_ref.clone(), max_size_x, Axis::X);
             }
         });
 
@@ -1044,22 +1076,21 @@ impl IMUI {
             }
 
             // xarkes: scroll behavior
-            if uibox.borrow().scrollable_x() && ev.ty == OSEventType::Scroll && in_bounds {
+            if uibox.borrow().scrollable_y()
+                && ev.ty == OSEventType::Scroll
+                && in_bounds
+                && ev.key == OSKey::RightMouseButton
+            {
+                let mut uibox_mut = uibox.borrow_mut();
+                uibox_mut.scrolly += ev.delta * 5.;
+            }
+            if uibox.borrow().scrollable_x()
+                && ev.ty == OSEventType::Scroll
+                && in_bounds
+                && ev.key == OSKey::LeftMouseButton
+            {
                 let mut uibox_mut = uibox.borrow_mut();
                 uibox_mut.scrollx += ev.delta * 5.;
-
-                // XXX: can't access children here
-                let mut limit = 0.;
-                for c in &uibox_mut.children {
-                    limit = f32::max(c.borrow().size.width, limit);
-                }
-
-                if uibox_mut.scrollx > 0. {
-                    uibox_mut.scrollx = 0.;
-                }
-                // if uibox_mut.scrollx < limit * -1. {
-                //     uibox_mut.scrollx = limit;
-                // }
             }
         }
 

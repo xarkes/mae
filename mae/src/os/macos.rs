@@ -276,13 +276,24 @@ impl Window {
                             chars: None,
                             delta: 0.,
                         }),
-                        NSEventType::ScrollWheel => Some(OSEvent {
-                            ty: OSEventType::Scroll,
-                            key: OSKey::LeftMouseButton,
-                            pos: Some(self.translate_loc(ev.locationInWindow())),
-                            chars: None,
-                            delta: ev.deltaY() as f32,
-                        }),
+                        // XXX(xarkes): I think this sucks to use key (LMB/RMB) to differentiate scroll axis
+                        // Good enough for now, will likely have to improve after mobile support
+                        NSEventType::ScrollWheel => match ev.deltaX() != 0. {
+                            true => Some(OSEvent {
+                                ty: OSEventType::Scroll,
+                                key: OSKey::LeftMouseButton,
+                                pos: Some(self.translate_loc(ev.locationInWindow())),
+                                chars: None,
+                                delta: ev.deltaX() as f32,
+                            }),
+                            false => Some(OSEvent {
+                                ty: OSEventType::Scroll,
+                                key: OSKey::RightMouseButton,
+                                pos: Some(self.translate_loc(ev.locationInWindow())),
+                                chars: None,
+                                delta: ev.deltaY() as f32,
+                            }),
+                        },
                         // NSEventType::FlagsChanged => Some(OSEvent {
 
                         // }),
