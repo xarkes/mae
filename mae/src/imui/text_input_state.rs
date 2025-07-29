@@ -93,7 +93,7 @@ impl IMUITextInputState {
         let mut fc = self.font_cache.borrow_mut();
         for (lineidx, line) in buf.lines().enumerate() {
             if self.idx <= curidx + line.chars().count() {
-                // this is current line, compute proper x
+                // xarkes: this is current line, compute proper x
                 let mut length = 0.;
                 let mut col = 0;
                 for c in line.chars() {
@@ -105,11 +105,12 @@ impl IMUITextInputState {
                     }
                     col += 1;
                 }
-                // update whole state
+                // xarkes: update whole state
                 self.cursor_col = col;
                 self.cursor_row = lineidx;
                 self.cursor_x = length;
                 self.cursor_y = fc.line_height(font_size) * self.cursor_row as f32;
+                // xarkes: update box scrolling
                 {
                     let mut uibox = self.focus.borrow_mut();
                     if self.cursor_x > uibox.size.width - uibox.scrollx
@@ -157,18 +158,23 @@ impl IMUITextInputState {
                 }
                 break;
             } else if self.idx == curidx + line.chars().count() + 1 {
-                // if we are at the '\n', go to next line instead
+                // xarkes: if we are at the '\n', go to next line instead
                 self.cursor_col = 0;
                 self.cursor_row = lineidx + 1;
                 self.cursor_x = 0.;
                 self.cursor_y = fc.line_height(font_size) * self.cursor_row as f32;
+                // xarkes: update box scrolling
                 {
                     let mut uibox = self.focus.borrow_mut();
                     if uibox.scrollx != 0. {
                         uibox.scrollx = 0.;
                     }
                     if self.cursor_y > uibox.size.height - uibox.scrolly {
+                        // cursor going down
                         uibox.scrolly -= fc.line_height(font_size);
+                    } else if self.cursor_y < -1. * uibox.scrolly {
+                        // cursor going up
+                        uibox.scrolly += fc.line_height(font_size);
                     }
                 }
                 break;

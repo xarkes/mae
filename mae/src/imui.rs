@@ -728,9 +728,7 @@ impl IMUI {
         id: &str,
         params: Option<UIBoxParams>,
     ) -> UIBoxRef {
-        // compute scrollbars
-        // XXX: we know this is shitty, but it is good enough for now
-        // there is a whole different logic to adopt to handle big text files
+        // xarkes: compute scrollbars
         let max_size_x = {
             let buf = text_buffer.borrow();
             let lines = buf.lines();
@@ -743,27 +741,32 @@ impl IMUI {
             }
             width as f32
         };
+        let max_size_y = text_buffer.borrow().lines().count() as f32
+            * self.drawer.renderer.font_cache.borrow().line_height(12.);
 
         let container = self.container(None, UILayout::Vertical, 0, params, |ui| {
-            let textarea = ui.add_box_from_string(
-                Some(id),
-                UIBoxFlag::Clickable as u64
-                    | UIBoxFlag::DrawBackground as u64
-                    | UIBoxFlag::Scrollable as u64,
-            );
-            textarea.borrow_mut().layout = Some(UILayout::Vertical);
-            textarea
-                .borrow_mut()
-                .set_pref_size((uisize!("100%"), uisize!("100%")));
-            let multiline = true;
-            ui.text_edit_impl(textarea.clone(), text_buffer.clone(), multiline);
+            let mut textarea = ui.root.clone();
+            ui.container(None, UILayout::Horizontal, 0, params, |ui| {
+                textarea = ui.add_box_from_string(
+                    Some(id),
+                    UIBoxFlag::Clickable as u64
+                        | UIBoxFlag::DrawBackground as u64
+                        | UIBoxFlag::Scrollable as u64,
+                );
+                textarea.borrow_mut().layout = Some(UILayout::Vertical);
+                textarea
+                    .borrow_mut()
+                    .set_pref_size((uisize!("90%"), uisize!("90%")));
+                let multiline = true;
+                ui.text_edit_impl(textarea.clone(), text_buffer.clone(), multiline);
+                if max_size_y > textarea.borrow().size.height {
+                    ui.scrollbar(textarea.clone(), max_size_y, Axis::Y);
+                }
+            });
 
-            // XXX: what way can we easily say:
-            // the scrollbar is 20px high, and sits at the end of the container, everything before it can take the whole space
-            // it's like saying textarea is 100% of parent - 20px
-            // if max_size_x > textarea.borrow().size.width {
-            ui.scrollbar(textarea, max_size_x);
-            // }
+            if max_size_x > textarea.borrow().size.width {
+                ui.scrollbar(textarea.clone(), max_size_x, Axis::X);
+            }
         });
 
         container
@@ -798,7 +801,28 @@ impl IMUI {
         {
             // text
             if multiline {
-                for line in text_buffer.borrow().lines() {
+                // xarkes: only display visible lines
+                let line_height = self
+                    .drawer
+                    .renderer
+                    .font_cache
+                    .borrow()
+                    .line_height(textarea.borrow().style.font_size);
+                let buffer = text_buffer.borrow();
+                let lines = buffer.lines();
+                let line_idx_start = (-1. * textarea.borrow().scrolly / line_height) as usize;
+                let line_idx_end =
+                    line_idx_start + (textarea.borrow().size.height / line_height) as usize;
+                for (i, line) in lines.enumerate() {
+                    if i < line_idx_start {
+                        // XXX: I still add a label here because of the way the position is computed
+                        // still better than having a full label
+                        self.label("");
+                        continue;
+                    }
+                    if i > line_idx_end {
+                        break;
+                    }
                     self.label(line);
                 }
             } else {

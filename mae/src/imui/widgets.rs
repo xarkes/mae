@@ -7,7 +7,7 @@ use crate::{
 };
 
 use super::{
-    IMUI, Point, Size, color_rgb,
+    Axis, IMUI, Point, Size, color_rgb,
     uibox::{UIBoxRef, u64_hash_from_string},
 };
 
@@ -83,50 +83,100 @@ impl IMUI {
         uibox
     }
 
-    pub(crate) fn scrollbar(&mut self, scrollable: UIBoxRef, virtual_size: f32) {
+    pub(crate) fn scrollbar(&mut self, scrollable: UIBoxRef, virtual_size: f32, axis: Axis) {
         debug_assert!(scrollable.borrow().scrollable_x());
-        if virtual_size <= scrollable.borrow().size.width {
+        if virtual_size <= *scrollable.borrow().size.axis(axis) {
             return;
         }
         let mut params = UIBoxParams::new();
-        params.height(uisize!("20px"));
+        match axis {
+            Axis::X => {
+                params.height(uisize!("10px"));
+            }
+            Axis::Y => {
+                params.width(uisize!("10px"));
+            }
+        }
+        let layout = match axis {
+            Axis::X => UILayout::Horizontal,
+            Axis::Y => UILayout::Vertical,
+        };
+        let axis_letter = match axis {
+            Axis::X => 'x',
+            Axis::Y => 'y',
+        };
         let cont = self.container(
             None,
-            UILayout::Horizontal,
+            layout,
             UIBoxFlag::DrawBackground as u64,
             Some(params),
             |ui| {
                 let box_size = scrollable.borrow().size;
-                let scroll_pos = scrollable.borrow().scrollx;
+                let scroll_pos = match axis {
+                    Axis::X => scrollable.borrow().scrollx,
+                    Axis::Y => scrollable.borrow().scrolly,
+                };
                 let scroll_percent = -1. * scroll_pos / virtual_size;
-                let bar_size = (box_size.width / virtual_size) * box_size.width;
-                let pre_size = box_size.width * scroll_percent;
-                let post_size = box_size.width - bar_size - pre_size;
-                debug_assert!(post_size + pre_size + bar_size == box_size.width);
+                let bar_size = (box_size.axis(axis) / virtual_size) * box_size.axis(axis);
+                let pre_size = box_size.axis(axis) * scroll_percent;
+                let post_size = box_size.axis(axis) - bar_size - pre_size;
+                debug_assert!(
+                    (post_size + pre_size + bar_size).round() == box_size.axis(axis).round(),
+                    "{} {}",
+                    post_size + pre_size + bar_size,
+                    *box_size.axis(axis)
+                );
 
                 let pre_scrollbar = ui.add_box_from_string(
-                    Some("#scrollbar_pre_x"),
+                    Some(format!("#scrollbar_pre_{}", axis_letter).as_str()),
                     UIBoxFlag::DrawBackground as u64,
                 );
-                pre_scrollbar
-                    .borrow_mut()
-                    .set_pref_size((UISize::DPixels(pre_size), uisize!("100%")));
+                match axis {
+                    Axis::X => {
+                        pre_scrollbar
+                            .borrow_mut()
+                            .set_pref_size((UISize::DPixels(pre_size), uisize!("100%")));
+                    }
+                    Axis::Y => {
+                        pre_scrollbar
+                            .borrow_mut()
+                            .set_pref_size((uisize!("100%"), UISize::DPixels(pre_size)));
+                    }
+                }
                 pre_scrollbar.borrow_mut().style.bg_color = color_rgb(255, 255, 0);
                 let scrollbar = ui.add_box_from_string(
-                    Some("#scrollbar_bar_x"),
+                    Some(format!("#scrollbar_bar_{}", axis_letter).as_str()),
                     UIBoxFlag::DrawBackground as u64 | UIBoxFlag::Clickable as u64,
                 );
-                scrollbar
-                    .borrow_mut()
-                    .set_pref_size((UISize::DPixels(bar_size), uisize!("100%")));
+                match axis {
+                    Axis::X => {
+                        scrollbar
+                            .borrow_mut()
+                            .set_pref_size((UISize::DPixels(bar_size), uisize!("100%")));
+                    }
+                    Axis::Y => {
+                        scrollbar
+                            .borrow_mut()
+                            .set_pref_size((uisize!("100%"), UISize::DPixels(bar_size)));
+                    }
+                }
                 scrollbar.borrow_mut().style.bg_color = color_rgb(0, 255, 255);
                 let post_scrollbar = ui.add_box_from_string(
-                    Some("#scrollbar_post_x"),
+                    Some(format!("#scrollbar_post_{}", axis_letter).as_str()),
                     UIBoxFlag::DrawBackground as u64,
                 );
-                post_scrollbar
-                    .borrow_mut()
-                    .set_pref_size((UISize::DPixels(post_size), uisize!("100%")));
+                match axis {
+                    Axis::X => {
+                        post_scrollbar
+                            .borrow_mut()
+                            .set_pref_size((UISize::DPixels(post_size), uisize!("100%")));
+                    }
+                    Axis::Y => {
+                        post_scrollbar
+                            .borrow_mut()
+                            .set_pref_size((uisize!("100%"), UISize::DPixels(post_size)));
+                    }
+                }
                 post_scrollbar.borrow_mut().style.bg_color = color_rgb(255, 0, 255);
             },
         );

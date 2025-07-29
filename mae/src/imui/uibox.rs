@@ -99,7 +99,7 @@ pub(crate) enum UIBoxEvent {
     KeyPressed = 16u64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct UIBoxParams {
     pub(crate) width: Option<UISize>,
     pub(crate) height: Option<UISize>,
