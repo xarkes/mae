@@ -671,6 +671,7 @@ impl IMUI {
         key: Option<&str>,
         layout: UILayout,
         flags: u64,
+        params: Option<UIBoxParams>,
         mut children: impl FnMut(&mut IMUI),
     ) -> UIBoxRef {
         let node = self.parent_stack.last().unwrap().clone();
@@ -689,6 +690,17 @@ impl IMUI {
                     (UISize::Percents(1.), UISize::Children)
                 }
             };
+
+            if let Some(params) = params {
+                if let Some(width) = params.width {
+                    let old_height = container.borrow().pref_size.1;
+                    container.borrow_mut().set_pref_size((width, old_height));
+                }
+                if let Some(height) = params.height {
+                    let old_width = container.borrow().pref_size.0;
+                    container.borrow_mut().set_pref_size((old_width, height));
+                }
+            }
         }
 
         container.borrow_mut().layout = Some(layout);
@@ -710,35 +722,51 @@ impl IMUI {
         let multiline = false;
         self.text_edit_impl(line_edit, text_buffer, multiline)
     }
-    pub fn textarea(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIBoxRef {
+    pub fn textarea(
+        &mut self,
+        text_buffer: Rc<RefCell<String>>,
+        id: &str,
+        params: Option<UIBoxParams>,
+    ) -> UIBoxRef {
         // compute scrollbars
         // XXX: we know this is shitty, but it is good enough for now
         // there is a whole different logic to adopt to handle big text files
-        {
+        let max_size_x = {
             let buf = text_buffer.borrow();
             let lines = buf.lines();
             let mut count = 0;
-            let mut width = 0;
+            let mut width = 0.;
             for l in lines {
-                width = std::cmp::max(l.len(), width);
+                let w = self.drawer.get_text_size(12., l, l.len()).0;
+                width = f32::max(w, width);
                 count += 1;
             }
+            width as f32
+        };
 
-            // we need to find a layout or a way to properly place our scrollbars
-        }
+        let container = self.container(None, UILayout::Vertical, 0, params, |ui| {
+            let textarea = ui.add_box_from_string(
+                Some(id),
+                UIBoxFlag::Clickable as u64
+                    | UIBoxFlag::DrawBackground as u64
+                    | UIBoxFlag::Scrollable as u64,
+            );
+            textarea.borrow_mut().layout = Some(UILayout::Vertical);
+            textarea
+                .borrow_mut()
+                .set_pref_size((uisize!("100%"), uisize!("100%")));
+            let multiline = true;
+            ui.text_edit_impl(textarea.clone(), text_buffer.clone(), multiline);
 
-        let textarea = self.add_box_from_string(
-            Some(id),
-            UIBoxFlag::Clickable as u64
-                | UIBoxFlag::DrawBackground as u64
-                | UIBoxFlag::Scrollable as u64,
-        );
-        textarea.borrow_mut().layout = Some(UILayout::Vertical);
-        let multiline = true;
-        let uibox = self.text_edit_impl(textarea, text_buffer.clone(), multiline);
-        // draw scrollbars
-        self.scrollbar(uibox.clone());
-        uibox
+            // XXX: what way can we easily say:
+            // the scrollbar is 20px high, and sits at the end of the container, everything before it can take the whole space
+            // it's like saying textarea is 100% of parent - 20px
+            // if max_size_x > textarea.borrow().size.width {
+            ui.scrollbar(textarea, max_size_x);
+            // }
+        });
+
+        container
     }
     fn text_edit_impl(
         &mut self,

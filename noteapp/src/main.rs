@@ -12,6 +12,7 @@ use mae::imui::UILayout;
 use mae::imui::UISize;
 use mae::imui::color_rgb;
 use mae::imui::uibox::UIBoxFlag;
+use mae::imui::uibox::UIBoxParams;
 use mae::uisize;
 
 #[cfg(target_os = "macos")]
@@ -255,10 +256,10 @@ fn main() {
     let mut search = Rc::new(RefCell::new(String::from("")));
     ui.eventloop(|ui| {
         // main content
-        let txtarea = ui.textarea(noteapp.buffer.clone(), "#textarea");
-        txtarea
-            .borrow_mut()
-            .set_pref_size((uisize!("100%"), uisize!("100%")));
+        let mut params = UIBoxParams::new();
+        params.width(uisize!("90%"));
+        params.height(uisize!("90%"));
+        let txtarea = ui.textarea(noteapp.buffer.clone(), "#textarea", Some(params));
 
         ui.floating_pane(
             Point::new(1024. - 200., 768. - 240.),

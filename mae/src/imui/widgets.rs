@@ -1,6 +1,8 @@
 use crate::{
-    imui::UISize,
-    imui::{UILayout, uibox::UIBoxFlag},
+    imui::{
+        UILayout, UISize,
+        uibox::{UIBoxFlag, UIBoxParams},
+    },
     uisize,
 };
 
@@ -30,6 +32,7 @@ impl IMUI {
                 None,
                 UILayout::Horizontal,
                 UIBoxFlag::DrawBackground as u64,
+                None,
                 |ui| {
                     if ui.button("Fold > ##fp_fold").borrow().clicked() {
                         let (key, _) =
@@ -50,7 +53,13 @@ impl IMUI {
             );
 
             // xarkes: draw pane content
-            self.container(Some(foldable_frame_id), UILayout::Vertical, 0, children);
+            self.container(
+                Some(foldable_frame_id),
+                UILayout::Vertical,
+                0,
+                None,
+                children,
+            );
         }
         self.parent_stack.pop();
         uibox
@@ -74,26 +83,53 @@ impl IMUI {
         uibox
     }
 
-    // TODO --> api needs scrolling view size
-    pub(crate) fn scrollbar(&mut self, scrollable: UIBoxRef) {
+    pub(crate) fn scrollbar(&mut self, scrollable: UIBoxRef, virtual_size: f32) {
         debug_assert!(scrollable.borrow().scrollable_x());
-        // XXX: not yet resilient against multiple scrollbars in one root -> key collision
-        let container = self.add_box_from_string(None, UIBoxFlag::DrawBackground as u64);
-        container.borrow_mut().layout = Some(UILayout::Horizontal);
-        self.parent_stack.push(container);
-        {
-            let vsize = 1000.;
-            let virtual_size = f32::max(scrollable.borrow().size.width, vsize);
-            let scroll_pos = f32::max(0., scrollable.borrow().scrollx);
-            let pre_scrollbar = self
-                .add_box_from_string(Some("#scrollbar_pre_x"), UIBoxFlag::DrawBackground as u64);
-            let scrollbar = self.add_box_from_string(
-                Some("#scrollbar_bar_x"),
-                UIBoxFlag::DrawBackground as u64 | UIBoxFlag::Clickable as u64,
-            );
-            let post_scrollbar = self
-                .add_box_from_string(Some("#scrollbar_post_x"), UIBoxFlag::DrawBackground as u64);
+        if virtual_size <= scrollable.borrow().size.width {
+            return;
         }
-        self.parent_stack.pop();
+        let mut params = UIBoxParams::new();
+        params.height(uisize!("20px"));
+        let cont = self.container(
+            None,
+            UILayout::Horizontal,
+            UIBoxFlag::DrawBackground as u64,
+            Some(params),
+            |ui| {
+                let box_size = scrollable.borrow().size;
+                let scroll_pos = scrollable.borrow().scrollx;
+                let scroll_percent = -1. * scroll_pos / virtual_size;
+                let bar_size = (box_size.width / virtual_size) * box_size.width;
+                let pre_size = box_size.width * scroll_percent;
+                let post_size = box_size.width - bar_size - pre_size;
+                debug_assert!(post_size + pre_size + bar_size == box_size.width);
+
+                let pre_scrollbar = ui.add_box_from_string(
+                    Some("#scrollbar_pre_x"),
+                    UIBoxFlag::DrawBackground as u64,
+                );
+                pre_scrollbar
+                    .borrow_mut()
+                    .set_pref_size((UISize::DPixels(pre_size), uisize!("100%")));
+                pre_scrollbar.borrow_mut().style.bg_color = color_rgb(255, 255, 0);
+                let scrollbar = ui.add_box_from_string(
+                    Some("#scrollbar_bar_x"),
+                    UIBoxFlag::DrawBackground as u64 | UIBoxFlag::Clickable as u64,
+                );
+                scrollbar
+                    .borrow_mut()
+                    .set_pref_size((UISize::DPixels(bar_size), uisize!("100%")));
+                scrollbar.borrow_mut().style.bg_color = color_rgb(0, 255, 255);
+                let post_scrollbar = ui.add_box_from_string(
+                    Some("#scrollbar_post_x"),
+                    UIBoxFlag::DrawBackground as u64,
+                );
+                post_scrollbar
+                    .borrow_mut()
+                    .set_pref_size((UISize::DPixels(post_size), uisize!("100%")));
+                post_scrollbar.borrow_mut().style.bg_color = color_rgb(255, 0, 255);
+            },
+        );
+        cont.borrow_mut().pref_size.0 = uisize!("100%");
     }
 }
