@@ -48,9 +48,10 @@ impl IMUITextInputState {
         text_buffer: &String,
         font_size: f32,
         point: Point,
+        delta: Point,
     ) {
-        let relative_x = point.x - bounds.x0;
-        let relative_y = point.y - bounds.y0;
+        let relative_x = point.x - bounds.x0 - delta.x;
+        let relative_y = point.y - bounds.y0 - delta.y;
         if relative_x < 0. || relative_y < 0. {
             return;
         }
@@ -88,7 +89,7 @@ impl IMUITextInputState {
         self.idx = idx;
         let buf = self.buffer.borrow();
         let mut curidx = 0;
-        let font_size = 12.; // XXX
+        let font_size = self.focus.borrow().style.font_size;
         let mut fc = self.font_cache.borrow_mut();
         for (lineidx, line) in buf.lines().enumerate() {
             if self.idx <= curidx + line.chars().count() {
@@ -109,6 +110,51 @@ impl IMUITextInputState {
                 self.cursor_row = lineidx;
                 self.cursor_x = length;
                 self.cursor_y = fc.line_height(font_size) * self.cursor_row as f32;
+                {
+                    let mut uibox = self.focus.borrow_mut();
+                    if self.cursor_x > uibox.size.width - uibox.scrollx
+                        || self.cursor_x + uibox.scrollx < 0.
+                    {
+                        let line_idx = idx - curidx;
+                        if line_idx == line.chars().count() {
+                            uibox.scrollx = -1.
+                                * (fc
+                                    .get_text_size(font_size, line, line.len())
+                                    .0
+                                    + 2. // cursor_width
+                                    - uibox.size.width);
+                        } else {
+                            let line_char_idx =
+                                line.char_indices().map(|(i, _)| i).nth(line_idx).unwrap();
+                            let line_slice = line[..line_char_idx].to_string();
+
+                            let cursor_width = 2.;
+                            let direction_right = !(self.cursor_x + uibox.scrollx < 0.);
+                            if direction_right {
+                                // cursor at the right
+                                uibox.scrollx = -1.
+                                    * (fc
+                                        .get_text_size(
+                                            font_size,
+                                            line_slice.as_str(),
+                                            line_slice.len(),
+                                        )
+                                        .0
+                                        + cursor_width
+                                        - uibox.size.width);
+                            } else {
+                                // cursor at the left
+                                let left_char = line.chars().nth(line_idx).unwrap();
+                                uibox.scrollx = f32::min(
+                                    0.,
+                                    uibox.scrollx
+                                        + fc.get(left_char, font_size).width as f32
+                                        + cursor_width,
+                                );
+                            }
+                        }
+                    }
+                }
                 break;
             } else if self.idx == curidx + line.chars().count() + 1 {
                 // if we are at the '\n', go to next line instead
@@ -116,6 +162,15 @@ impl IMUITextInputState {
                 self.cursor_row = lineidx + 1;
                 self.cursor_x = 0.;
                 self.cursor_y = fc.line_height(font_size) * self.cursor_row as f32;
+                {
+                    let mut uibox = self.focus.borrow_mut();
+                    if uibox.scrollx != 0. {
+                        uibox.scrollx = 0.;
+                    }
+                    if self.cursor_y > uibox.size.height - uibox.scrolly {
+                        uibox.scrolly -= fc.line_height(font_size);
+                    }
+                }
                 break;
             }
             curidx += line.chars().count() + 1; // +1 for '\n'

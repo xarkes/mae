@@ -75,7 +75,7 @@ impl IMUI {
     }
 
     // TODO --> api needs scrolling view size
-    fn scrollbar(&mut self, scrollable: UIBoxRef) {
+    pub(crate) fn scrollbar(&mut self, scrollable: UIBoxRef) {
         debug_assert!(scrollable.borrow().scrollable_x());
         // XXX: not yet resilient against multiple scrollbars in one root -> key collision
         let container = self.add_box_from_string(None, UIBoxFlag::DrawBackground as u64);

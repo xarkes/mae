@@ -711,6 +711,22 @@ impl IMUI {
         self.text_edit_impl(line_edit, text_buffer, multiline)
     }
     pub fn textarea(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIBoxRef {
+        // compute scrollbars
+        // XXX: we know this is shitty, but it is good enough for now
+        // there is a whole different logic to adopt to handle big text files
+        {
+            let buf = text_buffer.borrow();
+            let lines = buf.lines();
+            let mut count = 0;
+            let mut width = 0;
+            for l in lines {
+                width = std::cmp::max(l.len(), width);
+                count += 1;
+            }
+
+            // we need to find a layout or a way to properly place our scrollbars
+        }
+
         let textarea = self.add_box_from_string(
             Some(id),
             UIBoxFlag::Clickable as u64
@@ -719,7 +735,10 @@ impl IMUI {
         );
         textarea.borrow_mut().layout = Some(UILayout::Vertical);
         let multiline = true;
-        self.text_edit_impl(textarea, text_buffer, multiline)
+        let uibox = self.text_edit_impl(textarea, text_buffer.clone(), multiline);
+        // draw scrollbars
+        self.scrollbar(uibox.clone());
+        uibox
     }
     fn text_edit_impl(
         &mut self,
@@ -742,6 +761,7 @@ impl IMUI {
                 &text_buffer.borrow(),
                 self.style.text_size,
                 self.event.mouse.unwrap(),
+                Point::new(textarea.borrow().scrollx, textarea.borrow().scrolly),
             );
             self.text_input_state = Some(state);
         }
@@ -769,8 +789,10 @@ impl IMUI {
                     ));
                     let bounds = textarea.borrow().bounds();
                     cursor_box.borrow_mut().layout = Some(UILayout::Absolute);
-                    cursor_box.borrow_mut().fixed_origin =
-                        Point::new(bounds.x0 + cx, bounds.y0 + cy);
+                    cursor_box.borrow_mut().fixed_origin = Point::new(
+                        bounds.x0 + cx + textarea.borrow().scrollx,
+                        bounds.y0 + cy + textarea.borrow().scrolly,
+                    );
                     cursor_box.borrow_mut().style.bg_color = self.style.active_color;
                 }
             }
@@ -972,17 +994,19 @@ impl IMUI {
             // xarkes: scroll behavior
             if uibox.borrow().scrollable_x() && ev.ty == OSEventType::Scroll && in_bounds {
                 let mut uibox_mut = uibox.borrow_mut();
-                uibox_mut.scrollx += ev.delta;
-                // if uibox_mut.scrollx > 0. {
-                //     uibox_mut.scrollx = 0.;
-                // }
-                // TODO: This actually depends on the last children's position, but works for now - this may not work because at this point in the program we don't know about the children
-                let scroll_limit = match uibox_mut.children.last() {
-                    Some(child) => -1. * child.borrow().bounds().y1,
-                    None => 0.,
-                };
-                // if uibox_mut.scrollx < scroll_limit {
-                //     uibox_mut.scrollx = scroll_limit;
+                uibox_mut.scrollx += ev.delta * 5.;
+
+                // XXX: can't access children here
+                let mut limit = 0.;
+                for c in &uibox_mut.children {
+                    limit = f32::max(c.borrow().size.width, limit);
+                }
+
+                if uibox_mut.scrollx > 0. {
+                    uibox_mut.scrollx = 0.;
+                }
+                // if uibox_mut.scrollx < limit * -1. {
+                //     uibox_mut.scrollx = limit;
                 // }
             }
         }
