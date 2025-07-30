@@ -105,7 +105,7 @@ impl IMUI {
             Axis::X => 'x',
             Axis::Y => 'y',
         };
-        let cont = self.container(None, layout, 0, Some(params), |ui| {
+        self.container(None, layout, 0, Some(params), |ui| {
             let box_size = scrollable.borrow().size;
             let scroll_pos = match axis {
                 Axis::X => scrollable.borrow().scrollx,
@@ -141,7 +141,9 @@ impl IMUI {
             pre_scrollbar.borrow_mut().style.bg_color = color_rgb(255, 255, 0);
             let scrollbar = ui.add_box_from_string(
                 Some(format!("#scrollbar_bar_{}", axis_letter).as_str()),
-                UIBoxFlag::DrawBackground as u64 | UIBoxFlag::Clickable as u64,
+                UIBoxFlag::DrawBackground as u64
+                    | UIBoxFlag::Clickable as u64
+                    | UIBoxFlag::DrawHot as u64,
             );
             match axis {
                 Axis::X => {
@@ -174,6 +176,5 @@ impl IMUI {
             }
             post_scrollbar.borrow_mut().style.bg_color = color_rgb(255, 0, 255);
         });
-        cont.borrow_mut().pref_size.0 = uisize!("100%");
     }
 }

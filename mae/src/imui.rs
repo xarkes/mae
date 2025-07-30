@@ -59,6 +59,12 @@ impl Point {
             Axis::Y => &self.y,
         }
     }
+    pub fn axis_mut(&mut self, axis: Axis) -> &mut f32 {
+        match axis {
+            Axis::X => &mut self.x,
+            Axis::Y => &mut self.y,
+        }
+    }
 }
 #[derive(Clone, Copy, Debug)]
 pub struct Size {
@@ -101,6 +107,7 @@ pub enum UISize {
     TextContent,   // Adapt to fit text attached to box
     Children,      // Compute the sum of all children
     ChildrenMax,   // Get the biggest child
+    Expand,        // Get the most available size
 }
 #[macro_export]
 macro_rules! uisize {
@@ -401,6 +408,18 @@ impl IMUI {
                     }
                     *node.size.axis_mut(axis) = size_max;
                 }
+                UISize::Expand => {
+                    let parent = node.parent.as_ref().unwrap();
+                    let parent_size = *parent.borrow().size.axis(axis);
+                    let mut children_size = 0.;
+                    for child in &parent.borrow().children {
+                        if Rc::ptr_eq(child, &nodeptr) {
+                            continue;
+                        }
+                        children_size += child.borrow().size.axis(axis);
+                    }
+                    *node.size.axis_mut(axis) = parent_size - children_size;
+                }
                 _ => {
                     // xarkes: other units are not considered downward dependents, or already computed
                 }
@@ -486,23 +505,31 @@ impl IMUI {
                 return false;
             }
             // xarkes: make sure the previous positioning did not generate wrong data
-            debug_assert!(*node.size.axis(axis) >= 0.);
+            // debug_assert!(*node.size.axis(axis) >= 0.);
 
             let parent_size = *node.parent.as_ref().unwrap().borrow().size.axis(axis);
             let parent_origin = *node.parent.as_ref().unwrap().borrow().origin.axis(axis);
             let parent_bound = parent_origin + parent_size;
 
-            // xarkes: handle overflow, reduce children size
-            // XXX: maybe you don't want to handle overflow at all and just let
-            // the renderer clip it?
+            // xarkes: handle overflow: reduce children size down to 0 if needed
             // if !node.parent.as_ref().unwrap().borrow().scrollable_x() {
             //     let bound = node.origin.axis(axis) + node.size.axis(axis);
             //     if bound > parent_bound {
             //         *node.size.axis_mut(axis) = f32::max(parent_bound - node.origin.axis(axis), 0.);
             //     }
-            //     // xarkes: handle underflow
-            //     if bound < parent_origin {
-            //         *node.size.axis_mut(axis) = 0.;
+            // }
+
+            // xarkes: handle overflow: reduce all previous children size to give space for this one
+            // let size = *node.size.axis(axis);
+            // let bound = *node.origin.axis(axis) + size;
+            // if bound > parent_bound {
+            //     // *node.origin.axis_mut(axis) -= size;
+            //     let percent_size = 1. - (size / parent_size);
+            //     let mut current = node.previous.clone();
+            //     while current.is_some() {
+            //         *current.as_ref().unwrap().borrow_mut().size.axis_mut(axis) *= percent_size;
+            //         // *current.as_ref().unwrap().borrow_mut().origin.axis_mut(axis) *= percent_size;
+            //         current = current.unwrap().borrow().previous.clone();
             //     }
             // }
             false
@@ -732,74 +759,80 @@ impl IMUI {
         let max_size_x = {
             let buf = text_buffer.borrow();
             let lines = buf.lines();
-            let mut count = 0;
             let mut width = 0.;
             for l in lines {
                 let w = self.drawer.get_text_size(12., l, l.len()).0;
                 width = f32::max(w, width);
-                count += 1;
             }
             width as f32
         };
         let max_size_y = text_buffer.borrow().lines().count() as f32
             * self.drawer.renderer.font_cache.borrow().line_height(12.);
 
-        let container = self.container(None, UILayout::Vertical, 0, params, |ui| {
-            let mut textarea = None;
-            ui.container(None, UILayout::Horizontal, 0, params, |ui| {
-                let mut textarea_ = ui.add_box_from_string(
-                    Some(id),
-                    UIBoxFlag::Clickable as u64
-                        | UIBoxFlag::DrawBackground as u64
-                        | UIBoxFlag::Scrollable as u64,
-                );
-                textarea_.borrow_mut().layout = Some(UILayout::Vertical);
-                textarea_
-                    .borrow_mut()
-                    .set_pref_size((uisize!("90%"), uisize!("90%")));
-                let multiline = true;
+        let container = self.container(
+            None,
+            UILayout::Vertical,
+            UIBoxFlag::DrawBackground as u64,
+            params,
+            |ui| {
+                let mut textarea = None;
+                let mut params = UIBoxParams::new();
+                params.width(uisize!("100%")).height(UISize::Expand);
+                ui.container(None, UILayout::Horizontal, 0, Some(params), |ui| {
+                    let textarea_ = ui.add_box_from_string(
+                        Some(id),
+                        UIBoxFlag::Clickable as u64
+                            | UIBoxFlag::DrawBackground as u64
+                            | UIBoxFlag::Scrollable as u64,
+                    );
+                    textarea_.borrow_mut().layout = Some(UILayout::Vertical);
+                    textarea_
+                        .borrow_mut()
+                        .set_pref_size((UISize::Expand, uisize!("100%")));
 
-                // xarkes: fixup scrolling, event handler does not know the child's logic
-                {
-                    let mut textarea = textarea_.borrow_mut();
-                    let can_scroll_y = max_size_y > textarea.size.height;
-                    let can_scroll_x = max_size_x > textarea.size.width;
+                    // xarkes: fixup scrolling: event handler does not know the child's logic
+                    {
+                        let mut textarea = textarea_.borrow_mut();
+                        let can_scroll_y = max_size_y > textarea.size.height;
+                        let can_scroll_x = max_size_x > textarea.size.width;
 
-                    if can_scroll_y {
-                        let max_scroll_y = textarea.size.height - max_size_y;
-                        if textarea.scrolly > 0. {
+                        if can_scroll_y {
+                            let max_scroll_y = textarea.size.height - max_size_y;
+                            if textarea.scrolly > 0. {
+                                textarea.scrolly = 0.;
+                            } else if textarea.scrolly < max_scroll_y {
+                                textarea.scrolly = max_scroll_y;
+                            }
+                        } else {
                             textarea.scrolly = 0.;
-                        } else if textarea.scrolly < max_scroll_y {
-                            textarea.scrolly = max_scroll_y;
                         }
-                    } else {
-                        textarea.scrolly = 0.;
-                    }
-                    if can_scroll_x {
-                        let max_scroll_x = textarea.size.width - max_size_x;
-                        if textarea.scrollx > 0. {
+                        if can_scroll_x {
+                            let max_scroll_x = textarea.size.width - max_size_x;
+                            if textarea.scrollx > 0. {
+                                textarea.scrollx = 0.;
+                            } else if textarea.scrollx < max_scroll_x {
+                                textarea.scrollx = max_scroll_x;
+                            }
+                        } else {
                             textarea.scrollx = 0.;
-                        } else if textarea.scrollx < max_scroll_x {
-                            textarea.scrollx = max_scroll_x;
                         }
-                    } else {
-                        textarea.scrollx = 0.;
                     }
+
+                    let multiline = true;
+                    ui.text_edit_impl(textarea_.clone(), text_buffer.clone(), multiline);
+
+                    if max_size_y > textarea_.borrow().size.height {
+                        ui.scrollbar(textarea_.clone(), max_size_y, Axis::Y);
+                    }
+                    textarea = Some(textarea_.clone());
+                });
+
+                let textarea_ref = textarea.unwrap();
+                if max_size_x > textarea_ref.borrow().size.width {
+                    ui.scrollbar(textarea_ref.clone(), max_size_x, Axis::X);
                 }
-
-                ui.text_edit_impl(textarea_.clone(), text_buffer.clone(), multiline);
-
-                if max_size_y > textarea_.borrow().size.height {
-                    ui.scrollbar(textarea_.clone(), max_size_y, Axis::Y);
-                }
-                textarea = Some(textarea_.clone());
-            });
-
-            let textarea_ref = textarea.unwrap();
-            if max_size_x > textarea_ref.borrow().size.width {
-                ui.scrollbar(textarea_ref.clone(), max_size_x, Axis::X);
-            }
-        });
+            },
+        );
 
         container
     }

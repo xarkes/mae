@@ -257,9 +257,9 @@ fn main() {
     ui.eventloop(|ui| {
         // main content
         let mut params = UIBoxParams::new();
-        params.width(uisize!("90%"));
-        params.height(uisize!("90%"));
-        let txtarea = ui.textarea(noteapp.buffer.clone(), "#textarea", Some(params));
+        params.width(uisize!("100%"));
+        params.height(uisize!("100%"));
+        ui.textarea(noteapp.buffer.clone(), "#textarea", Some(params));
 
         ui.floating_pane(
             Point::new(1024. - 200., 768. - 240.),
