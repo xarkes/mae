@@ -278,6 +278,7 @@ impl Window {
                         }),
                         // XXX(xarkes): I think this sucks to use key (LMB/RMB) to differentiate scroll axis
                         // Good enough for now, will likely have to improve after mobile support
+                        // -> actually even should store both deltas to handle smotth diagonal scrolling
                         NSEventType::ScrollWheel => match ev.deltaX() != 0. {
                             true => Some(OSEvent {
                                 ty: OSEventType::Scroll,

@@ -186,8 +186,7 @@ impl IMUITextInputState {
         let handled;
         let get_str_insert_idx = |idx| {
             if idx != self.buffer.borrow().len() {
-                let (i, c) = self.buffer.borrow().char_indices().nth(idx - 1).unwrap();
-                return i + c.len_utf8();
+                return self.buffer.borrow().char_indices().nth(idx).unwrap().0;
             }
             return self.idx;
         };
@@ -196,13 +195,9 @@ impl IMUITextInputState {
                 let mut bufchanged = false;
                 match keycode {
                     OSKeyCode::KeyBackspace => {
-                        if self.idx > 1 {
+                        if self.idx > 0 {
                             let byte_idx = get_str_insert_idx(self.idx - 1);
                             self.buffer.borrow_mut().remove(byte_idx);
-                            bufchanged = true;
-                            self.update_cursor_loc(self.idx - 1);
-                        } else if self.idx > 0 {
-                            self.buffer.borrow_mut().remove(self.idx - 1);
                             bufchanged = true;
                             self.update_cursor_loc(self.idx - 1);
                         }
