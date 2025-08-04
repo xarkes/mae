@@ -129,12 +129,7 @@ impl GLContext {
         }
     }
 
-    pub fn update_font_texture(&mut self, atlas: &crate::render::font_cache::Atlas) {
-        if self.font_texture != u32::MAX {
-            // XXX(xarkes): If the font texture already exist, is it fine to just reallocate it?
-            // Does OpenGL handle it or should we do things differently
-        }
-
+    pub fn update_font_texture(&mut self, atlas: &crate::render::font_cache::Atlas) -> u32 {
         unsafe { gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1) };
 
         // xarkes: Create texture for font
@@ -159,7 +154,7 @@ impl GLContext {
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
         }
-        self.font_texture = font_texture;
+        font_texture
     }
 
     pub fn resize(&mut self, w: f32, h: f32) {
@@ -213,9 +208,14 @@ impl GLContext {
         for batch in batches.iter() {
             unsafe {
                 gl::BindVertexArray(self.vao);
-                gl::ActiveTexture(gl::TEXTURE0);
-                gl::BindTexture(gl::TEXTURE_2D, self.font_texture);
                 gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
+            }
+
+            if batch.texture.is_some() {
+                unsafe {
+                    gl::ActiveTexture(gl::TEXTURE0);
+                    gl::BindTexture(gl::TEXTURE_2D, batch.texture.unwrap());
+                }
             }
 
             // xarkes: fill vertex buffer

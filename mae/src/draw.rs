@@ -19,10 +19,6 @@ impl Drawer {
         debug: bool,
     ) {
         let scale_factor = self.renderer.win.dpi;
-        let batch = match debug {
-            false => self.renderer.current_batch(),
-            true => self.renderer.debug_batch(),
-        };
         let bounds = [
             RectCoords {
                 x0: coords.x0,
@@ -65,7 +61,7 @@ impl Drawer {
                 colors: [color, color, color, color],
                 extra: Extra::new(true),
             };
-            batch.add_rect(rect);
+            self.renderer.add_rect(rect, None);
         }
     }
     pub fn draw_rect(&mut self, coords: &RectCoords, color: V4f32) {
@@ -107,12 +103,18 @@ impl Drawer {
         ymax: f32,
         color: V4f32,
         underflow: bool,
+        font_icon: bool,
     ) -> f32 {
         let scale_factor = self.renderer.win.dpi;
         let size = size * scale_factor;
         let xstart = x * scale_factor;
         let xmax = xmax * scale_factor;
         let ymax = ymax * scale_factor;
+
+        // We update the font texture before drawing chars
+        // Drawing chars may update the atlas, and thus the next frame would use a wrong atlas
+        // But we accept it and wait for next draw call to update the texture
+        self.renderer.update_font_texture(font_icon);
 
         let mut x = xstart;
         let y = y * scale_factor + size;
@@ -127,7 +129,18 @@ impl Drawer {
                 x += size;
                 continue;
             }
-            let glyph = *self.renderer.font_cache.borrow_mut().get(c, size);
+            let (glyph, texture_id) = match font_icon {
+                true => {
+                    let mut fc = self.renderer.icon_font_cache.borrow_mut();
+                    let texture = fc.texture_id;
+                    (fc.get(c, size).clone(), texture)
+                }
+                false => {
+                    let mut fc = self.renderer.font_cache.borrow_mut();
+                    let texture = fc.texture_id;
+                    (fc.get(c, size).clone(), texture)
+                }
+            };
 
             // xarkes: push a rect instruction for each character
             let w = (glyph.width) as f32;
@@ -168,13 +181,9 @@ impl Drawer {
                     colors: [color, color, color, color],
                     extra: Extra::new(false),
                 };
-                self.renderer.current_batch().add_rect(rect);
+                self.renderer.add_rect(rect, Some(texture_id));
             }
             x += glyph.advance;
-        }
-        if self.renderer.font_cache.borrow().dirty {
-            self.renderer.font_cache.borrow_mut().dirty = false;
-            self.renderer.update_font_texture();
         }
         x - xstart
     }

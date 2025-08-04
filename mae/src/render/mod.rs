@@ -10,6 +10,7 @@ use font_cache::FontCache;
 pub struct RenderBatch {
     data: Vec<Rect2DInst>,
     bytes_count: isize,
+    texture: Option<u32>,
 }
 
 #[repr(C)]
@@ -106,6 +107,7 @@ impl RenderBatch {
         RenderBatch {
             data: Vec::with_capacity(prealloc),
             bytes_count: 0,
+            texture: None,
         }
     }
 
@@ -119,6 +121,7 @@ pub struct Renderer {
     pub win: Window,
     pub ctx: Box<opengl::GLContext>,
     pub font_cache: Rc<RefCell<FontCache>>,
+    pub icon_font_cache: Rc<RefCell<FontCache>>,
     batches: Vec<RenderBatch>,
 }
 
@@ -144,23 +147,40 @@ impl Renderer {
                 panic!("Renderer not implemented!");
             }
         };
-        let font_cache = Rc::new(RefCell::new(FontCache::new()));
-        ctx.update_font_texture(font_cache.borrow().atlas());
-        // XXX(xarkes): This sucks, make it better
+        let font_cache = Rc::new(RefCell::new(FontCache::new(include_bytes!(
+            "../../assets/NotoSans-Regular.ttf"
+        ))));
+        let icon_font_cache = Rc::new(RefCell::new(FontCache::new(include_bytes!(
+            "../../assets/MaterialIcons-Regular.ttf"
+        ))));
         let mut batches = Vec::new();
         batches.push(RenderBatch::new(100));
-        batches.push(RenderBatch::new(100));
-        Renderer {
+        let mut renderer = Renderer {
             win,
             ctx,
             font_cache,
+            icon_font_cache,
             batches,
-        }
+        };
+        renderer.update_font_texture(false);
+        renderer.update_font_texture(true);
+        renderer
     }
 
-    pub fn update_font_texture(&mut self) {
-        let fc = self.font_cache.borrow();
-        self.ctx.update_font_texture(fc.atlas());
+    pub fn update_font_texture(&mut self, font_icon: bool) {
+        let mut fc = match font_icon {
+            true => self.icon_font_cache.borrow_mut(),
+            false => self.font_cache.borrow_mut(),
+        };
+        if fc.dirty {
+            let texture_id = self.ctx.update_font_texture(fc.atlas());
+            fc.texture_id = texture_id;
+            fc.dirty = false;
+            println!(
+                "Font cache dirty, generating new texture: texture_id: {} (font_icon: {})",
+                texture_id, font_icon
+            );
+        }
     }
 
     pub fn resize(&mut self, w: f32, h: f32) {
@@ -174,15 +194,19 @@ impl Renderer {
 
         self.batches.clear();
         self.batches.push(RenderBatch::new(100));
-        self.batches.push(RenderBatch::new(100));
     }
 
-    // XXX(xarkes): rework this
     pub fn current_batch(&mut self) -> &mut RenderBatch {
-        &mut self.batches[0]
+        let id = self.batches.len() - 1;
+        &mut self.batches[id]
     }
-    pub fn debug_batch(&mut self) -> &mut RenderBatch {
-        &mut self.batches[1]
+
+    pub fn add_rect(&mut self, inst: Rect2DInst, texture: Option<u32>) {
+        if texture != self.current_batch().texture {
+            self.batches.push(RenderBatch::new(100));
+            self.current_batch().texture = texture;
+        }
+        self.current_batch().add_rect(inst);
     }
 
     #[cfg(debug_assertions)]

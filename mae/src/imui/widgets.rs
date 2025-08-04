@@ -34,7 +34,7 @@ impl IMUI {
                 UIBoxFlag::DrawBackground as u64,
                 None,
                 |ui| {
-                    if ui.button("Fold > ##fp_fold").borrow().clicked() {
+                    if ui.button("Fold > ##fp_fold", None).borrow().clicked() {
                         let (key, _) =
                             ui.get_key_from_string(Some(foldable_frame_id), uibox.clone());
                         if let Some(uibox) = ui.uiboxes.get(&key) {
@@ -46,7 +46,7 @@ impl IMUI {
                         }
                     }
                     ui.label(title);
-                    if ui.button("X##fp_quit").borrow().clicked() {
+                    if ui.button("X##fp_quit", None).borrow().clicked() {
                         uibox.borrow_mut().visible = false;
                     }
                 },
@@ -122,6 +122,9 @@ impl IMUI {
                 *box_size.axis(axis)
             );
 
+            let bar_color = color_rgb(100, 100, 100);
+            let bar_empty_color = color_rgb(40, 40, 40);
+
             let pre_scrollbar = ui.add_box_from_string(
                 Some(format!("#scrollbar_pre_{}", axis_letter).as_str()),
                 UIBoxFlag::DrawBackground as u64,
@@ -138,7 +141,7 @@ impl IMUI {
                         .set_pref_size((uisize!("100%"), UISize::DPixels(pre_size)));
                 }
             }
-            pre_scrollbar.borrow_mut().style.bg_color = color_rgb(255, 255, 0);
+            pre_scrollbar.borrow_mut().style.bg_color = bar_empty_color;
             let scrollbar = ui.add_box_from_string(
                 Some(format!("#scrollbar_bar_{}", axis_letter).as_str()),
                 UIBoxFlag::DrawBackground as u64
@@ -157,7 +160,7 @@ impl IMUI {
                         .set_pref_size((uisize!("100%"), UISize::DPixels(bar_size)));
                 }
             }
-            scrollbar.borrow_mut().style.bg_color = color_rgb(0, 255, 255);
+            scrollbar.borrow_mut().style.bg_color = bar_color;
             let post_scrollbar = ui.add_box_from_string(
                 Some(format!("#scrollbar_post_{}", axis_letter).as_str()),
                 UIBoxFlag::DrawBackground as u64,
@@ -174,7 +177,7 @@ impl IMUI {
                         .set_pref_size((uisize!("100%"), UISize::DPixels(post_size)));
                 }
             }
-            post_scrollbar.borrow_mut().style.bg_color = color_rgb(255, 0, 255);
+            post_scrollbar.borrow_mut().style.bg_color = bar_empty_color;
         });
     }
 }

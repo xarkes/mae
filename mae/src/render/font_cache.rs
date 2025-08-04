@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 
+use super::Renderer;
+
 struct LRUEntry<K, V> {
     #[allow(dead_code)]
     key: K,
@@ -161,39 +163,24 @@ pub struct FontCache {
     glyph_cache: HashMap<u32, GlyphCache>,
     atlas: Atlas,
     pub(crate) dirty: bool,
+    pub(crate) texture_id: u32,
 }
 impl FontCache {
-    pub fn new() -> Self {
+    pub fn new(font_bytes: &[u8]) -> Self {
         // XXX(xarkes): It seems that fontdue is not able to handle emojis rasterization.
         // In addition, we may want in the future to have a way to handle font "fallback"
         // i.e. looking up for a glyph in a separate font when the current one does not provide it.
         // NOTE(xarkes): A quick search shows that apparently no font bundles all languages, so most likely we should
         // have multiple fonts (e.g. Google Noto) and load them depending on the language?
         // Not sure what's the best way to proceed here.
-        // let font = include_bytes!("/System/Library/Fonts/SFNSMono.ttf") as &[u8];
-        // let font = include_bytes!("/System/Library/Fonts/SFNS.ttf") as &[u8];
-        #[cfg(target_os = "macos")]
-        let font = include_bytes!("/System/Library/Fonts/Menlo.ttc") as &[u8];
-        // #[cfg(target_os = "macos")]
-        // let font = include_bytes!("/Users/user/Downloads/Noto_Sans/static/NotoSans-Regular.ttf")
-        //     as &[u8];
-        #[cfg(target_os = "linux")]
-        let font = include_bytes!("/usr/share/fonts/noto/NotoSansMono-Regular.ttf") as &[u8];
-        #[cfg(target_os = "windows")]
-        let font = include_bytes!("C:\\Windows\\Fonts\\lucon.ttf") as &[u8];
-        #[cfg(target_os = "android")]
-        let font = include_bytes!("/System/Library/Fonts/Menlo.ttc") as &[u8];
-        // let font = include_bytes!("/tmp/fonts/Inconsolata-Regular.ttf") as &[u8];
-        // let font =
-        //     include_bytes!("/Users/user/Downloads/Noto_Color_Emoji/NotoColorEmoji-Regular.ttf")
-        //         as &[u8];
-        // let font = include_bytes!("/System/Library/Fonts/Apple Symbols.ttf") as &[u8];
-        let font = fontdue::Font::from_bytes(font, fontdue::FontSettings::default()).unwrap();
+        // let font = include_bytes!(font_file) as &[u8];
+        let font = fontdue::Font::from_bytes(font_bytes, fontdue::FontSettings::default()).unwrap();
         FontCache {
             font,
             glyph_cache: HashMap::new(),
             atlas: Atlas::new(),
             dirty: true,
+            texture_id: 0,
         }
     }
 

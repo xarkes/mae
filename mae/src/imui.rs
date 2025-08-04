@@ -512,12 +512,12 @@ impl IMUI {
             let parent_bound = parent_origin + parent_size;
 
             // xarkes: handle overflow: reduce children size down to 0 if needed
-            // if !node.parent.as_ref().unwrap().borrow().scrollable_x() {
-            //     let bound = node.origin.axis(axis) + node.size.axis(axis);
-            //     if bound > parent_bound {
-            //         *node.size.axis_mut(axis) = f32::max(parent_bound - node.origin.axis(axis), 0.);
-            //     }
-            // }
+            if !node.parent.as_ref().unwrap().borrow().scrollable_x() {
+                let bound = node.origin.axis(axis) + node.size.axis(axis);
+                if bound > parent_bound {
+                    *node.size.axis_mut(axis) = f32::max(parent_bound - node.origin.axis(axis), 0.);
+                }
+            }
 
             // xarkes: handle overflow: reduce all previous children size to give space for this one
             // let size = *node.size.axis(axis);
@@ -598,17 +598,19 @@ impl IMUI {
                     self.drawer.draw_text(
                         bounds.x0 + margin,
                         bounds.y0 + margin,
-                        self.style.text_size,
+                        curnode.style.font_size,
                         string.as_str(),
                         string.len(),
                         bounds.x1 - margin,
                         bounds.y1 - margin,
                         self.style.text_color,
                         false,
+                        curnode.style.font_icon,
                     );
                 }
             }
 
+            #[cfg(debug_assertions)]
             if self.debug.hints {
                 // if true {
                 let col = match curnode.hover() {
@@ -631,6 +633,7 @@ impl IMUI {
                         curnode.origin.y + curnode.size.height,
                         color_rgb(255, 255, 0),
                         false,
+                        false,
                     );
                     self.drawer.draw_text(
                         self.size.width / 2.,
@@ -641,6 +644,7 @@ impl IMUI {
                         self.size.width,
                         self.size.height,
                         color_rgb(255, 255, 0),
+                        false,
                         false,
                     );
                 }
@@ -1013,6 +1017,7 @@ impl IMUI {
                         font_size: self.style.text_size,
                         border_size: self.style.border_size,
                         bg_color: self.style.bg_color,
+                        font_icon: false,
                     },
                 }));
                 if key != 0 {
@@ -1158,7 +1163,7 @@ impl IMUI {
         }
     }
 
-    pub fn button(&mut self, label: &str) -> UIBoxRef {
+    pub fn button(&mut self, label: &str, tooltip_text: Option<&str>) -> UIBoxRef {
         let uibox = self.add_box_from_string(
             Some(label),
             UIBoxFlag::Clickable as u64
@@ -1168,6 +1173,40 @@ impl IMUI {
                 | UIBoxFlag::DrawHot as u64,
         );
         uibox.borrow_mut().style.bg_color = self.style.main_color;
+
+        // xarkes: show tooltip when needed
+        if uibox.borrow().hover() && tooltip_text.is_some() {
+            let point = self.event.mouse.unwrap();
+            let point = Point::new(point.x + 10., point.y - 10.);
+            let tooltip = self.new_floating_root(0, point);
+            let line_height = self
+                .drawer
+                .renderer
+                .font_cache
+                .borrow()
+                .line_height(self.style.text_size);
+            tooltip
+                .borrow_mut()
+                .set_pref_size((UISize::Children, UISize::DPixels(line_height)));
+            tooltip.borrow_mut().style.bg_color = self.style.bg_color;
+            self.handle_uibox_event(tooltip.clone());
+            self.parent_stack.push(tooltip);
+            {
+                let shortcut_string = "";
+                self.label(format!("{}{}", tooltip_text.unwrap(), shortcut_string).as_str());
+            }
+            self.parent_stack.pop();
+        }
+        uibox
+    }
+
+    pub fn button_icon(&mut self, label: &str, tooltip_text: Option<&str>) -> UIBoxRef {
+        let uibox = self.button(label, tooltip_text);
+        uibox.borrow_mut().style.font_icon = true;
+        uibox.borrow_mut().style.font_size = 24.;
+        uibox
+            .borrow_mut()
+            .set_pref_size((uisize!("24px"), uisize!("24px")));
         uibox
     }
 }

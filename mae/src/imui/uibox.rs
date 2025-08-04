@@ -222,6 +222,7 @@ pub struct UIBoxStyle {
     pub(crate) border_size: f32,
     pub(crate) font_size: f32,
     pub(crate) bg_color: Color,
+    pub(crate) font_icon: bool,
 }
 impl UIBoxStyle {
     pub fn default() -> Self {
@@ -230,6 +231,7 @@ impl UIBoxStyle {
             border_size: 2.,
             font_size: 40.,
             bg_color: color_rgb(255, 0, 255),
+            font_icon: false,
         }
     }
 }

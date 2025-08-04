@@ -2,7 +2,6 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Error;
 use std::io::ErrorKind;
-use std::path::PathBuf;
 use std::rc::Rc;
 
 use mae::imui::IMUI;
@@ -10,7 +9,6 @@ use mae::imui::Point;
 use mae::imui::Size;
 use mae::imui::UILayout;
 use mae::imui::UISize;
-use mae::imui::color_rgb;
 use mae::imui::uibox::UIBoxFlag;
 use mae::imui::uibox::UIBoxParams;
 use mae::uisize;
@@ -245,9 +243,18 @@ impl NoteApp {
     }
 }
 
+macro_rules! icon {
+    ($value:tt) => {
+        char::from_u32($value).unwrap().to_string().as_str()
+    };
+}
+
 fn main() {
+    println!("Starting Mae {}_alpha_0", env!("CARGO_PKG_VERSION"));
+
     // xarkes: init notes
     let mut noteapp = NoteApp::new(HOME_FOLDER);
+    println!("Selected default database type: local sqlite");
 
     // xarkes: draw UI
     let mut ui = IMUI::new(1024, 768);
@@ -259,37 +266,59 @@ fn main() {
         let mut params = UIBoxParams::new();
         params.width(uisize!("100%"));
         params.height(uisize!("100%"));
-        ui.textarea(noteapp.buffer.clone(), "#textarea", Some(params));
-
-        ui.floating_pane(
-            Point::new(1024. - 200., 768. - 240.),
-            Size::from((200., 240.)),
-            "tmp",
-            |ui| {
-                if ui.button("Save").borrow().clicked() {
-                    noteapp.save();
-                }
-                if ui.button("New").borrow().clicked() {
-                    noteapp.newnote();
-                }
-                if ui.button("Search").borrow().clicked() {
-                    show_search = true;
-                    search = Rc::new(RefCell::new(String::from("")));
-                }
-                if ui.button("Import").borrow().clicked() {
-                    noteapp
-                        .db
-                        .import_from_markdown(std::path::Path::new(
-                            "/Users/user/Downloads/AnyTypeDB/Anytype.20250720.222959.98",
-                        ))
-                        .unwrap();
-                }
-            },
-        );
+        ui.container(None, UILayout::Horizontal, 0, Some(params), |ui| {
+            params.width(uisize!("25px"));
+            ui.container(
+                None,
+                UILayout::Vertical,
+                UIBoxFlag::DrawBackground as u64,
+                Some(params),
+                |ui| {
+                    if ui
+                        .button_icon(icon!(0xe161), Some("Save the database to fileystem."))
+                        .borrow()
+                        .clicked()
+                    {
+                        noteapp.save();
+                    }
+                    if ui
+                        .button_icon(icon!(0xefd3), Some("Create a new note"))
+                        .borrow()
+                        .clicked()
+                    {
+                        noteapp.newnote();
+                    }
+                    if ui
+                        .button_icon(icon!(0xe8b6), Some("Search notes."))
+                        .borrow()
+                        .clicked()
+                    {
+                        show_search = true;
+                        search = Rc::new(RefCell::new(String::from("")));
+                    }
+                    if ui
+                        .button_icon(
+                            icon!(0xe9fc),
+                            Some("Import previous notes to the application."),
+                        )
+                        .borrow()
+                        .clicked()
+                    {
+                        noteapp
+                            .db
+                            .import_from_markdown(std::path::Path::new(
+                                "/Users/user/Downloads/AnyTypeDB/Anytype.20250720.222959.98",
+                            ))
+                            .unwrap();
+                    }
+                },
+            );
+            params.width(UISize::Expand);
+            ui.textarea(noteapp.buffer.clone(), "#textarea", Some(params));
+        });
 
         // Prompts
         if show_search {
-            // .position((uisize!("25%"), uisize!("40px")));
             ui.prompt("#search_prompt", |ui| {
                 ui.label("Search for notes");
                 ui.line_edit(search.clone(), "#search");
@@ -301,7 +330,10 @@ fn main() {
                         }
                     }
                     if ui
-                        .button(format!("{}##button_label_{}", note.name, note.id).as_str())
+                        .button(
+                            format!("{}##button_label_{}", note.name, note.id).as_str(),
+                            None,
+                        )
                         .borrow()
                         .clicked()
                     {
@@ -316,11 +348,12 @@ fn main() {
     // TODO:
     // Implement search/go to button
     // --> dropdown menu a la command palette
-    // --> implement scrolling
     // --> fix event handling and consuming, it is still fucking wrong
-    // --> re-implement dragging
-    // --> implement animation
+    // --> (re-implement dragging)
     // --> implement shortcuts
+    //
+    // --> must be smooth af
+    // --> implement animation
 }
 
 fn fuzzy_search(filter: &str, data: &str) -> bool {
