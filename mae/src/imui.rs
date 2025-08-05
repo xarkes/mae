@@ -282,7 +282,6 @@ impl IMUI {
         }
     }
     pub fn eventloop(&mut self, mut build_ui_func: impl FnMut(&mut IMUI)) {
-        let freq = os::timer_init();
         let mut time = 0f64;
         let mut start = os::timer_value();
         loop {
@@ -318,7 +317,7 @@ impl IMUI {
             }
 
             let end = os::timer_value();
-            time = (end - start) as f64 * 1_000_000.0 / freq;
+            time = (end - start) as f64;
             start = end;
         }
     }
@@ -568,9 +567,7 @@ impl IMUI {
             let bounds = curnode.bounds();
 
             // xarkes: for each box, send the proper draw commands
-            let mut margin = 0.;
             if curnode.draw_background() {
-                margin = curnode.style.margin;
                 let color = match curnode.clickable() && curnode.draw_hot() && curnode.hover() {
                     true => {
                         let col = curnode.style.bg_color;
@@ -595,14 +592,15 @@ impl IMUI {
             if curnode.draw_text() {
                 if let Some(string) = &curnode.string {
                     // TODO(xarkes): Clipping should be applied here
+                    let margin = curnode.style.margin;
                     self.drawer.draw_text(
                         bounds.x0 + margin,
                         bounds.y0 + margin,
                         curnode.style.font_size,
                         string.as_str(),
                         string.len(),
-                        bounds.x1 - margin,
-                        bounds.y1 - margin,
+                        bounds.x1 + margin,
+                        bounds.y1 + margin,
                         self.style.text_color,
                         false,
                         curnode.style.font_icon,
@@ -694,6 +692,11 @@ impl IMUI {
             None => None,
         }
     }
+    pub fn focus(&mut self, uibox: UIBoxRef) {
+        if self.text_input_state.is_some() {
+            self.text_input_state = None;
+        }
+    }
 
     /////////////////////////////////
     //// Widgets functions
@@ -742,7 +745,12 @@ impl IMUI {
         container
     }
 
-    pub fn line_edit(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIBoxRef {
+    pub fn line_edit(
+        &mut self,
+        text_buffer: Rc<RefCell<String>>,
+        id: &str,
+        focus: bool,
+    ) -> UIBoxRef {
         let line_edit = self.add_box_from_string(
             Some(id),
             UIBoxFlag::Clickable as u64
@@ -751,7 +759,7 @@ impl IMUI {
         );
         line_edit.borrow_mut().layout = Some(UILayout::Vertical);
         let multiline = false;
-        self.text_edit_impl(line_edit, text_buffer, multiline)
+        self.text_edit_impl(line_edit, text_buffer, multiline, focus)
     }
     pub fn textarea(
         &mut self,
@@ -793,6 +801,7 @@ impl IMUI {
                     textarea_
                         .borrow_mut()
                         .set_pref_size((UISize::Expand, uisize!("100%")));
+                    textarea_.borrow_mut().style.margin = 10.;
 
                     // xarkes: fixup scrolling: event handler does not know the child's logic
                     {
@@ -823,7 +832,8 @@ impl IMUI {
                     }
 
                     let multiline = true;
-                    ui.text_edit_impl(textarea_.clone(), text_buffer.clone(), multiline);
+                    let focus = false;
+                    ui.text_edit_impl(textarea_.clone(), text_buffer.clone(), multiline, focus);
 
                     if max_size_y > textarea_.borrow().size.height {
                         ui.scrollbar(textarea_.clone(), max_size_y, Axis::Y);
@@ -845,8 +855,9 @@ impl IMUI {
         textarea: UIBoxRef,
         text_buffer: Rc<RefCell<String>>,
         multiline: bool,
+        focus: bool,
     ) -> UIBoxRef {
-        if textarea.borrow().clicked() {
+        if textarea.borrow().clicked() || (focus && self.text_input_state.is_none()) {
             // xarkes: update the text input global state
             let mut state = IMUITextInputState::new(
                 // textarea.key,
@@ -892,7 +903,7 @@ impl IMUI {
                     if i > line_idx_end {
                         break;
                     }
-                    self.label(line);
+                    self.label(line).borrow_mut().style.margin = 10.;
                 }
             } else {
                 self.label(text_buffer.borrow().as_str());

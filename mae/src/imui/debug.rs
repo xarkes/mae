@@ -43,14 +43,14 @@ fn draw_target_node_info(ui: &mut IMUI) {
 
 fn draw_debug_pane(ui: &mut IMUI, debug: &mut IMUIDebug, time: f64) {
     let xoff = ui.size.width - 200.;
-    let mut fp = ui.floating_pane(
+    let fp = ui.floating_pane(
         Point::new(xoff, 40.),
         Size::from((200., 250.)),
         "Debug metrics",
         |ui| {
             if debug.fps {
-                let fps = 1f64 / time * 1000f64;
-                let text = format!("Render: {:.2}ms - {}fps", time, fps as u64);
+                let fps = 1e9 / time;
+                let text = format!("Render: {:.2}ms - {}fps", time / 1e6, fps as u64);
                 ui.label(text.as_str());
             }
             // ui.checkbox("Show hints", &mut debug.hints);

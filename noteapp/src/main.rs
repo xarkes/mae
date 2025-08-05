@@ -261,6 +261,8 @@ fn main() {
 
     let mut show_search = false;
     let mut search = Rc::new(RefCell::new(String::from("")));
+    let save_interval_seconds = 30.;
+    let mut last_save = mae::os::timer_value() as f64 / 1e9;
     ui.eventloop(|ui| {
         // main content
         let mut params = UIBoxParams::new();
@@ -317,11 +319,13 @@ fn main() {
             ui.textarea(noteapp.buffer.clone(), "#textarea", Some(params));
         });
 
-        // Prompts
+        // prompts
         if show_search {
             ui.prompt("#search_prompt", |ui| {
                 ui.label("Search for notes");
-                ui.line_edit(search.clone(), "#search");
+                let le = ui.line_edit(search.clone(), "#search", show_search);
+                le.borrow_mut()
+                    .set_pref_size((uisize!("100%"), UISize::TextContent));
                 let search_filter = search.borrow();
                 for note in &noteapp.notes() {
                     if search_filter.len() > 0 {
@@ -343,6 +347,14 @@ fn main() {
                 }
             });
         };
+
+        // common logic
+        let curtime = mae::os::timer_value() as f64 / 1e9;
+        if last_save + save_interval_seconds < curtime {
+            println!("Auto save...");
+            noteapp.save();
+            last_save = curtime;
+        }
     });
 
     // TODO:

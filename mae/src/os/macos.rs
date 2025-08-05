@@ -329,16 +329,14 @@ struct MachTimeBaseInfoT {
     numer: u32,
 }
 unsafe extern "C" {
-    fn mach_absolute_time() -> u64;
-    fn mach_timebase_info(t: *const std::ffi::c_void);
+    fn clock_gettime_nsec_np(t: u64) -> u64;
 }
 pub fn timer_init() -> f64 {
-    let info = MachTimeBaseInfoT { denom: 0, numer: 0 };
-    unsafe { mach_timebase_info(std::ptr::from_ref(&info) as *const _) };
-    info.denom as f64 * 1e9 / info.numer as f64
+    1.
 }
 pub fn timer_value() -> u64 {
-    unsafe { mach_absolute_time() }
+    let _clock_monotonic_raw = 4;
+    unsafe { clock_gettime_nsec_np(_clock_monotonic_raw) }
 }
 
 fn macos_keycode_to_oskey(keycode: u16) -> OSKey {

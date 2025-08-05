@@ -50,11 +50,9 @@ impl IMUITextInputState {
         point: Point,
         delta: Point,
     ) {
-        let relative_x = point.x - bounds.x0 - delta.x;
-        let relative_y = point.y - bounds.y0 - delta.y;
-        if relative_x < 0. || relative_y < 0. {
-            return;
-        }
+        let margin = self.focus.borrow().style.margin;
+        let relative_x = point.x - bounds.x0 - delta.x - margin;
+        let relative_y = point.y - bounds.y0 - delta.y - margin;
 
         // xarkes: first, get the corresponding line
         let line_height = self.font_cache.borrow().line_height(font_size);
@@ -82,8 +80,8 @@ impl IMUITextInputState {
         }
 
         self.idx = buffer_idx;
-        self.cursor_x = cursor_x;
-        self.cursor_y = cursor_y;
+        self.cursor_x = cursor_x + margin;
+        self.cursor_y = cursor_y + margin;
     }
     fn update_cursor_loc(&mut self, idx: usize) {
         self.idx = idx;
@@ -91,6 +89,7 @@ impl IMUITextInputState {
         let mut curidx = 0;
         let font_size = self.focus.borrow().style.font_size;
         let mut fc = self.font_cache.borrow_mut();
+        let margin = self.focus.borrow().style.margin;
         for (lineidx, line) in buf.lines().enumerate() {
             if self.idx <= curidx + line.chars().count() {
                 // xarkes: this is current line, compute proper x
@@ -108,8 +107,8 @@ impl IMUITextInputState {
                 // xarkes: update whole state
                 self.cursor_col = col;
                 self.cursor_row = lineidx;
-                self.cursor_x = length;
-                self.cursor_y = fc.line_height(font_size) * self.cursor_row as f32;
+                self.cursor_x = length + margin;
+                self.cursor_y = fc.line_height(font_size) * self.cursor_row as f32 + margin;
                 // xarkes: update box scrolling
                 {
                     let mut uibox = self.focus.borrow_mut();
@@ -161,8 +160,8 @@ impl IMUITextInputState {
                 // xarkes: if we are at the '\n', go to next line instead
                 self.cursor_col = 0;
                 self.cursor_row = lineidx + 1;
-                self.cursor_x = 0.;
-                self.cursor_y = fc.line_height(font_size) * self.cursor_row as f32;
+                self.cursor_x = 0. + margin;
+                self.cursor_y = fc.line_height(font_size) * self.cursor_row as f32 + margin;
                 // xarkes: update box scrolling
                 {
                     let mut uibox = self.focus.borrow_mut();
@@ -259,6 +258,9 @@ impl IMUITextInputState {
                             bufchanged = true;
                             self.update_cursor_loc(self.idx + 1);
                         }
+                    }
+                    OSKeyCode::KeyEscape => {
+                        // do nothing
                     }
                     _ => {
                         if let Some(data) = data {
