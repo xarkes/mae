@@ -241,6 +241,7 @@ pub struct IMUI {
     parent_stack: Vec<UIBoxRef>,
     uiboxes: HashMap<u64, UIBoxRef>,
     style: UIStyle,
+    dirty: bool,
 }
 impl IMUI {
     #[cfg(not(target_os = "android"))]
@@ -279,16 +280,33 @@ impl IMUI {
             uiboxes: HashMap::new(),
             parent_stack: vec![root.clone()],
             style: UIStyle::default(),
+            dirty: true,
         }
     }
     pub fn eventloop(&mut self, mut build_ui_func: impl FnMut(&mut IMUI)) {
+        #[cfg(debug_assertions)]
         let mut time = 0f64;
+        #[cfg(debug_assertions)]
         let mut start = os::timer_value();
+        let mut fc = 0usize;
         loop {
+            fc += 1;
             // xarkes: handle events
             {
-                self.consume_events();
-                self.resize();
+                self.pull_consume_events();
+                if self.event.events.len() == 0 && fc > 2 && !self.dirty {
+                    // xarkes: don't draw anything when not needed
+                    // here we check for frame > 2 as we need 2 frames before displaying anything
+                    // XXX(xarkes): dirty, we should wake up once an event is triggered rather than polling all the time
+                    // especially because it caps our FPS
+                    // but for the time being this allows us not eating all the CPU
+                    std::thread::sleep(core::time::Duration::from_millis(16));
+                    continue;
+                }
+                let maybe_new_size = self.drawer.renderer.win.get_size();
+                if maybe_new_size.0 != self.size.width || maybe_new_size.1 != self.size.height {
+                    self.resize();
+                }
             }
 
             // xarkes: clean previous state
@@ -300,12 +318,7 @@ impl IMUI {
             // xarkes: build interface
             {
                 build_ui_func(self);
-                self.layout_all();
-            }
-
-            #[cfg(debug_assertions)]
-            {
-                // xarkes: second draw and layout when debugging -> allows debug information on boxes to be accurate
+                #[cfg(debug_assertions)]
                 draw_debug_info(self, self.debug.clone(), time);
                 self.layout_all();
             }
@@ -314,11 +327,15 @@ impl IMUI {
             {
                 self.draw_ui_all();
                 self.drawer.renderer.render_frame();
+                self.dirty = false;
             }
 
-            let end = os::timer_value();
-            time = (end - start) as f64;
-            start = end;
+            #[cfg(debug_assertions)]
+            {
+                let end = os::timer_value();
+                time = (end - start) as f64;
+                start = end;
+            }
         }
     }
 
@@ -542,6 +559,9 @@ impl IMUI {
             // XXX: we should iterate from the deepest node up to the root, but instead I compute it twice :>
             self.layout_resize_downward_dependents(root.clone(), axis);
             self.layout_resize_downward_dependents(root.clone(), axis);
+            // XXX(xarkes): lmao, your algorithm is completely fucked up :')
+            self.layout_resize_upward_dependents(root.clone(), axis);
+            self.layout_resize_downward_dependents(root.clone(), axis);
         }
         self.apply_layout(root.clone());
         for axis in [Axis::X, Axis::Y] {
@@ -660,9 +680,10 @@ impl IMUI {
 
     /////////////////////////////////
     //// Events related functions
-    pub fn consume_events(&mut self) {
+    pub fn pull_consume_events(&mut self) {
         self.event.events = self.drawer.renderer.win.get_events();
 
+        // xarkes: consume global scope events
         self.event.events.retain(|ev| {
             let mut retain = true;
             if ev.ty == OSEventType::Press {
@@ -670,6 +691,7 @@ impl IMUI {
                     retain = !textinput.handle_event(&ev.key, &ev.chars);
                 }
             }
+            self.dirty = true;
             retain
         });
         // TODO(xarkes): we may want to propagate the event back to the OS window when the application did not consume them
@@ -727,12 +749,10 @@ impl IMUI {
 
             if let Some(params) = params {
                 if let Some(width) = params.width {
-                    let old_height = container.borrow().pref_size.1;
-                    container.borrow_mut().set_pref_size((width, old_height));
+                    container.borrow_mut().pref_size.0 = width;
                 }
                 if let Some(height) = params.height {
-                    let old_width = container.borrow().pref_size.0;
-                    container.borrow_mut().set_pref_size((old_width, height));
+                    container.borrow_mut().pref_size.1 = height;
                 }
             }
         }
@@ -847,7 +867,6 @@ impl IMUI {
                 }
             },
         );
-
         container
     }
     fn text_edit_impl(

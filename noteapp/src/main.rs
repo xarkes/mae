@@ -38,7 +38,7 @@ impl Database {
 
     pub fn init(&self) {
         self.conn.execute(
-            "CREATE TABLE note (id INTEGER PRIMARY KEY, name TEXT NOT NULL, content TEXT NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS note (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, content TEXT NOT NULL)",
             (),
         )
         .unwrap();
@@ -166,14 +166,8 @@ impl NoteApp {
         }
 
         let db_file = std::path::Path::new(dir).join("data.db");
-        let db = match std::fs::exists(&db_file).unwrap_or(false) {
-            true => Database::new(db_file.as_path()),
-            false => {
-                let db = Database::new(db_file.as_path());
-                db.init();
-                db
-            }
-        };
+        let db = Database::new(db_file.as_path());
+        db.init();
 
         let mut notes = db.all_notes();
         if notes.len() == 0 {
@@ -358,6 +352,15 @@ fn main() {
     });
 
     // TODO:
+    //
+    // 1. rewrite/rethink event handling (need something like chain but idk it changes the whole shit)
+    // 2. rethink theming and use it (and support dark mode)
+    // 3. implement clipping
+    // 4. rework fonts - soon we'll want to optimize it so before that we should be able to handle multiple fonts
+    // 5. change os cursor when hovering text fields etc.
+    //
+    //
+    //
     // Implement search/go to button
     // --> dropdown menu a la command palette
     // --> fix event handling and consuming, it is still fucking wrong
