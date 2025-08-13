@@ -327,7 +327,10 @@ impl IMUI {
             {
                 self.draw_ui_all();
                 self.drawer.renderer.render_frame();
-                self.dirty = false;
+                if self.dirty {
+                    self.dirty = false;
+                    fc = 0;
+                }
             }
 
             #[cfg(debug_assertions)]
@@ -388,7 +391,7 @@ impl IMUI {
             let pref_size = node.pref_size;
             let pref_size = [pref_size.0, pref_size.1];
 
-            let mut size = match pref_size[axis.val()] {
+            let size = match pref_size[axis.val()] {
                 UISize::Percents(percents) => {
                     let parent_size = &node.parent.as_ref().unwrap().borrow().size;
                     percents * *parent_size.axis(axis)
@@ -685,13 +688,13 @@ impl IMUI {
 
         // xarkes: consume global scope events
         self.event.events.retain(|ev| {
+            self.dirty = true;
             let mut retain = true;
             if ev.ty == OSEventType::Press {
                 if let Some(textinput) = self.text_input_state.as_mut() {
                     retain = !textinput.handle_event(&ev.key, &ev.chars);
                 }
             }
-            self.dirty = true;
             retain
         });
         // TODO(xarkes): we may want to propagate the event back to the OS window when the application did not consume them
