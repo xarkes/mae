@@ -354,8 +354,11 @@ fn main() {
     // TODO:
     //
     // 1. rewrite/rethink event handling (need something like chain but idk it changes the whole shit)
+    //   -> check how egui does it
     // 2. rethink theming and use it (and support dark mode)
+    //   -> also have to rewrite the general styling API (theme vs per component style vs ... ? its really not clear atm)
     // 3. implement clipping
+    //   -> text clipping + box clipping in general
     // 4. rework fonts - soon we'll want to optimize it so before that we should be able to handle multiple fonts
     // 5. change os cursor when hovering text fields etc.
     //
