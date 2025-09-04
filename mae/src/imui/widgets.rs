@@ -21,7 +21,7 @@ impl IMUI {
     ) -> UIBoxRef {
         let key = u64_hash_from_string(4736251, title);
         let uibox = self.new_floating_root(key, pos);
-        uibox.borrow_mut().pref_size = (UISize::DPixels(size.width), UISize::Children);
+        uibox.borrow_mut().pref_size = (UISize::DPixels(size.width), UISize::DPixels(size.height));
         self.handle_uibox_event(uibox.clone());
         self.parent_stack.push(uibox.clone());
         {
@@ -39,10 +39,10 @@ impl IMUI {
                             ui.get_key_from_string(Some(foldable_frame_id), uibox.clone());
                         if let Some(uibox) = ui.uiboxes.get(&key) {
                             let old_size = uibox.borrow().pref_size;
-                            uibox.borrow_mut().pref_size.1 = match old_size.1 {
-                                UISize::Children => UISize::DPixels(0.),
-                                _ => UISize::Children,
-                            };
+                            // uibox.borrow_mut().pref_size.1 = match old_size.1 {
+                            //     UISize::Children => UISize::DPixels(0.),
+                            //     _ => UISize::Children,
+                            // };
                         }
                     }
                     ui.label(title);

@@ -75,7 +75,7 @@ fn draw_debug_pane(ui: &mut IMUI, debug: &mut IMUIDebug, time: f64) {
             }
         },
     );
-    fp.borrow_mut().pref_size = (UISize::DPixels(200.), UISize::Children);
+    // fp.borrow_mut().pref_size = (UISize::DPixels(200.), UISize::Children);
     // fp.borrow_mut().pref_size = (UISize::DPixels(200.), UISize::Children);
     ui.debug = debug.clone();
 }
