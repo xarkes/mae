@@ -140,80 +140,12 @@ impl UIBoxParams {
 }
 
 pub(crate) fn u64_hash_from_string(seed: u64, string: &str) -> u64 {
-    // dirty implementation, I just want to generate keys atm I don't care of the quality
-    let p1 = 0x2B7E151628AED2A5u64;
-    let p2 = 0x9E3793492EEDC3F7u64;
-    let p3 = 0x3243F6A8885A308Du64;
-
-    let mut h = [
-        std::num::Wrapping(p1),
-        std::num::Wrapping(p2),
-        std::num::Wrapping(p3),
-        std::num::Wrapping(seed),
-    ];
-    let mut k = 0;
-    let length = string.len() / 32;
-
-    #[inline(always)]
-    fn load_u64_le(bytes: &[u8]) -> u64 {
-        u64::from_le_bytes(bytes[..8].try_into().unwrap())
+    // xarkes: DJB2 hash with a twist (seed)
+    let mut hash: u64 = 5381 + seed;
+    for byte in string.bytes() {
+        hash = (hash << 5).wrapping_add(hash).wrapping_add(byte as u64);
     }
-
-    let bytes = string.as_bytes();
-    for _ in 0..length {
-        for i in 0..4 {
-            let l = load_u64_le(&bytes[k..]);
-            h[i] = h[i] ^ std::num::Wrapping(l);
-            h[i] = h[i] * std::num::Wrapping(p1);
-            h[(i + 1) & 3] ^= (l << 40) | (l >> 24);
-            k += 8;
-        }
-    }
-
-    h[0] += ((string.len() << 32) | (string.len() >> 32)) as u64;
-    if (string.len() & 1) == 1 {
-        h[0] ^= bytes[k] as u64;
-        k += 1;
-    }
-    h[0] *= p2;
-    h[0] ^= h[0] >> 31;
-
-    for i in 1..=8 {
-        if string.len() - k < 8 {
-            break;
-        }
-        let l = load_u64_le(&bytes[k..]);
-        h[i] ^= l;
-        h[i] *= p2;
-        h[i] ^= h[i] >> 31;
-        k += 8;
-    }
-
-    let remain = string.len() - k;
-    if remain >= 4 {
-        h[2] ^= u32::from_le_bytes(TryInto::<[u8; 4]>::try_into(&bytes[k..k + 4]).unwrap()) as u64;
-        h[3] ^=
-            u32::from_le_bytes(TryInto::<[u8; 4]>::try_into(&bytes[string.len() - 4..]).unwrap())
-                as u64;
-    } else if remain > 0 {
-        h[2] ^= bytes[k] as u64;
-        h[3] ^= bytes[remain / 2] as u64 | (bytes[remain - 1] as u64) << 8;
-    }
-    let mut i = 0;
-    while k < string.len() {
-        h[i] ^= bytes[k] as u64 | (bytes[k + 1] as u64) << 8;
-        h[i] *= p3;
-        h[i] ^= h[i] >> 31;
-        k += 2;
-        i += 1;
-    }
-
-    let mut x = std::num::Wrapping(seed);
-    x ^= h[0] * (h[2] >> 32) | std::num::Wrapping(1);
-    x ^= h[1] * (h[3] >> 32) | std::num::Wrapping(1);
-    x ^= h[2] * (h[0] >> 32) | std::num::Wrapping(1);
-    x ^= h[3] * (h[1] >> 32) | std::num::Wrapping(1);
-    x.0
+    hash
 }
 
 #[derive(Debug)]
