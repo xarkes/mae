@@ -2,28 +2,8 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::render::{RectCoords, V4f32};
 
-use super::{IMUI, Point, Size, UILayout, UISize, color_rgb};
+use super::{Point, Size, UILayout, UISize, color_rgb};
 pub type UIBoxRef = Rc<RefCell<UIBox>>;
-
-pub struct UIBoxRef2<'a> {
-    pub ui: &'a mut IMUI,
-    pub id: u64,
-}
-impl<'a> UIBoxRef2<'a> {
-    fn get_uibox(&self) -> UIBoxRef {
-        match self.ui.uiboxes.get(&self.id) {
-            Some(b) => b.clone(),
-            None => match self.ui.uiboxes_temp.len() > self.id as usize {
-                true => self.ui.uiboxes_temp[self.id as usize].clone(),
-                false => panic!("malformed uibox id! got an unexpected identifier."),
-            },
-        }
-    }
-    pub fn set_string(&mut self, text: &str) {
-        let uibox = self.get_uibox();
-        uibox.borrow_mut().string = Some(String::from(text));
-    }
-}
 
 pub type Color = V4f32;
 impl Color {
@@ -160,7 +140,7 @@ impl UIBoxParams {
 }
 
 pub(crate) fn u64_hash_from_string(seed: u64, string: &str) -> u64 {
-    // xarkes: DJB2 hash with a twist (seed) - may result in more collisions and maybe a less good avalanche effect, but we'll call it good enough for a first implementation given the expected amount of hashes we are dealing with (usually ~1000 for a standard interface)
+    // xarkes: DJB2 hash with a twist (seed)
     let mut hash: u64 = 5381 + seed;
     for byte in string.bytes() {
         hash = (hash << 5).wrapping_add(hash).wrapping_add(byte as u64);
@@ -222,8 +202,7 @@ impl UIBox {
     pub fn root(id: String) -> Self {
         UIBox {
             key: u64_hash_from_string(1234, id.as_str()),
-            // pref_size: (UISize::Children, UISize::Children),
-            pref_size: (UISize::Expand, UISize::Expand),
+            pref_size: (UISize::Children, UISize::Children),
             origin: Point::default(),
             fixed_origin: Point::default(), // TODO: rename as drag_position
             resize_delta: Point::default(),

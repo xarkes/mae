@@ -19,9 +19,9 @@ fn main() {
             "Demo box",
             |ui| {
                 ui.label("Label here");
-                // ui.button("Button");
-                // ui.line_edit(buffer.clone(), "#textedit");
-                // ui.textarea(buffer2.clone(), "#textarea");
+                ui.button("Button");
+                ui.line_edit(buffer.clone(), "#textedit");
+                ui.textarea(buffer2.clone(), "#textarea");
             },
         );
     });

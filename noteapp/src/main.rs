@@ -244,7 +244,7 @@ macro_rules! icon {
 }
 
 fn main() {
-    println!("Starting nae {}_alpha_0", env!("CARGO_PKG_VERSION"));
+    println!("Starting Mae {}_alpha_0", env!("CARGO_PKG_VERSION"));
 
     // xarkes: init notes
     let mut noteapp = NoteApp::new(HOME_FOLDER);
@@ -258,72 +258,60 @@ fn main() {
     let save_interval_seconds = 30.;
     let mut last_save = mae::os::timer_value() as f64 / 1e9;
     ui.eventloop(|ui| {
-        ui.row(|ui| {
-            ui.text("Hello there");
-            ui.text("How are");
-            ui.label("Label here lol");
-            ui.text("Things?");
+        // main content
+        let mut params = UIBoxParams::new();
+        params.width(uisize!("100%"));
+        params.height(uisize!("100%"));
+        ui.container(None, UILayout::Horizontal, 0, Some(params), |ui| {
+            params.width(uisize!("25px"));
+            ui.container(
+                None,
+                UILayout::Vertical,
+                UIBoxFlag::DrawBackground as u64,
+                Some(params),
+                |ui| {
+                    if ui
+                        .button_icon(icon!(0xe161), Some("Save the database to fileystem."))
+                        .borrow()
+                        .clicked()
+                    {
+                        noteapp.save();
+                    }
+                    if ui
+                        .button_icon(icon!(0xefd3), Some("Create a new note"))
+                        .borrow()
+                        .clicked()
+                    {
+                        noteapp.newnote();
+                    }
+                    if ui
+                        .button_icon(icon!(0xe8b6), Some("Search notes."))
+                        .borrow()
+                        .clicked()
+                    {
+                        show_search = true;
+                        search = Rc::new(RefCell::new(String::from("")));
+                    }
+                    if ui
+                        .button_icon(
+                            icon!(0xe9fc),
+                            Some("Import previous notes to the application."),
+                        )
+                        .borrow()
+                        .clicked()
+                    {
+                        noteapp
+                            .db
+                            .import_from_markdown(std::path::Path::new(
+                                "/Users/user/Downloads/AnyTypeDB/Anytype.20250720.222959.98",
+                            ))
+                            .unwrap();
+                    }
+                },
+            );
+            params.width(UISize::Expand);
+            ui.textarea(noteapp.buffer.clone(), "#textarea", Some(params));
         });
-    })
-    /*
-    ui.eventloop(|ui| {
-        ui.row(|ui| {
-            ui.label("What the hell");
-        });
-        ui.container(
-            None,
-            UILayout::Horizontal,
-            UIBoxFlag::DrawBackground as u64,
-            None,
-            |ui| {
-                ui.container(
-                    None,
-                    UILayout::Vertical,
-                    UIBoxFlag::DrawBackground as u64,
-                    None,
-                    |ui| {
-                        if ui
-                            .button_icon(icon!(0xe161), Some("Save the database to fileystem."))
-                            .borrow()
-                            .clicked()
-                        {
-                            noteapp.save();
-                        }
-                        if ui
-                            .button_icon(icon!(0xefd3), Some("Create a new note"))
-                            .borrow()
-                            .clicked()
-                        {
-                            noteapp.newnote();
-                        }
-                        if ui
-                            .button_icon(icon!(0xe8b6), Some("Search notes."))
-                            .borrow()
-                            .clicked()
-                        {
-                            show_search = true;
-                            search = Rc::new(RefCell::new(String::from("")));
-                        }
-                        if ui
-                            .button_icon(
-                                icon!(0xe9fc),
-                                Some("Import previous notes to the application."),
-                            )
-                            .borrow()
-                            .clicked()
-                        {
-                            noteapp
-                                .db
-                                .import_from_markdown(std::path::Path::new(
-                                    "/Users/user/Downloads/AnyTypeDB/Anytype.20250720.222959.98",
-                                ))
-                                .unwrap();
-                        }
-                    },
-                );
-                ui.textarea(noteapp.buffer.clone(), "#textarea", None);
-            },
-        );
 
         // prompts
         if show_search {
@@ -331,7 +319,7 @@ fn main() {
                 ui.label("Search for notes");
                 let le = ui.line_edit(search.clone(), "#search", show_search);
                 le.borrow_mut()
-                    .set_pref_size((uisize!("100%"), UISize::Content));
+                    .set_pref_size((uisize!("100%"), UISize::TextContent));
                 let search_filter = search.borrow();
                 for note in &noteapp.notes() {
                     if search_filter.len() > 0 {
@@ -362,7 +350,6 @@ fn main() {
             last_save = curtime;
         }
     });
-    */
 
     // TODO:
     //
