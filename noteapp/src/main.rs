@@ -5,8 +5,6 @@ use std::io::ErrorKind;
 use std::rc::Rc;
 
 use mae::imui::IMUI;
-use mae::imui::Point;
-use mae::imui::Size;
 use mae::imui::UILayout;
 use mae::imui::UISize;
 use mae::imui::uibox::UIBoxFlag;
@@ -350,6 +348,12 @@ fn main() {
             last_save = curtime;
         }
     });
+
+    // TODO New: Deadline Oct 1st
+    // - change params() way of setting style (maybe not and just KISS)
+    // - rework font atlas handling
+    // - make text editor better
+    // - add features
 
     // TODO:
     //

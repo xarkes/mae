@@ -42,7 +42,6 @@ pub struct GLContext {
     program: u32,
     vao: u32,
     vbo: u32,
-    font_texture: u32,
 }
 
 // XXX(xarkes): I just allocate a 4MB buffer at the moment, but I don't know if that's right
@@ -122,7 +121,6 @@ impl GLContext {
             program,
             vao,
             vbo,
-            font_texture: u32::MAX,
         }
     }
 

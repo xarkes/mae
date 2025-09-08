@@ -8,11 +8,6 @@ use uibox::{
     Color, UIBox, UIBoxEvent, UIBoxFlag, UIBoxParams, UIBoxRef, UIBoxStyle, u64_hash_from_string,
 };
 
-#[cfg(debug_assertions)]
-mod debug;
-#[cfg(debug_assertions)]
-use debug::{IMUIDebug, draw_debug_info};
-
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;
 
@@ -165,13 +160,10 @@ struct IMUIEventState {
     active: Option<u64>,
     rmouse: Option<Point>,
     rclick: Option<Point>,
-
-    drag_pos: Option<Point>,
-    drag_cache: HashMap<String, Point>,
 }
 
 #[derive(Clone, Copy)]
-enum UILocaleKind {
+pub enum UILocaleKind {
     LtrTtb, // European languages
     RtlTtb, // Hebrew, Arabic like
     TtbLtr, // Mongolian like
@@ -228,8 +220,6 @@ pub struct IMUI {
     root: UIBoxRef,
     floating_roots: Vec<UIBoxRef>,
     locale_kind: UILocaleKind,
-    #[cfg(debug_assertions)]
-    debug: IMUIDebug,
 
     // per-build data
     size: Size,
@@ -237,7 +227,6 @@ pub struct IMUI {
     text_input_state: Option<IMUITextInputState>,
 
     // ui construction helpers
-    params: UIBoxParams,
     parent_stack: Vec<UIBoxRef>,
     uiboxes: HashMap<u64, UIBoxRef>,
     style: UIStyle,
@@ -265,13 +254,10 @@ impl IMUI {
         let root = Rc::new(RefCell::new(UIBox::root(String::from("#root"))));
         IMUI {
             drawer,
-            #[cfg(debug_assertions)]
-            debug: IMUIDebug::default(),
             size: Size {
                 width: 0.,
                 height: 0.,
             },
-            params: UIBoxParams::new(),
             event: IMUIEventState::default(),
             text_input_state: None,
             locale_kind: UILocaleKind::LtrTtb,
@@ -284,10 +270,10 @@ impl IMUI {
         }
     }
     pub fn eventloop(&mut self, mut build_ui_func: impl FnMut(&mut IMUI)) {
-        #[cfg(debug_assertions)]
-        let mut time = 0f64;
-        #[cfg(debug_assertions)]
-        let mut start = os::timer_value();
+        // #[cfg(debug_assertions)]
+        // let mut time = 0f64;
+        // #[cfg(debug_assertions)]
+        // let mut start = os::timer_value();
         let mut fc = 0usize;
         loop {
             fc += 1;
@@ -318,8 +304,8 @@ impl IMUI {
             // xarkes: build interface
             {
                 build_ui_func(self);
-                #[cfg(debug_assertions)]
-                draw_debug_info(self, self.debug.clone(), time);
+                // #[cfg(debug_assertions)]
+                // draw_debug_info(self, self.debug.clone(), time);
                 self.layout_all();
             }
 
@@ -333,12 +319,12 @@ impl IMUI {
                 }
             }
 
-            #[cfg(debug_assertions)]
-            {
-                let end = os::timer_value();
-                time = (end - start) as f64;
-                start = end;
-            }
+            // #[cfg(debug_assertions)]
+            // {
+            //     let end = os::timer_value();
+            //     time = (end - start) as f64;
+            //     start = end;
+            // }
         }
     }
 
@@ -517,59 +503,17 @@ impl IMUI {
             false
         });
     }
-    fn resolve_constraints(&self, root: UIBoxRef, axis: Axis) {
-        iter_root(root, |nodeptr| {
-            let mut node = nodeptr.borrow_mut();
-            if node.parent.is_none() {
-                return false;
-            }
-            // xarkes: make sure the previous positioning did not generate wrong data
-            // debug_assert!(*node.size.axis(axis) >= 0.);
-
-            let parent_size = *node.parent.as_ref().unwrap().borrow().size.axis(axis);
-            let parent_origin = *node.parent.as_ref().unwrap().borrow().origin.axis(axis);
-            let parent_bound = parent_origin + parent_size;
-
-            // xarkes: handle overflow: reduce children size down to 0 if needed
-            if !node.parent.as_ref().unwrap().borrow().scrollable_x() {
-                let bound = node.origin.axis(axis) + node.size.axis(axis);
-                if bound > parent_bound {
-                    *node.size.axis_mut(axis) = f32::max(parent_bound - node.origin.axis(axis), 0.);
-                }
-            }
-
-            // xarkes: handle overflow: reduce all previous children size to give space for this one
-            // let size = *node.size.axis(axis);
-            // let bound = *node.origin.axis(axis) + size;
-            // if bound > parent_bound {
-            //     // *node.origin.axis_mut(axis) -= size;
-            //     let percent_size = 1. - (size / parent_size);
-            //     let mut current = node.previous.clone();
-            //     while current.is_some() {
-            //         *current.as_ref().unwrap().borrow_mut().size.axis_mut(axis) *= percent_size;
-            //         // *current.as_ref().unwrap().borrow_mut().origin.axis_mut(axis) *= percent_size;
-            //         current = current.unwrap().borrow().previous.clone();
-            //     }
-            // }
-            false
-        });
-    }
 
     fn layout_root(&mut self, root: UIBoxRef) {
         for axis in [Axis::X, Axis::Y] {
             self.layout_resize_standalone(root.clone(), axis);
             self.layout_resize_upward_dependents(root.clone(), axis);
-            // XXX: we should iterate from the deepest node up to the root, but instead I compute it twice :>
             self.layout_resize_downward_dependents(root.clone(), axis);
-            self.layout_resize_downward_dependents(root.clone(), axis);
-            // XXX(xarkes): lmao, your algorithm is completely fucked up :')
+            // TODO(xarkes): adjust layout algorithm: we shouldnt have to call this so many times
             self.layout_resize_upward_dependents(root.clone(), axis);
             self.layout_resize_downward_dependents(root.clone(), axis);
         }
         self.apply_layout(root.clone());
-        for axis in [Axis::X, Axis::Y] {
-            self.resolve_constraints(root.clone(), axis);
-        }
     }
 
     fn layout_all(&mut self) {
@@ -630,46 +574,6 @@ impl IMUI {
                     );
                 }
             }
-
-            #[cfg(debug_assertions)]
-            if self.debug.hints {
-                // if true {
-                let col = match curnode.hover() {
-                    true => color_rgb(0, 255, 0),
-                    false => color_rgb(255, 0, 0),
-                };
-                self.drawer.draw_empty_rect(&bounds, col, 1.2, true);
-                if curnode.hover() {
-                    let txt = format!(
-                        "({},{}) {}x{}",
-                        curnode.origin.x, curnode.origin.y, curnode.size.width, curnode.size.height
-                    );
-                    self.drawer.draw_text(
-                        curnode.origin.x + 2.,
-                        curnode.origin.y + 2.,
-                        10.,
-                        txt.as_str(),
-                        txt.len(),
-                        curnode.origin.x + curnode.size.width,
-                        curnode.origin.y + curnode.size.height,
-                        color_rgb(255, 255, 0),
-                        false,
-                        false,
-                    );
-                    self.drawer.draw_text(
-                        self.size.width / 2.,
-                        self.size.height / 2.,
-                        10.,
-                        txt.as_str(),
-                        txt.len(),
-                        self.size.width,
-                        self.size.height,
-                        color_rgb(255, 255, 0),
-                        false,
-                        false,
-                    );
-                }
-            }
             return false;
         });
     }
@@ -715,11 +619,6 @@ impl IMUI {
         match &self.text_input_state {
             Some(state) => Some(state.changecount),
             None => None,
-        }
-    }
-    pub fn focus(&mut self, uibox: UIBoxRef) {
-        if self.text_input_state.is_some() {
-            self.text_input_state = None;
         }
     }
 
@@ -1103,10 +1002,6 @@ impl IMUI {
                 self.event.click = ev.pos;
                 self.event.active = Some(uibox.borrow().key);
                 self.event.mouse = ev.pos;
-                #[cfg(debug_assertions)]
-                {
-                    self.debug.target = Some(uibox.clone());
-                }
                 uibox.borrow_mut().events |= UIBoxEvent::MouseClicked as u64;
             } else if ev.ty == OSEventType::Release
                 && ev.key == OSKey::LeftMouseButton

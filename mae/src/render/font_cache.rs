@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 
-use super::Renderer;
-
 struct LRUEntry<K, V> {
     #[allow(dead_code)]
     key: K,

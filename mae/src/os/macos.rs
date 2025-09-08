@@ -11,8 +11,8 @@ use objc2::{
 };
 use objc2_app_kit::{
     NSAnyEventMask, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
-    NSAutoresizingMaskOptions, NSBackingStoreType, NSEventSubtype, NSEventType, NSMenu, NSMenuItem,
-    NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
+    NSAutoresizingMaskOptions, NSBackingStoreType, NSEventType, NSMenu, NSMenuItem, NSView,
+    NSWindow, NSWindowDelegate, NSWindowStyleMask,
 };
 use objc2_foundation::{
     MainThreadMarker, NSDate, NSDefaultRunLoopMode, NSNotification, NSObject, NSObjectProtocol,
@@ -323,11 +323,6 @@ impl Window {
     }
 }
 
-#[repr(C)]
-struct MachTimeBaseInfoT {
-    denom: u32,
-    numer: u32,
-}
 unsafe extern "C" {
     fn clock_gettime_nsec_np(t: u64) -> u64;
 }
