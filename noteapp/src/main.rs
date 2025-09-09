@@ -36,7 +36,9 @@ fn main() {
         let mut params = UIBoxParams::new();
         params.width(uisize!("100%"));
         params.height(uisize!("100%"));
-        ui.container(None, UILayout::Horizontal, 0, Some(params), |ui| {
+        ui.row(|ui| {
+            // })
+            // ui.container(None, UILayout::Horizontal, 0, Some(params), |ui| {
             params.width(uisize!("25px"));
             ui.container(
                 None,
@@ -84,15 +86,15 @@ fn main() {
             );
             params.width(UISize::Expand);
             ui.textarea(noteapp.buffer.clone(), "#textarea", Some(params));
-        });
+        })
+        .width(uisize!("100%"))
+        .height(uisize!("100%"));
 
         // prompts
         if show_search {
             ui.prompt("#search_prompt", |ui| {
                 ui.label("Search for notes");
-                let le = ui.line_edit(search.clone(), "#search", show_search);
-                le.borrow_mut()
-                    .set_pref_size((uisize!("100%"), UISize::TextContent));
+                ui.line_edit(search.clone(), "#search", show_search);
                 let search_filter = search.borrow();
                 for note in &noteapp.notes() {
                     if search_filter.len() > 0 {

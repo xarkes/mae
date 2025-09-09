@@ -5,7 +5,8 @@ mod widgets;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use text_input_state::IMUITextInputState;
 use uibox::{
-    Color, UIBox, UIBoxEvent, UIBoxFlag, UIBoxParams, UIBoxRef, UIBoxStyle, u64_hash_from_string,
+    Color, UIBox, UIBoxEvent, UIBoxFlag, UIBoxParams, UIBoxRef, UIBoxRef2, UIBoxStyle,
+    u64_hash_from_string,
 };
 
 #[cfg(target_os = "android")]
@@ -332,8 +333,7 @@ impl IMUI {
         iter_root(root, |nodeptr| {
             let mut node = nodeptr.borrow_mut();
 
-            let pref_size = node.pref_size;
-            let pref_size = [pref_size.0, pref_size.1];
+            let pref_size = [node.pref_width, node.pref_height];
 
             match pref_size[axis.val()] {
                 UISize::DPixels(pixels) => {
@@ -374,8 +374,7 @@ impl IMUI {
         iter_root(root, |nodeptr| {
             let mut node = nodeptr.borrow_mut();
 
-            let pref_size = node.pref_size;
-            let pref_size = [pref_size.0, pref_size.1];
+            let pref_size = [node.pref_width, node.pref_height];
 
             let size = match pref_size[axis.val()] {
                 UISize::Percents(percents) => {
@@ -395,8 +394,7 @@ impl IMUI {
         iter_root(root, |nodeptr| {
             let mut node = nodeptr.borrow_mut();
 
-            let pref_size = node.pref_size;
-            let pref_size = [pref_size.0, pref_size.1];
+            let pref_size = [node.pref_width, node.pref_height];
 
             match pref_size[axis.val()] {
                 UISize::Children => {
@@ -607,10 +605,8 @@ impl IMUI {
         self.size = Size::from(self.drawer.renderer.win.get_size());
         let render_size = self.drawer.renderer.win.get_render_size();
         self.drawer.renderer.resize(render_size.0, render_size.1);
-        self.root.borrow_mut().pref_size = (
-            UISize::DPixels(self.size.width),
-            UISize::DPixels(self.size.height),
-        );
+        self.root.borrow_mut().pref_width = UISize::DPixels(self.size.width);
+        self.root.borrow_mut().pref_height = UISize::DPixels(self.size.height);
         self.root.borrow_mut().size.width = self.size.width;
         self.root.borrow_mut().size.height = self.size.height;
         self.size
@@ -624,6 +620,15 @@ impl IMUI {
 
     /////////////////////////////////
     //// Widgets functions
+    pub fn row(&mut self, children: impl FnOnce(&mut IMUI)) -> UIBoxRef2 {
+        let row = self.add_box_from_string(None, 0);
+        // XXX(xarkes): layout should be passed to add_box_from_string maybe
+        row.borrow_mut().layout = Some(UILayout::Horizontal);
+        self.parent_stack.push(row.clone());
+        children(self);
+        self.parent_stack.pop();
+        UIBoxRef2::new(row)
+    }
     pub fn container(
         &mut self,
         key: Option<&str>,
@@ -640,7 +645,7 @@ impl IMUI {
         let container = self.add_box_from_string(key, flags);
 
         if (key.is_some() && first_frame) || key.is_none() {
-            container.borrow_mut().pref_size = match layout.specialize(self.locale_kind) {
+            let (w, h) = match layout.specialize(self.locale_kind) {
                 UILayout::VerticalLtr => (UISize::Percents(1.), UISize::Children),
                 UILayout::HorizontalLtr => (UISize::Percents(1.), UISize::ChildrenMax),
                 _ => {
@@ -648,13 +653,15 @@ impl IMUI {
                     (UISize::Percents(1.), UISize::Children)
                 }
             };
+            container.borrow_mut().pref_width = w;
+            container.borrow_mut().pref_height = h;
 
             if let Some(params) = params {
                 if let Some(width) = params.width {
-                    container.borrow_mut().pref_size.0 = width;
+                    container.borrow_mut().pref_width = width;
                 }
                 if let Some(height) = params.height {
-                    container.borrow_mut().pref_size.1 = height;
+                    container.borrow_mut().pref_height = height;
                 }
             }
         }
@@ -720,9 +727,8 @@ impl IMUI {
                             | UIBoxFlag::Scrollable as u64,
                     );
                     textarea_.borrow_mut().layout = Some(UILayout::Vertical);
-                    textarea_
-                        .borrow_mut()
-                        .set_pref_size((UISize::Expand, uisize!("100%")));
+                    textarea_.borrow_mut().pref_width = UISize::Expand;
+                    textarea_.borrow_mut().pref_height = uisize!("100%");
                     textarea_.borrow_mut().style.margin = 10.;
 
                     // xarkes: fixup scrolling: event handler does not know the child's logic
@@ -836,10 +842,10 @@ impl IMUI {
                     let cy = tis.cursor_y;
                     let cursor_box =
                         self.add_box_from_string(None, UIBoxFlag::DrawBackground as u64);
-                    cursor_box.borrow_mut().set_pref_size((
-                        UISize::DPixels(textarea.borrow().style.font_size / 6.),
-                        UISize::DPixels(textarea.borrow().style.font_size),
-                    ));
+                    cursor_box.borrow_mut().pref_width =
+                        UISize::DPixels(textarea.borrow().style.font_size / 6.);
+                    cursor_box.borrow_mut().pref_height =
+                        UISize::DPixels(textarea.borrow().style.font_size);
                     let bounds = textarea.borrow().bounds();
                     cursor_box.borrow_mut().layout = Some(UILayout::Absolute);
                     cursor_box.borrow_mut().fixed_origin = Point::new(
@@ -924,7 +930,8 @@ impl IMUI {
             None => {
                 let uibox = Rc::new(RefCell::new(UIBox {
                     key,
-                    pref_size: pref_size_default,
+                    pref_width: pref_size_default.0,
+                    pref_height: pref_size_default.1,
                     size: Size::default(),
                     origin: Point::default(),
                     fixed_origin: Point::default(),
@@ -1113,9 +1120,8 @@ impl IMUI {
                 .font_cache
                 .borrow()
                 .line_height(self.style.text_size);
-            tooltip
-                .borrow_mut()
-                .set_pref_size((UISize::Children, UISize::DPixels(line_height)));
+            tooltip.borrow_mut().pref_width = UISize::Children;
+            tooltip.borrow_mut().pref_height = UISize::DPixels(line_height);
             tooltip.borrow_mut().style.bg_color = self.style.bg_color;
             self.handle_uibox_event(tooltip.clone());
             self.parent_stack.push(tooltip);
@@ -1132,9 +1138,8 @@ impl IMUI {
         let uibox = self.button(label, tooltip_text);
         uibox.borrow_mut().style.font_icon = true;
         uibox.borrow_mut().style.font_size = 24.;
-        uibox
-            .borrow_mut()
-            .set_pref_size((uisize!("24px"), uisize!("24px")));
+        uibox.borrow_mut().pref_width = uisize!("24px");
+        uibox.borrow_mut().pref_height = uisize!("24px");
         uibox
     }
 }

@@ -21,7 +21,8 @@ impl IMUI {
     ) -> UIBoxRef {
         let key = u64_hash_from_string(4736251, title);
         let uibox = self.new_floating_root(key, pos);
-        uibox.borrow_mut().pref_size = (UISize::DPixels(size.width), UISize::Children);
+        uibox.borrow_mut().pref_width = UISize::DPixels(size.width);
+        uibox.borrow_mut().pref_height = UISize::Children;
         self.handle_uibox_event(uibox.clone());
         self.parent_stack.push(uibox.clone());
         {
@@ -38,8 +39,8 @@ impl IMUI {
                         let (key, _) =
                             ui.get_key_from_string(Some(foldable_frame_id), uibox.clone());
                         if let Some(uibox) = ui.uiboxes.get(&key) {
-                            let old_size = uibox.borrow().pref_size;
-                            uibox.borrow_mut().pref_size.1 = match old_size.1 {
+                            let old_size = uibox.borrow().pref_height;
+                            uibox.borrow_mut().pref_height = match old_size {
                                 UISize::Children => UISize::DPixels(0.),
                                 _ => UISize::Children,
                             };
@@ -71,10 +72,8 @@ impl IMUI {
             key,
             Point::new(self.size.width / 4., self.size.height / 10.),
         );
-        uibox.borrow_mut().pref_size = (
-            UISize::DPixels(self.size.width / 2.),
-            UISize::DPixels(self.size.height / 4.),
-        );
+        uibox.borrow_mut().pref_width = UISize::DPixels(self.size.width / 2.);
+        uibox.borrow_mut().pref_height = UISize::DPixels(self.size.height / 4.);
         self.parent_stack.push(uibox.clone());
         {
             children(self);
@@ -131,14 +130,12 @@ impl IMUI {
             );
             match axis {
                 Axis::X => {
-                    pre_scrollbar
-                        .borrow_mut()
-                        .set_pref_size((UISize::DPixels(pre_size), uisize!("100%")));
+                    pre_scrollbar.borrow_mut().pref_width = UISize::DPixels(pre_size);
+                    pre_scrollbar.borrow_mut().pref_height = uisize!("100%");
                 }
                 Axis::Y => {
-                    pre_scrollbar
-                        .borrow_mut()
-                        .set_pref_size((uisize!("100%"), UISize::DPixels(pre_size)));
+                    pre_scrollbar.borrow_mut().pref_width = uisize!("100%");
+                    pre_scrollbar.borrow_mut().pref_height = UISize::DPixels(pre_size);
                 }
             }
             pre_scrollbar.borrow_mut().style.bg_color = bar_empty_color;
@@ -150,14 +147,12 @@ impl IMUI {
             );
             match axis {
                 Axis::X => {
-                    scrollbar
-                        .borrow_mut()
-                        .set_pref_size((UISize::DPixels(bar_size), uisize!("100%")));
+                    scrollbar.borrow_mut().pref_width = UISize::DPixels(bar_size);
+                    scrollbar.borrow_mut().pref_height = uisize!("100%");
                 }
                 Axis::Y => {
-                    scrollbar
-                        .borrow_mut()
-                        .set_pref_size((uisize!("100%"), UISize::DPixels(bar_size)));
+                    scrollbar.borrow_mut().pref_width = uisize!("100%");
+                    scrollbar.borrow_mut().pref_height = UISize::DPixels(bar_size);
                 }
             }
             scrollbar.borrow_mut().style.bg_color = bar_color;
@@ -167,14 +162,12 @@ impl IMUI {
             );
             match axis {
                 Axis::X => {
-                    post_scrollbar
-                        .borrow_mut()
-                        .set_pref_size((UISize::DPixels(post_size), uisize!("100%")));
+                    post_scrollbar.borrow_mut().pref_width = UISize::DPixels(post_size);
+                    post_scrollbar.borrow_mut().pref_height = uisize!("100%");
                 }
                 Axis::Y => {
-                    post_scrollbar
-                        .borrow_mut()
-                        .set_pref_size((uisize!("100%"), UISize::DPixels(post_size)));
+                    post_scrollbar.borrow_mut().pref_width = uisize!("100%");
+                    post_scrollbar.borrow_mut().pref_height = UISize::DPixels(post_size);
                 }
             }
             post_scrollbar.borrow_mut().style.bg_color = bar_empty_color;

@@ -5,6 +5,24 @@ use crate::render::{RectCoords, V4f32};
 use super::{Point, Size, UILayout, UISize, color_rgb};
 pub type UIBoxRef = Rc<RefCell<UIBox>>;
 
+pub struct UIBoxRef2 {
+    _box: Rc<RefCell<UIBox>>,
+}
+
+impl UIBoxRef2 {
+    pub fn new(_box: Rc<RefCell<UIBox>>) -> Self {
+        UIBoxRef2 { _box }
+    }
+    pub fn width(&self, width: UISize) -> &Self {
+        self._box.borrow_mut().pref_width = width;
+        self
+    }
+    pub fn height(&self, height: UISize) -> &Self {
+        self._box.borrow_mut().pref_height = height;
+        self
+    }
+}
+
 pub type Color = V4f32;
 impl Color {
     pub fn from_text(text: &str) -> Self {
@@ -181,7 +199,8 @@ pub struct UIBox {
     pub(crate) fixed_origin: Point,
     pub(crate) resize_delta: Point,
     pub(crate) origin: Point,
-    pub(crate) pref_size: (UISize, UISize),
+    pub(crate) pref_width: UISize,
+    pub(crate) pref_height: UISize,
     pub(crate) size: Size,
     pub(crate) flags: u64,
     pub(crate) events: u64,
@@ -202,7 +221,8 @@ impl UIBox {
     pub fn root(id: String) -> Self {
         UIBox {
             key: u64_hash_from_string(1234, id.as_str()),
-            pref_size: (UISize::Children, UISize::Children),
+            pref_width: UISize::Children,
+            pref_height: UISize::Children,
             origin: Point::default(),
             fixed_origin: Point::default(), // TODO: rename as drag_position
             resize_delta: Point::default(),
@@ -267,9 +287,5 @@ impl UIBox {
             x1: self.origin.x + self.size.width,
             y1: self.origin.y + self.size.height,
         }
-    }
-
-    pub fn set_pref_size(&mut self, size: (UISize, UISize)) {
-        self.pref_size = size;
     }
 }
