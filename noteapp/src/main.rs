@@ -3,6 +3,7 @@ use std::rc::Rc;
 
 use mae::imui::IMUI;
 use mae::imui::UISize;
+use mae::imui::uibox::Color;
 use mae::uisize;
 
 mod noteapp;
@@ -14,12 +15,26 @@ macro_rules! icon {
     };
 }
 
+struct NoteAppTheme {
+    pub color_main: Color,
+}
+impl NoteAppTheme {
+    pub fn default() -> Self {
+        NoteAppTheme {
+            color_main: Color::new("#1ebc93"),
+        }
+    }
+}
+
 fn main() {
     println!("Starting Mae {}_alpha_0", env!("CARGO_PKG_VERSION"));
 
     // xarkes: init notes
     let mut noteapp = NoteApp::new();
     println!("Selected default database type: local sqlite");
+
+    // init theme
+    let theme = NoteAppTheme::default();
 
     // xarkes: draw UI
     let mut ui = IMUI::new(1024, 768);
@@ -29,7 +44,6 @@ fn main() {
     let save_interval_seconds = 30.;
     let mut last_save = mae::os::timer_value() as f64 / 1e9;
     ui.eventloop(|ui| {
-        // main content
         ui.row(|ui| {
             ui.column(|ui| {
                 if ui
@@ -69,8 +83,12 @@ fn main() {
                         .unwrap();
                 }
             })
-            .width(uisize!("25px"));
+            .width(UISize::ChildrenMax)
+            .background(theme.color_main);
+
             ui.textarea(noteapp.buffer.clone(), "#textarea")
+                // .width(UISize::Expand)
+                // .height(UISize::Expand);
                 .width(uisize!("100%"))
                 .height(uisize!("100%"));
         });
@@ -113,34 +131,18 @@ fn main() {
 
     // TODO New: Deadline Oct 1st
     // - [~] change params() way of setting style (maybe not and just KISS)
-    // - [ ] rework font atlas handling
+    // - [ ] fix current layout
+    // - [ ] rework font atlas handling (proper multi-font + performance)
+    //   - [ ] fix OGL textures
     // - [ ] have proper prompts (focus, escape, etc.)
     // - [ ] support keybindings
-    // - [ ] support styling
+    // - [ ] support themes (at least light and dark)
     // - [ ] make text editor better
     //   - [ ] implement text selection, copy, paste, etc.
-
-    // TODO:
-    //
-    // 1. rewrite/rethink event handling (need something like chain but idk it changes the whole shit)
-    //   -> check how egui does it
-    // 2. rethink theming and use it (and support dark mode)
-    //   -> also have to rewrite the general styling API (theme vs per component style vs ... ? its really not clear atm)
-    // 3. implement clipping
-    //   -> text clipping + box clipping in general
-    // 4. rework fonts - soon we'll want to optimize it so before that we should be able to handle multiple fonts
-    // 5. change os cursor when hovering text fields etc.
-    //
-    //
-    //
-    // Implement search/go to button
-    // --> dropdown menu a la command palette
-    // --> fix event handling and consuming, it is still fucking wrong
-    // --> (re-implement dragging)
-    // --> implement shortcuts
-    //
-    // --> must be smooth af
-    // --> implement animation
+    //   - [ ] change cursor when hover
+    // - [ ] memory improvement (seems to use a lot of memory)
+    // - [ ] implement proper fuzzy search (off-thread)
+    //   - [ ] maybe add API to work off-thread
 }
 
 fn fuzzy_search(filter: &str, data: &str) -> bool {

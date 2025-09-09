@@ -13,6 +13,8 @@ impl UIBoxRef2 {
     pub fn new(_box: Rc<RefCell<UIBox>>) -> Self {
         UIBoxRef2 { _box }
     }
+
+    // Styling APIs
     pub fn width(&self, width: UISize) -> &Self {
         self._box.borrow_mut().pref_width = width;
         self
@@ -21,11 +23,24 @@ impl UIBoxRef2 {
         self._box.borrow_mut().pref_height = height;
         self
     }
+    pub fn background(&self, color: Color) -> &Self {
+        self._box.borrow_mut().flags |= UIBoxFlag::DrawBackground as u64;
+        self._box.borrow_mut().style.bg_color = color;
+        self
+    }
 }
 
 pub type Color = V4f32;
 impl Color {
-    pub fn from_text(text: &str) -> Self {
+    pub fn transparent() -> Self {
+        Color {
+            r: 0.,
+            g: 0.,
+            b: 0.,
+            a: 0.,
+        }
+    }
+    pub fn new(text: &str) -> Self {
         if text.len() < 4 {
             Color {
                 r: 1.,
@@ -113,8 +128,6 @@ pub(crate) enum UIBoxEvent {
     MouseOver = 1u64,
     MouseClicked = 2u64,
     MouseReleased = 4u64,
-    Dragged = 8u64,
-    KeyPressed = 16u64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -197,7 +210,6 @@ pub struct UIBox {
 
     // per-build data
     pub(crate) fixed_origin: Point,
-    pub(crate) resize_delta: Point,
     pub(crate) origin: Point,
     pub(crate) pref_width: UISize,
     pub(crate) pref_height: UISize,
@@ -206,8 +218,6 @@ pub struct UIBox {
     pub(crate) events: u64,
     pub(crate) string: Option<String>,
     pub(crate) visible: bool,
-    #[cfg(debug_assertions)]
-    pub(crate) depth: usize,
     pub(crate) layout: Option<UILayout>,
     // per-build styling
     pub(crate) style: UIBoxStyle,
@@ -225,7 +235,6 @@ impl UIBox {
             pref_height: UISize::Children,
             origin: Point::default(),
             fixed_origin: Point::default(), // TODO: rename as drag_position
-            resize_delta: Point::default(),
             size: Size::default(),
             parent: None,
             previous: None,
@@ -235,8 +244,6 @@ impl UIBox {
             flags: 0,
             events: 0,
             string: None,
-            #[cfg(debug_assertions)]
-            depth: 0,
             scrollx: 0.,
             scrolly: 0.,
 

@@ -96,7 +96,7 @@ impl Size {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum UISize {
     DPixels(f32),  // DPI scaled pixels; in current implementation all draws are dpi scaled
     Percents(f32), // Percentages of parent's size
@@ -276,6 +276,8 @@ impl IMUI {
         // #[cfg(debug_assertions)]
         // let mut start = os::timer_value();
         let mut fc = 0usize;
+        #[cfg(debug_assertions)]
+        self.drawer.renderer.vsync(false);
         loop {
             fc += 1;
             // xarkes: handle events
@@ -307,7 +309,7 @@ impl IMUI {
                 build_ui_func(self);
                 // #[cfg(debug_assertions)]
                 // draw_debug_info(self, self.debug.clone(), time);
-                self.layout_all();
+                self.layout_roots();
             }
 
             // xarkes: draw interface and render
@@ -360,7 +362,7 @@ impl IMUI {
                         }
                     } else {
                         // xarkes: no attached string
-                        // XXX: does it mean that textcontent is an error?
+                        panic!("Size TextContent was requested, but box has no text!")
                     }
                 }
                 _ => {
@@ -380,6 +382,29 @@ impl IMUI {
                 UISize::Percents(percents) => {
                     let parent_size = &node.parent.as_ref().unwrap().borrow().size;
                     percents * *parent_size.axis(axis)
+                }
+                UISize::Expand => {
+                    // TODO: What if multiple children are Expand?
+                    let parent = node.parent.as_ref().unwrap();
+                    let parent_size = *parent.borrow().size.axis(axis);
+                    let mut siblings_size = 0.;
+                    for child in &parent.borrow().children {
+                        if Rc::ptr_eq(child, &nodeptr) {
+                            continue;
+                        }
+                        match axis {
+                            Axis::X => debug_assert!(
+                                child.borrow().pref_width != UISize::Expand,
+                                "We don't support multiple Expand children yet."
+                            ),
+                            Axis::Y => debug_assert!(
+                                child.borrow().pref_height != UISize::Expand,
+                                "We don't support multiple Expand children yet."
+                            ),
+                        }
+                        siblings_size += child.borrow().size.axis(axis);
+                    }
+                    parent_size - siblings_size
                 }
                 _ => {
                     // xarkes: other units are not considered upward dependents, or already computed
@@ -410,18 +435,6 @@ impl IMUI {
                         size_max = f32::max(size_max, *child.borrow().size.axis(axis));
                     }
                     *node.size.axis_mut(axis) = size_max;
-                }
-                UISize::Expand => {
-                    let parent = node.parent.as_ref().unwrap();
-                    let parent_size = *parent.borrow().size.axis(axis);
-                    let mut children_size = 0.;
-                    for child in &parent.borrow().children {
-                        if Rc::ptr_eq(child, &nodeptr) {
-                            continue;
-                        }
-                        children_size += child.borrow().size.axis(axis);
-                    }
-                    *node.size.axis_mut(axis) = parent_size - children_size;
                 }
                 _ => {
                     // xarkes: other units are not considered downward dependents, or already computed
@@ -507,14 +520,12 @@ impl IMUI {
             self.layout_resize_standalone(root.clone(), axis);
             self.layout_resize_upward_dependents(root.clone(), axis);
             self.layout_resize_downward_dependents(root.clone(), axis);
-            // TODO(xarkes): adjust layout algorithm: we shouldnt have to call this so many times
-            self.layout_resize_upward_dependents(root.clone(), axis);
-            self.layout_resize_downward_dependents(root.clone(), axis);
         }
         self.apply_layout(root.clone());
     }
 
-    fn layout_all(&mut self) {
+    fn layout_roots(&mut self) {
+        // TODO(xarkes): Merge normal root with "floating" roots
         self.layout_root(self.root.clone());
         for root in &self.floating_roots.clone() {
             self.layout_root(root.clone());
@@ -540,7 +551,7 @@ impl IMUI {
                             r: col.r + 50. / 256.,
                             g: col.g + 50. / 256.,
                             b: col.b + 50. / 256.,
-                            a: col.a,
+                            a: col.a + 0.2,
                         }
                     }
                     false => curnode.style.bg_color,
@@ -551,7 +562,7 @@ impl IMUI {
             if curnode.draw_border() {
                 let color = curnode.style.bg_color;
                 self.drawer
-                    .draw_empty_rect(&bounds, color, curnode.style.border_size, false);
+                    .draw_empty_rect(&bounds, color, curnode.style.border_size);
             }
 
             if curnode.draw_text() {
@@ -956,10 +967,7 @@ impl IMUI {
                     size: Size::default(),
                     origin: Point::default(),
                     fixed_origin: Point::default(),
-                    resize_delta: Point::default(),
                     children: Vec::new(),
-                    #[cfg(debug_assertions)]
-                    depth: 0,
                     parent: None,
                     previous: None,
                     layout: None,
@@ -1128,7 +1136,7 @@ impl IMUI {
                 | UIBoxFlag::DrawText as u64
                 | UIBoxFlag::DrawHot as u64,
         );
-        uibox.borrow_mut().style.bg_color = self.style.main_color;
+        uibox.borrow_mut().style.bg_color = Color::transparent();
 
         // xarkes: show tooltip when needed
         if uibox.borrow().hover() && tooltip_text.is_some() {

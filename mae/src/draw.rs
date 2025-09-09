@@ -11,13 +11,7 @@ impl Drawer {
         Drawer { renderer }
     }
 
-    pub fn draw_empty_rect(
-        &mut self,
-        coords: &RectCoords,
-        color: V4f32,
-        line_width: f32,
-        debug: bool,
-    ) {
+    pub fn draw_empty_rect(&mut self, coords: &RectCoords, color: V4f32, line_width: f32) {
         let scale_factor = self.renderer.win.dpi;
         let bounds = [
             RectCoords {

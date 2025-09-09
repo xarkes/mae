@@ -141,7 +141,7 @@ impl Renderer {
         }
 
         let renderer = available_renderers[0];
-        let mut ctx = match renderer {
+        let ctx = match renderer {
             "opengl" => Box::new(opengl::GLContext::new(&win)),
             _ => {
                 panic!("Renderer not implemented!");
