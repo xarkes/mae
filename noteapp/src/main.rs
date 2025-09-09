@@ -2,10 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use mae::imui::IMUI;
-use mae::imui::UILayout;
 use mae::imui::UISize;
-use mae::imui::uibox::UIBoxFlag;
-use mae::imui::uibox::UIBoxParams;
 use mae::uisize;
 
 mod noteapp;
@@ -33,62 +30,50 @@ fn main() {
     let mut last_save = mae::os::timer_value() as f64 / 1e9;
     ui.eventloop(|ui| {
         // main content
-        let mut params = UIBoxParams::new();
-        params.width(uisize!("100%"));
-        params.height(uisize!("100%"));
         ui.row(|ui| {
-            // })
-            // ui.container(None, UILayout::Horizontal, 0, Some(params), |ui| {
-            params.width(uisize!("25px"));
-            ui.container(
-                None,
-                UILayout::Vertical,
-                UIBoxFlag::DrawBackground as u64,
-                Some(params),
-                |ui| {
-                    if ui
-                        .button_icon(icon!(0xe161), Some("Save the database to fileystem."))
-                        .borrow()
-                        .clicked()
-                    {
-                        noteapp.save();
-                    }
-                    if ui
-                        .button_icon(icon!(0xefd3), Some("Create a new note"))
-                        .borrow()
-                        .clicked()
-                    {
-                        noteapp.newnote();
-                    }
-                    if ui
-                        .button_icon(icon!(0xe8b6), Some("Search notes."))
-                        .borrow()
-                        .clicked()
-                    {
-                        show_search = true;
-                        search = Rc::new(RefCell::new(String::from("")));
-                    }
-                    if ui
-                        .button_icon(
-                            icon!(0xe9fc),
-                            Some("Import previous notes to the application."),
-                        )
-                        .borrow()
-                        .clicked()
-                    {
-                        noteapp
-                            .import_from_markdown(std::path::Path::new(
-                                "/Users/user/Downloads/AnyTypeDB/Anytype.20250720.222959.98",
-                            ))
-                            .unwrap();
-                    }
-                },
-            );
-            params.width(UISize::Expand);
-            ui.textarea(noteapp.buffer.clone(), "#textarea", Some(params));
-        })
-        .width(uisize!("100%"))
-        .height(uisize!("100%"));
+            ui.column(|ui| {
+                if ui
+                    .button_icon(icon!(0xe161), Some("Save the database to fileystem."))
+                    .borrow()
+                    .clicked()
+                {
+                    noteapp.save();
+                }
+                if ui
+                    .button_icon(icon!(0xefd3), Some("Create a new note"))
+                    .borrow()
+                    .clicked()
+                {
+                    noteapp.newnote();
+                }
+                if ui
+                    .button_icon(icon!(0xe8b6), Some("Search notes."))
+                    .borrow()
+                    .clicked()
+                {
+                    show_search = true;
+                    search = Rc::new(RefCell::new(String::from("")));
+                }
+                if ui
+                    .button_icon(
+                        icon!(0xe9fc),
+                        Some("Import previous notes to the application."),
+                    )
+                    .borrow()
+                    .clicked()
+                {
+                    noteapp
+                        .import_from_markdown(std::path::Path::new(
+                            "/Users/user/Downloads/AnyTypeDB/Anytype.20250720.222959.98",
+                        ))
+                        .unwrap();
+                }
+            })
+            .width(uisize!("25px"));
+            ui.textarea(noteapp.buffer.clone(), "#textarea")
+                .width(uisize!("100%"))
+                .height(uisize!("100%"));
+        });
 
         // prompts
         if show_search {
@@ -127,10 +112,13 @@ fn main() {
     });
 
     // TODO New: Deadline Oct 1st
-    // - change params() way of setting style (maybe not and just KISS)
-    // - rework font atlas handling
-    // - make text editor better
-    //   - implement text selection, copy, paste, etc.
+    // - [~] change params() way of setting style (maybe not and just KISS)
+    // - [ ] rework font atlas handling
+    // - [ ] have proper prompts (focus, escape, etc.)
+    // - [ ] support keybindings
+    // - [ ] support styling
+    // - [ ] make text editor better
+    //   - [ ] implement text selection, copy, paste, etc.
 
     // TODO:
     //

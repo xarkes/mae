@@ -622,12 +622,29 @@ impl IMUI {
     //// Widgets functions
     pub fn row(&mut self, children: impl FnOnce(&mut IMUI)) -> UIBoxRef2 {
         let row = self.add_box_from_string(None, 0);
+
         // XXX(xarkes): layout should be passed to add_box_from_string maybe
         row.borrow_mut().layout = Some(UILayout::Horizontal);
+        row.borrow_mut().pref_width = UISize::Percents(1.);
+        row.borrow_mut().pref_height = UISize::Percents(1.);
+
         self.parent_stack.push(row.clone());
         children(self);
         self.parent_stack.pop();
         UIBoxRef2::new(row)
+    }
+    pub fn column(&mut self, children: impl FnOnce(&mut IMUI)) -> UIBoxRef2 {
+        let column = self.add_box_from_string(None, 0);
+
+        // XXX(xarkes): layout should be passed to add_box_from_string maybe
+        column.borrow_mut().layout = Some(UILayout::Vertical);
+        column.borrow_mut().pref_width = UISize::Percents(1.);
+        column.borrow_mut().pref_height = UISize::Percents(1.);
+
+        self.parent_stack.push(column.clone());
+        children(self);
+        self.parent_stack.pop();
+        UIBoxRef2::new(column)
     }
     pub fn container(
         &mut self,
@@ -690,7 +707,11 @@ impl IMUI {
         let multiline = false;
         self.text_edit_impl(line_edit, text_buffer, multiline, focus)
     }
-    pub fn textarea(
+    pub fn textarea(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIBoxRef2 {
+        let tx = self.textarea_old(text_buffer, id, None);
+        UIBoxRef2::new(tx)
+    }
+    pub fn textarea_old(
         &mut self,
         text_buffer: Rc<RefCell<String>>,
         id: &str,
