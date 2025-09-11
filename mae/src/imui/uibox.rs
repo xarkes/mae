@@ -28,6 +28,10 @@ impl UIBoxRef2 {
         self._box.borrow_mut().style.bg_color = color;
         self
     }
+    pub fn text_color(&self, color: Color) -> &Self {
+        self._box.borrow_mut().style.text_color = color;
+        self
+    }
 }
 
 pub type Color = V4f32;
@@ -69,10 +73,13 @@ impl Color {
                 b: vals[2],
                 a: 1.,
             }
-        } else if text.len() == 7 && text.as_bytes()[0] == b'#' {
+        } else if (text.len() == 7 || text.len() == 9) && text.as_bytes()[0] == b'#' {
             let bytes = text.as_bytes();
-            let mut vals: [f32; 3] = [0., 0., 0.];
-            for i in 0..3 {
+            let mut vals: [f32; 4] = [0., 0., 0., 1.];
+            for i in 0..4 {
+                if i == 3 && text.len() == 7 {
+                    break;
+                }
                 let mut val = 0;
                 for j in 0..2 {
                     let b = bytes[1 + i * 2 + j];
@@ -95,7 +102,7 @@ impl Color {
                 r: vals[0],
                 g: vals[1],
                 b: vals[2],
-                a: 1.,
+                a: vals[3],
             }
         } else {
             Color {
@@ -186,6 +193,7 @@ pub struct UIBoxStyle {
     pub(crate) font_size: f32,
     pub(crate) bg_color: Color,
     pub(crate) font_icon: bool,
+    pub(crate) text_color: Color,
 }
 impl UIBoxStyle {
     pub fn default() -> Self {
@@ -195,6 +203,7 @@ impl UIBoxStyle {
             font_size: 40.,
             bg_color: color_rgb(255, 0, 255),
             font_icon: false,
+            text_color: color_rgb(0, 0, 0),
         }
     }
 }

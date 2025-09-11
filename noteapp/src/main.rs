@@ -15,26 +15,12 @@ macro_rules! icon {
     };
 }
 
-struct NoteAppTheme {
-    pub color_main: Color,
-}
-impl NoteAppTheme {
-    pub fn default() -> Self {
-        NoteAppTheme {
-            color_main: Color::new("#1ebc93"),
-        }
-    }
-}
-
 fn main() {
     println!("Starting Mae {}_alpha_0", env!("CARGO_PKG_VERSION"));
 
     // xarkes: init notes
     let mut noteapp = NoteApp::new();
     println!("Selected default database type: local sqlite");
-
-    // init theme
-    let theme = NoteAppTheme::default();
 
     // xarkes: draw UI
     let mut ui = IMUI::new(1024, 768);
@@ -84,11 +70,9 @@ fn main() {
                 }
             })
             .width(UISize::ChildrenMax)
-            .background(theme.color_main);
+            .background(ui.theme.color_main);
 
             ui.textarea(noteapp.buffer.clone(), "#textarea")
-                // .width(UISize::Expand)
-                // .height(UISize::Expand);
                 .width(uisize!("100%"))
                 .height(uisize!("100%"));
         });

@@ -215,6 +215,25 @@ impl UIStyle {
     }
 }
 
+pub struct UITheme {
+    pub color_bg: Color,
+    pub color_bg_popup: Color,
+    pub color_main: Color,
+    pub color_text: Color,
+    pub size_text: f32,
+}
+impl UITheme {
+    pub fn default() -> Self {
+        UITheme {
+            color_bg: Color::new("#ffffff"),
+            color_bg_popup: Color::new("#12121280"),
+            color_main: Color::new("#1ebc93"),
+            color_text: Color::new("#ffffff"),
+            size_text: 12.,
+        }
+    }
+}
+
 pub struct IMUI {
     // persistent data
     drawer: Drawer,
@@ -230,7 +249,7 @@ pub struct IMUI {
     // ui construction helpers
     parent_stack: Vec<UIBoxRef>,
     uiboxes: HashMap<u64, UIBoxRef>,
-    style: UIStyle,
+    pub theme: UITheme,
     dirty: bool,
 }
 impl IMUI {
@@ -266,7 +285,7 @@ impl IMUI {
             floating_roots: Vec::new(),
             uiboxes: HashMap::new(),
             parent_stack: vec![root.clone()],
-            style: UIStyle::default(),
+            theme: UITheme::default(),
             dirty: true,
         }
     }
@@ -532,6 +551,9 @@ impl IMUI {
         }
     }
 
+    // TODO(xarkes): should we introduce a "resolved style" struct that takes into account possible
+    // parent style?
+    // i.e. make every style None by default, explicitely set it by the user, and resolve it later (take parent if none, or keep none, or idk)
     fn draw_ui_root(&mut self, root: UIBoxRef) {
         iter_root(root, |curnode| {
             let curnode = curnode.borrow();
@@ -577,7 +599,7 @@ impl IMUI {
                         string.len(),
                         bounds.x1 + margin,
                         bounds.y1 + margin,
-                        self.style.text_color,
+                        curnode.style.text_color,
                         false,
                         curnode.style.font_icon,
                     );
@@ -695,7 +717,6 @@ impl IMUI {
         }
 
         container.borrow_mut().layout = Some(layout);
-        container.borrow_mut().style.bg_color = self.style.main_color;
         self.parent_stack.push(container.clone());
         children(self);
         self.parent_stack.pop();
@@ -754,9 +775,7 @@ impl IMUI {
                 ui.container(None, UILayout::Horizontal, 0, Some(params), |ui| {
                     let textarea_ = ui.add_box_from_string(
                         Some(id),
-                        UIBoxFlag::Clickable as u64
-                            | UIBoxFlag::DrawBackground as u64
-                            | UIBoxFlag::Scrollable as u64,
+                        UIBoxFlag::Clickable as u64 | UIBoxFlag::Scrollable as u64,
                     );
                     textarea_.borrow_mut().layout = Some(UILayout::Vertical);
                     textarea_.borrow_mut().pref_width = UISize::Expand;
@@ -829,7 +848,7 @@ impl IMUI {
             state.compute_valid_cursor_loc(
                 bounds,
                 &text_buffer.borrow(),
-                self.style.text_size,
+                self.theme.size_text,
                 self.event.mouse.unwrap(),
                 Point::new(textarea.borrow().scrollx, textarea.borrow().scrolly),
             );
@@ -884,7 +903,7 @@ impl IMUI {
                         bounds.x0 + cx + textarea.borrow().scrollx,
                         bounds.y0 + cy + textarea.borrow().scrolly,
                     );
-                    cursor_box.borrow_mut().style.bg_color = self.style.active_color;
+                    cursor_box.borrow_mut().style.bg_color = self.theme.color_text;
                 }
             }
         }
@@ -981,11 +1000,12 @@ impl IMUI {
                     scrollx: 0.,
                     scrolly: 0.,
                     style: UIBoxStyle {
-                        margin: self.style.margin,
-                        font_size: self.style.text_size,
-                        border_size: self.style.border_size,
-                        bg_color: self.style.bg_color,
+                        margin: 1.,
+                        font_size: self.theme.size_text,
+                        border_size: 0.,
+                        bg_color: self.theme.color_bg_popup,
                         font_icon: false,
+                        text_color: self.theme.color_text,
                     },
                 }));
                 if key != 0 {
@@ -1148,10 +1168,9 @@ impl IMUI {
                 .renderer
                 .font_cache
                 .borrow()
-                .line_height(self.style.text_size);
+                .line_height(self.theme.size_text);
             tooltip.borrow_mut().pref_width = UISize::Children;
             tooltip.borrow_mut().pref_height = UISize::DPixels(line_height);
-            tooltip.borrow_mut().style.bg_color = self.style.bg_color;
             self.handle_uibox_event(tooltip.clone());
             self.parent_stack.push(tooltip);
             {
