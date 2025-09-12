@@ -290,10 +290,10 @@ impl IMUI {
         }
     }
     pub fn eventloop(&mut self, mut build_ui_func: impl FnMut(&mut IMUI)) {
-        // #[cfg(debug_assertions)]
-        // let mut time = 0f64;
-        // #[cfg(debug_assertions)]
-        // let mut start = os::timer_value();
+        #[cfg(debug_assertions)]
+        let mut time = 0f64;
+        #[cfg(debug_assertions)]
+        let mut start = os::timer_value();
         let mut fc = 0usize;
         #[cfg(debug_assertions)]
         self.drawer.renderer.vsync(false);
@@ -334,19 +334,38 @@ impl IMUI {
             // xarkes: draw interface and render
             {
                 self.draw_ui_all();
+
+                #[cfg(debug_assertions)]
+                {
+                    let end = os::timer_value();
+                    time = (end - start) as f64;
+                    let text = format!(
+                        "{:.0}fps - {:.2}ms",
+                        1_000_000_000. / time,
+                        time / 1_000_000.
+                    );
+                    self.drawer.draw_text(
+                        self.size.width / 2.
+                            - self.drawer.get_text_size(12., text.as_str(), text.len()).0 / 2.,
+                        12.,
+                        12.,
+                        text.as_str(),
+                        text.len(),
+                        self.size.width,
+                        self.size.height,
+                        Color::new("#ff0"),
+                        false,
+                        false,
+                    );
+                    start = end;
+                }
+
                 self.drawer.renderer.render_frame();
                 if self.dirty {
                     self.dirty = false;
                     fc = 0;
                 }
             }
-
-            // #[cfg(debug_assertions)]
-            // {
-            //     let end = os::timer_value();
-            //     time = (end - start) as f64;
-            //     start = end;
-            // }
         }
     }
 
@@ -403,27 +422,52 @@ impl IMUI {
                     percents * *parent_size.axis(axis)
                 }
                 UISize::Expand => {
-                    // TODO: What if multiple children are Expand?
                     let parent = node.parent.as_ref().unwrap();
                     let parent_size = *parent.borrow().size.axis(axis);
                     let mut siblings_size = 0.;
-                    for child in &parent.borrow().children {
-                        if Rc::ptr_eq(child, &nodeptr) {
-                            continue;
+                    let mut subtract = false;
+                    match parent.borrow().layout.unwrap() {
+                        UILayout::Horizontal
+                        | UILayout::HorizontalLtr
+                        | UILayout::HorizontalRtl => match axis {
+                            Axis::X => {
+                                subtract = true;
+                            }
+                            _ => {}
+                        },
+                        UILayout::Vertical | UILayout::VerticalLtr | UILayout::VerticalRtl => {
+                            match axis {
+                                Axis::Y => {
+                                    subtract = true;
+                                }
+                                _ => {}
+                            }
                         }
-                        match axis {
-                            Axis::X => debug_assert!(
-                                child.borrow().pref_width != UISize::Expand,
-                                "We don't support multiple Expand children yet."
-                            ),
-                            Axis::Y => debug_assert!(
-                                child.borrow().pref_height != UISize::Expand,
-                                "We don't support multiple Expand children yet."
-                            ),
+                        _ => {
+                            println!("TODO: Expand child for Absolute layout")
                         }
-                        siblings_size += child.borrow().size.axis(axis);
                     }
-                    parent_size - siblings_size
+                    if subtract {
+                        for child in &parent.borrow().children {
+                            if Rc::ptr_eq(child, &nodeptr) {
+                                continue;
+                            }
+                            match axis {
+                                Axis::X => debug_assert!(
+                                    child.borrow().pref_width != UISize::Expand,
+                                    "We don't support multiple Expand children yet."
+                                ),
+                                Axis::Y => debug_assert!(
+                                    child.borrow().pref_height != UISize::Expand,
+                                    "We don't support multiple Expand children yet."
+                                ),
+                            }
+                            siblings_size += child.borrow().size.axis(axis);
+                        }
+                        parent_size - siblings_size
+                    } else {
+                        parent_size
+                    }
                 }
                 _ => {
                     // xarkes: other units are not considered upward dependents, or already computed
@@ -537,8 +581,8 @@ impl IMUI {
     fn layout_root(&mut self, root: UIBoxRef) {
         for axis in [Axis::X, Axis::Y] {
             self.layout_resize_standalone(root.clone(), axis);
-            self.layout_resize_upward_dependents(root.clone(), axis);
             self.layout_resize_downward_dependents(root.clone(), axis);
+            self.layout_resize_upward_dependents(root.clone(), axis);
         }
         self.apply_layout(root.clone());
     }
@@ -658,8 +702,8 @@ impl IMUI {
 
         // XXX(xarkes): layout should be passed to add_box_from_string maybe
         row.borrow_mut().layout = Some(UILayout::Horizontal);
-        row.borrow_mut().pref_width = UISize::Percents(1.);
-        row.borrow_mut().pref_height = UISize::Percents(1.);
+        row.borrow_mut().pref_width = UISize::Expand;
+        row.borrow_mut().pref_height = UISize::Expand;
 
         self.parent_stack.push(row.clone());
         children(self);
@@ -671,8 +715,8 @@ impl IMUI {
 
         // XXX(xarkes): layout should be passed to add_box_from_string maybe
         column.borrow_mut().layout = Some(UILayout::Vertical);
-        column.borrow_mut().pref_width = UISize::Percents(1.);
-        column.borrow_mut().pref_height = UISize::Percents(1.);
+        column.borrow_mut().pref_width = UISize::Expand;
+        column.borrow_mut().pref_height = UISize::Expand;
 
         self.parent_stack.push(column.clone());
         children(self);
@@ -740,15 +784,6 @@ impl IMUI {
         self.text_edit_impl(line_edit, text_buffer, multiline, focus)
     }
     pub fn textarea(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIBoxRef2 {
-        let tx = self.textarea_old(text_buffer, id, None);
-        UIBoxRef2::new(tx)
-    }
-    pub fn textarea_old(
-        &mut self,
-        text_buffer: Rc<RefCell<String>>,
-        id: &str,
-        params: Option<UIBoxParams>,
-    ) -> UIBoxRef {
         // xarkes: compute scrollbars
         let max_size_x = {
             let buf = text_buffer.borrow();
@@ -763,69 +798,60 @@ impl IMUI {
         let max_size_y = text_buffer.borrow().lines().count() as f32
             * self.drawer.renderer.font_cache.borrow().line_height(12.);
 
-        let container = self.container(
-            None,
-            UILayout::Vertical,
-            UIBoxFlag::DrawBackground as u64,
-            params,
-            |ui| {
-                let mut textarea = None;
-                let mut params = UIBoxParams::new();
-                params.width(uisize!("100%")).height(UISize::Expand);
-                ui.container(None, UILayout::Horizontal, 0, Some(params), |ui| {
-                    let textarea_ = ui.add_box_from_string(
-                        Some(id),
-                        UIBoxFlag::Clickable as u64 | UIBoxFlag::Scrollable as u64,
-                    );
-                    textarea_.borrow_mut().layout = Some(UILayout::Vertical);
-                    textarea_.borrow_mut().pref_width = UISize::Expand;
-                    textarea_.borrow_mut().pref_height = uisize!("100%");
-                    textarea_.borrow_mut().style.margin = 10.;
+        let container = self.column(|ui| {
+            let mut textarea = None;
+            ui.row(|ui| {
+                let textarea_ = ui.add_box_from_string(
+                    Some(id),
+                    UIBoxFlag::Clickable as u64 | UIBoxFlag::Scrollable as u64,
+                );
+                textarea_.borrow_mut().pref_width = UISize::Expand;
+                textarea_.borrow_mut().pref_height = UISize::Expand;
+                textarea_.borrow_mut().layout = Some(UILayout::Vertical);
 
-                    // xarkes: fixup scrolling: event handler does not know the child's logic
-                    {
-                        let mut textarea = textarea_.borrow_mut();
-                        let can_scroll_y = max_size_y > textarea.size.height;
-                        let can_scroll_x = max_size_x > textarea.size.width;
+                // xarkes: fixup scrolling: event handler does not know the child's logic
+                {
+                    let mut textarea = textarea_.borrow_mut();
+                    let can_scroll_y = max_size_y > textarea.size.height;
+                    let can_scroll_x = max_size_x > textarea.size.width;
 
-                        if can_scroll_y {
-                            let max_scroll_y = textarea.size.height - max_size_y;
-                            if textarea.scrolly > 0. {
-                                textarea.scrolly = 0.;
-                            } else if textarea.scrolly < max_scroll_y {
-                                textarea.scrolly = max_scroll_y;
-                            }
-                        } else {
+                    if can_scroll_y {
+                        let max_scroll_y = textarea.size.height - max_size_y;
+                        if textarea.scrolly > 0. {
                             textarea.scrolly = 0.;
+                        } else if textarea.scrolly < max_scroll_y {
+                            textarea.scrolly = max_scroll_y;
                         }
-                        if can_scroll_x {
-                            let max_scroll_x = textarea.size.width - max_size_x;
-                            if textarea.scrollx > 0. {
-                                textarea.scrollx = 0.;
-                            } else if textarea.scrollx < max_scroll_x {
-                                textarea.scrollx = max_scroll_x;
-                            }
-                        } else {
+                    } else {
+                        textarea.scrolly = 0.;
+                    }
+                    if can_scroll_x {
+                        let max_scroll_x = textarea.size.width - max_size_x;
+                        if textarea.scrollx > 0. {
                             textarea.scrollx = 0.;
+                        } else if textarea.scrollx < max_scroll_x {
+                            textarea.scrollx = max_scroll_x;
                         }
+                    } else {
+                        textarea.scrollx = 0.;
                     }
-
-                    let multiline = true;
-                    let focus = false;
-                    ui.text_edit_impl(textarea_.clone(), text_buffer.clone(), multiline, focus);
-
-                    if max_size_y > textarea_.borrow().size.height {
-                        ui.scrollbar(textarea_.clone(), max_size_y, Axis::Y);
-                    }
-                    textarea = Some(textarea_.clone());
-                });
-
-                let textarea_ref = textarea.unwrap();
-                if max_size_x > textarea_ref.borrow().size.width {
-                    ui.scrollbar(textarea_ref.clone(), max_size_x, Axis::X);
                 }
-            },
-        );
+
+                let multiline = true;
+                let focus = false;
+                ui.text_edit_impl(textarea_.clone(), text_buffer.clone(), multiline, focus);
+
+                if max_size_y > textarea_.borrow().size.height {
+                    ui.scrollbar(textarea_.clone(), max_size_y, Axis::Y);
+                }
+                textarea = Some(textarea_.clone());
+            });
+
+            let textarea_ref = textarea.unwrap();
+            if max_size_x > textarea_ref.borrow().size.width {
+                ui.scrollbar(textarea_ref.clone(), max_size_x, Axis::X);
+            }
+        });
         container
     }
     fn text_edit_impl(
@@ -881,7 +907,7 @@ impl IMUI {
                     if i > line_idx_end {
                         break;
                     }
-                    self.label(line).borrow_mut().style.margin = 10.;
+                    self.label(line);
                 }
             } else {
                 self.label(text_buffer.borrow().as_str());

@@ -114,12 +114,12 @@ impl IMUI {
             let bar_size = (box_size.axis(axis) / virtual_size) * box_size.axis(axis);
             let pre_size = box_size.axis(axis) * scroll_percent;
             let post_size = box_size.axis(axis) - bar_size - pre_size;
-            // debug_assert!(
-            //     (post_size + pre_size + bar_size).round() == box_size.axis(axis).round(),
-            //     "{} {}",
-            //     post_size + pre_size + bar_size,
-            //     *box_size.axis(axis)
-            // );
+            debug_assert!(
+                (post_size + pre_size + bar_size).round() == box_size.axis(axis).round(),
+                "{} {}",
+                post_size + pre_size + bar_size,
+                *box_size.axis(axis)
+            );
 
             let bar_color = color_rgb(100, 100, 100);
             let bar_empty_color = color_rgb(40, 40, 40);

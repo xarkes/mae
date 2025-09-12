@@ -72,9 +72,7 @@ fn main() {
             .width(UISize::ChildrenMax)
             .background(ui.theme.color_main);
 
-            ui.textarea(noteapp.buffer.clone(), "#textarea")
-                .width(uisize!("100%"))
-                .height(uisize!("100%"));
+            ui.textarea(noteapp.buffer.clone(), "#textarea");
         });
 
         // prompts
@@ -115,12 +113,13 @@ fn main() {
 
     // TODO New: Deadline Oct 1st
     // - [~] change params() way of setting style (maybe not and just KISS)
-    // - [ ] fix current layout
+    // - [~] fix current layout
     // - [ ] rework font atlas handling (proper multi-font + performance)
     //   - [ ] fix OGL textures
     // - [ ] have proper prompts (focus, escape, etc.)
     // - [ ] support keybindings
     // - [ ] support themes (at least light and dark)
+    //   - [x] rename to theme
     // - [ ] make text editor better
     //   - [ ] implement text selection, copy, paste, etc.
     //   - [ ] change cursor when hover
