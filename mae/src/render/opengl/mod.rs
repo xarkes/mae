@@ -44,9 +44,7 @@ pub struct GLContext {
     vbo: u32,
 }
 
-// XXX(xarkes): I just allocate a 4MB buffer at the moment, but I don't know if that's right
-// Did this while developping my text edit which ate more than that, given the slow framerate
-// I'm pretty sure we lack some optimizations :D
+// XXX(xarkes): I just allocate a 4MB buffer at the moment and that's not right :)
 const GL_BUFFER_SIZE: isize = 4 * 1024 * 1024;
 
 impl GLContext {

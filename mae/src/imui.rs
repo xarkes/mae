@@ -308,8 +308,8 @@ impl IMUI {
                     // XXX(xarkes): dirty, we should wake up once an event is triggered rather than polling all the time
                     // especially because it caps our FPS
                     // but for the time being this allows us not eating all the CPU
-                    std::thread::sleep(core::time::Duration::from_millis(16));
-                    continue;
+                    // std::thread::sleep(core::time::Duration::from_millis(16));
+                    // continue;
                 }
                 let maybe_new_size = self.drawer.renderer.win.get_size();
                 if maybe_new_size.0 != self.size.width || maybe_new_size.1 != self.size.height {

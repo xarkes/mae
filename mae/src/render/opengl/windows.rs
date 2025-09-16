@@ -3,7 +3,8 @@ use std::ffi::CString;
 use windows::Win32::Graphics::Gdi::GetDC;
 use windows::Win32::Graphics::OpenGL::{
     ChoosePixelFormat, PFD_DRAW_TO_WINDOW, PFD_SUPPORT_OPENGL, PFD_TYPE_RGBA,
-    PIXELFORMATDESCRIPTOR, SetPixelFormat, wglCreateContext, wglGetCurrentContext, wglMakeCurrent,
+    PIXELFORMATDESCRIPTOR, SetPixelFormat, glFlush, wglCreateContext, wglGetCurrentContext,
+    wglGetProcAddress, wglMakeCurrent,
 };
 use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA};
 use windows::core::PCSTR;
@@ -12,7 +13,7 @@ pub type GLStringPtr = *const i8;
 pub struct GLContextHandle {}
 
 pub fn ogl_create_context(win: &Window) -> GLContextHandle {
-    let device_context = unsafe { GetDC(win.handle) };
+    let device_context = unsafe { GetDC(Some(win.handle)) };
     let mut pixel_format_desc = PIXELFORMATDESCRIPTOR::default();
     pixel_format_desc.nSize = std::mem::size_of::<PIXELFORMATDESCRIPTOR>() as u16;
     pixel_format_desc.nVersion = 1;
@@ -41,17 +42,23 @@ pub fn ogl_create_context(win: &Window) -> GLContextHandle {
     .expect("opengl32.dll not found!");
     gl::load_with(|symbol| unsafe {
         let symbol = CString::new(symbol).unwrap();
-        let addr = GetProcAddress(opengl_lib, PCSTR::from_raw(symbol.as_ptr() as *const u8));
-        addr as *const std::ffi::c_void
+        let addr = match wglGetProcAddress(PCSTR::from_raw(symbol.as_ptr() as *const u8)) {
+            Some(addr) => addr as *const std::ffi::c_void,
+            None => match GetProcAddress(opengl_lib, PCSTR::from_raw(symbol.as_ptr() as *const u8))
+            {
+                Some(addr) => addr as *const std::ffi::c_void,
+                None => std::ptr::null(),
+            },
+        };
+        addr
     });
     GLContextHandle {}
 }
 
-pub fn ogl_resize(ctx: &GLContextHandle) {
-    // TODO(xarkes)
-}
+pub fn ogl_resize(ctx: &GLContextHandle) {}
+
 pub fn ogl_swapbuffers(ctx: &GLContextHandle) {
-    // TODO(xarkes)
+    unsafe { glFlush() };
 }
 pub fn ogl_toggle_vsync(ctx: &GLContextHandle, enable: bool) {
     // TODO(xarkes)

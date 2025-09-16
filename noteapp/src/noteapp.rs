@@ -8,6 +8,8 @@ use std::rc::Rc;
 const HOME_FOLDER: &str = "/Users/user/notes";
 #[cfg(target_os = "linux")]
 const HOME_FOLDER: &str = "/home/user/notes";
+#[cfg(target_os = "windows")]
+const HOME_FOLDER: &str = "W:\\notes";
 
 use rusqlite::{Connection, Result};
 
