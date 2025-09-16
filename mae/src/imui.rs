@@ -340,7 +340,7 @@ impl IMUI {
                     let end = os::timer_value();
                     time = (end - start) as f64;
                     let text = format!(
-                        "{:.0}fps - {:.2}ms",
+                        "debug build: {:.0}fps - {:.2}ms",
                         1_000_000_000. / time,
                         time / 1_000_000.
                     );
@@ -767,12 +767,7 @@ impl IMUI {
         container
     }
 
-    pub fn line_edit(
-        &mut self,
-        text_buffer: Rc<RefCell<String>>,
-        id: &str,
-        focus: bool,
-    ) -> UIBoxRef {
+    pub fn line_edit(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIBoxRef2 {
         let line_edit = self.add_box_from_string(
             Some(id),
             UIBoxFlag::Clickable as u64
@@ -781,7 +776,8 @@ impl IMUI {
         );
         line_edit.borrow_mut().layout = Some(UILayout::Vertical);
         let multiline = false;
-        self.text_edit_impl(line_edit, text_buffer, multiline, focus)
+        self.text_edit_impl(line_edit.clone(), text_buffer, multiline, false);
+        UIBoxRef2::new(line_edit)
     }
     pub fn textarea(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIBoxRef2 {
         // xarkes: compute scrollbars
@@ -798,7 +794,7 @@ impl IMUI {
         let max_size_y = text_buffer.borrow().lines().count() as f32
             * self.drawer.renderer.font_cache.borrow().line_height(12.);
 
-        let container = self.column(|ui| {
+        self.column(|ui| {
             let mut textarea = None;
             ui.row(|ui| {
                 let textarea_ = ui.add_box_from_string(
@@ -851,8 +847,7 @@ impl IMUI {
             if max_size_x > textarea_ref.borrow().size.width {
                 ui.scrollbar(textarea_ref.clone(), max_size_x, Axis::X);
             }
-        });
-        container
+        })
     }
     fn text_edit_impl(
         &mut self,
@@ -1173,6 +1168,10 @@ impl IMUI {
         }
     }
 
+    pub fn button_new(&mut self, label: &str) -> UIBoxRef2 {
+        let button = self.button(label, None);
+        UIBoxRef2::new(button)
+    }
     pub fn button(&mut self, label: &str, tooltip_text: Option<&str>) -> UIBoxRef {
         let uibox = self.add_box_from_string(
             Some(label),
@@ -1212,8 +1211,8 @@ impl IMUI {
         let uibox = self.button(label, tooltip_text);
         uibox.borrow_mut().style.font_icon = true;
         uibox.borrow_mut().style.font_size = 24.;
-        uibox.borrow_mut().pref_width = uisize!("24px");
-        uibox.borrow_mut().pref_height = uisize!("24px");
+        uibox.borrow_mut().pref_width = UISize::DPixels(25.);
+        uibox.borrow_mut().pref_height = UISize::DPixels(25.);
         uibox
     }
 }

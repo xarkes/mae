@@ -4,6 +4,7 @@ use std::rc::Rc;
 use mae::imui::IMUI;
 use mae::imui::UISize;
 use mae::imui::uibox::Color;
+use mae::imui::uibox::UIBoxRef2;
 use mae::uisize;
 
 mod noteapp;
@@ -72,14 +73,16 @@ fn main() {
             .width(UISize::ChildrenMax)
             .background(ui.theme.color_main);
 
-            ui.textarea(noteapp.buffer.clone(), "#textarea");
+            ui.textarea(noteapp.buffer.clone(), "#textarea")
+                .background(ui.theme.color_bg_popup);
         });
 
         // prompts
         if show_search {
             ui.prompt("#search_prompt", |ui| {
                 ui.label("Search for notes");
-                ui.line_edit(search.clone(), "#search", show_search);
+                ui.line_edit(search.clone(), "#search")
+                    .width(UISize::Expand);
                 let search_filter = search.borrow();
                 for note in &noteapp.notes() {
                     if search_filter.len() > 0 {
@@ -87,14 +90,13 @@ fn main() {
                             continue;
                         }
                     }
-                    if ui
-                        .button(
-                            format!("{}##button_label_{}", note.name, note.id).as_str(),
-                            None,
-                        )
-                        .borrow()
-                        .clicked()
-                    {
+                    let button = ui.button(
+                        format!("> {}##button_label_{}", note.name, note.id).as_str(),
+                        None,
+                    );
+                    let buttonr = UIBoxRef2::new(button.clone());
+                    buttonr.background(ui.theme.color_bg_popup);
+                    if button.borrow().clicked() {
                         noteapp.open(note.id);
                         show_search = false;
                     }
