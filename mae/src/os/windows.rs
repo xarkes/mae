@@ -5,7 +5,7 @@ use windows::{
 
 use crate::{
     imui::Point,
-    os::{OSEventType, OSKey},
+    os::{OSEventType, OSKey, OSKeyCode},
 };
 
 use super::OSEvent;
@@ -96,27 +96,65 @@ impl Window {
                     break;
                 }
             };
-            if message.message == WM_PAINT {
-                continue;
-            }
             println!("Event: {:?}", message);
-            match message.message {
-                WM_MOUSEMOVE => events.push(OSEvent {
+            let event = match message.message {
+                WM_MOUSEMOVE => Some(OSEvent {
                     ty: OSEventType::MouseMove,
                     key: OSKey::LeftMouseButton,
                     pos: Some(self.translate_loc(message.pt)),
                     chars: None,
                     delta: 0.,
                 }),
-                // WM_SIZING | WM_SIZE => {
-                //     println!("Resizing ev");
-                //     self.width = (message.lParam.0 as u32) as f32;
-                //     self.height = ((message.lParam.0 as u64) >> 32) as f32;
-                //     unsafe {
-                //         DefWindowProcW(self.handle, message.message, message.wParam, message.lParam)
-                //     };
-                // }
-                _ => {}
+                WM_LBUTTONDOWN => Some(OSEvent {
+                    ty: OSEventType::Press,
+                    key: OSKey::LeftMouseButton,
+                    pos: Some(self.translate_loc(message.pt)),
+                    chars: None,
+                    delta: 0.,
+                }),
+                WM_LBUTTONUP => Some(OSEvent {
+                    ty: OSEventType::Release,
+                    key: OSKey::LeftMouseButton,
+                    pos: Some(self.translate_loc(message.pt)),
+                    chars: None,
+                    delta: 0.,
+                }),
+                WM_RBUTTONDOWN => Some(OSEvent {
+                    ty: OSEventType::Press,
+                    key: OSKey::RightMouseButton,
+                    pos: Some(self.translate_loc(message.pt)),
+                    chars: None,
+                    delta: 0.,
+                }),
+                WM_RBUTTONUP => Some(OSEvent {
+                    ty: OSEventType::Release,
+                    key: OSKey::RightMouseButton,
+                    pos: Some(self.translate_loc(message.pt)),
+                    chars: None,
+                    delta: 0.,
+                }),
+                WM_KEYDOWN => Some(OSEvent {
+                    ty: OSEventType::Press,
+                    key: windows_keycode_to_oskey(message.wParam),
+                    pos: Some(self.translate_loc(message.pt)),
+                    chars: None,
+                    delta: 0.,
+                }),
+                WM_CHAR => {
+                    println!("hello there: {}", message.wParam.0);
+                    Some(OSEvent {
+                        ty: OSEventType::Press,
+                        // key: windows_keycode_to_oskey(message.wParam),
+                        key: OSKey::Keyboard(OSKeyCode::KeyA), // XXX: hack to avoid sending twice some characters with a previous WM_KEYDOWN event
+                        pos: Some(self.translate_loc(message.pt)),
+                        chars: Some(char::from_u32(message.wParam.0 as u32).unwrap()),
+                        delta: 0.,
+                    })
+                }
+                _ => None,
+            };
+            if let Some(event) = event {
+                events.push(event);
             }
 
             unsafe {
@@ -126,6 +164,116 @@ impl Window {
         }
 
         events
+    }
+}
+
+fn windows_keycode_to_oskey(param: WPARAM) -> OSKey {
+    match param.0 {
+        0x08 => OSKey::Keyboard(OSKeyCode::KeyBackspace),
+        0x09 => OSKey::Keyboard(OSKeyCode::KeyTab),
+        0x0D => OSKey::Keyboard(OSKeyCode::KeyEnter),
+        0x10 => OSKey::Keyboard(OSKeyCode::KeyLeftShift),
+        0x11 => OSKey::Keyboard(OSKeyCode::KeyLeftCtrl),
+        0x12 => OSKey::Keyboard(OSKeyCode::KeyLeftAlt),
+        0x14 => OSKey::Keyboard(OSKeyCode::KeyCapsLock),
+        0x1B => OSKey::Keyboard(OSKeyCode::KeyEscape),
+        0x20 => OSKey::Keyboard(OSKeyCode::KeySpace),
+        0x21 => OSKey::Keyboard(OSKeyCode::KeyPageUp),
+        0x22 => OSKey::Keyboard(OSKeyCode::KeyPageDown),
+        0x23 => OSKey::Keyboard(OSKeyCode::KeyEnd),
+        0x24 => OSKey::Keyboard(OSKeyCode::KeyHome),
+        0x25 => OSKey::Keyboard(OSKeyCode::KeyLeftArrow),
+        0x26 => OSKey::Keyboard(OSKeyCode::KeyUpArrow),
+        0x27 => OSKey::Keyboard(OSKeyCode::KeyRightArrow),
+        0x28 => OSKey::Keyboard(OSKeyCode::KeyDownArrow),
+        0x2D => OSKey::Keyboard(OSKeyCode::KeyInsert),
+        0x2E => OSKey::Keyboard(OSKeyCode::KeyDelete),
+        0x30 => OSKey::Keyboard(OSKeyCode::Key0),
+        0x31 => OSKey::Keyboard(OSKeyCode::Key1),
+        0x32 => OSKey::Keyboard(OSKeyCode::Key2),
+        0x33 => OSKey::Keyboard(OSKeyCode::Key3),
+        0x34 => OSKey::Keyboard(OSKeyCode::Key4),
+        0x35 => OSKey::Keyboard(OSKeyCode::Key5),
+        0x36 => OSKey::Keyboard(OSKeyCode::Key6),
+        0x37 => OSKey::Keyboard(OSKeyCode::Key7),
+        0x38 => OSKey::Keyboard(OSKeyCode::Key8),
+        0x39 => OSKey::Keyboard(OSKeyCode::Key9),
+        0x41 => OSKey::Keyboard(OSKeyCode::KeyA),
+        0x42 => OSKey::Keyboard(OSKeyCode::KeyB),
+        0x43 => OSKey::Keyboard(OSKeyCode::KeyC),
+        0x44 => OSKey::Keyboard(OSKeyCode::KeyD),
+        0x45 => OSKey::Keyboard(OSKeyCode::KeyE),
+        0x46 => OSKey::Keyboard(OSKeyCode::KeyF),
+        0x47 => OSKey::Keyboard(OSKeyCode::KeyG),
+        0x48 => OSKey::Keyboard(OSKeyCode::KeyH),
+        0x49 => OSKey::Keyboard(OSKeyCode::KeyI),
+        0x4A => OSKey::Keyboard(OSKeyCode::KeyJ),
+        0x4B => OSKey::Keyboard(OSKeyCode::KeyK),
+        0x4C => OSKey::Keyboard(OSKeyCode::KeyL),
+        0x4D => OSKey::Keyboard(OSKeyCode::KeyM),
+        0x4E => OSKey::Keyboard(OSKeyCode::KeyN),
+        0x4F => OSKey::Keyboard(OSKeyCode::KeyO),
+        0x50 => OSKey::Keyboard(OSKeyCode::KeyP),
+        0x51 => OSKey::Keyboard(OSKeyCode::KeyQ),
+        0x52 => OSKey::Keyboard(OSKeyCode::KeyR),
+        0x53 => OSKey::Keyboard(OSKeyCode::KeyS),
+        0x54 => OSKey::Keyboard(OSKeyCode::KeyT),
+        0x55 => OSKey::Keyboard(OSKeyCode::KeyU),
+        0x56 => OSKey::Keyboard(OSKeyCode::KeyV),
+        0x57 => OSKey::Keyboard(OSKeyCode::KeyW),
+        0x58 => OSKey::Keyboard(OSKeyCode::KeyX),
+        0x59 => OSKey::Keyboard(OSKeyCode::KeyY),
+        0x5A => OSKey::Keyboard(OSKeyCode::KeyZ),
+        0x5B => OSKey::Keyboard(OSKeyCode::KeyLeftSuper),
+        0x5C => OSKey::Keyboard(OSKeyCode::KeyRightSuper),
+        0x60 => OSKey::Keyboard(OSKeyCode::KeyKeypad0),
+        0x61 => OSKey::Keyboard(OSKeyCode::KeyKeypad1),
+        0x62 => OSKey::Keyboard(OSKeyCode::KeyKeypad2),
+        0x63 => OSKey::Keyboard(OSKeyCode::KeyKeypad3),
+        0x64 => OSKey::Keyboard(OSKeyCode::KeyKeypad4),
+        0x65 => OSKey::Keyboard(OSKeyCode::KeyKeypad5),
+        0x66 => OSKey::Keyboard(OSKeyCode::KeyKeypad6),
+        0x67 => OSKey::Keyboard(OSKeyCode::KeyKeypad7),
+        0x68 => OSKey::Keyboard(OSKeyCode::KeyKeypad8),
+        0x69 => OSKey::Keyboard(OSKeyCode::KeyKeypad9),
+        0x6A => OSKey::Keyboard(OSKeyCode::KeyKeypadMultiply),
+        0x6B => OSKey::Keyboard(OSKeyCode::KeyKeypadAdd),
+        0x6D => OSKey::Keyboard(OSKeyCode::KeyKeypadSubtract),
+        0x6E => OSKey::Keyboard(OSKeyCode::KeyKeypadDecimal),
+        0x6F => OSKey::Keyboard(OSKeyCode::KeyKeypadDivide),
+        0x70 => OSKey::Keyboard(OSKeyCode::KeyF1),
+        0x71 => OSKey::Keyboard(OSKeyCode::KeyF2),
+        0x72 => OSKey::Keyboard(OSKeyCode::KeyF3),
+        0x73 => OSKey::Keyboard(OSKeyCode::KeyF4),
+        0x74 => OSKey::Keyboard(OSKeyCode::KeyF5),
+        0x75 => OSKey::Keyboard(OSKeyCode::KeyF6),
+        0x76 => OSKey::Keyboard(OSKeyCode::KeyF7),
+        0x77 => OSKey::Keyboard(OSKeyCode::KeyF8),
+        0x78 => OSKey::Keyboard(OSKeyCode::KeyF9),
+        0x79 => OSKey::Keyboard(OSKeyCode::KeyF10),
+        0x7A => OSKey::Keyboard(OSKeyCode::KeyF11),
+        0x7B => OSKey::Keyboard(OSKeyCode::KeyF12),
+        0x7C => OSKey::Keyboard(OSKeyCode::KeyF13),
+        0x7D => OSKey::Keyboard(OSKeyCode::KeyF14),
+        0x7E => OSKey::Keyboard(OSKeyCode::KeyF15),
+        0x7F => OSKey::Keyboard(OSKeyCode::KeyF16),
+        0x80 => OSKey::Keyboard(OSKeyCode::KeyF17),
+        0x81 => OSKey::Keyboard(OSKeyCode::KeyF18),
+        0x82 => OSKey::Keyboard(OSKeyCode::KeyF19),
+        0x83 => OSKey::Keyboard(OSKeyCode::KeyF20),
+        0x90 => OSKey::Keyboard(OSKeyCode::KeyNumLock),
+        0xA0 => OSKey::Keyboard(OSKeyCode::KeyLeftShift),
+        0xA1 => OSKey::Keyboard(OSKeyCode::KeyRightShift),
+        0xA2 => OSKey::Keyboard(OSKeyCode::KeyLeftCtrl),
+        0xA3 => OSKey::Keyboard(OSKeyCode::KeyRightCtrl),
+        0xA4 => OSKey::Keyboard(OSKeyCode::KeyLeftAlt),
+        0xA5 => OSKey::Keyboard(OSKeyCode::KeyRightAlt),
+        0xBF => OSKey::Keyboard(OSKeyCode::KeySlash),
+        0xC0 => OSKey::Keyboard(OSKeyCode::KeyGraveAccent),
+        _ => {
+            println!("Key not handled: {:?}!", param.0);
+            OSKey::Keyboard(OSKeyCode::KeyA)
+        }
     }
 }
 
