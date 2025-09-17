@@ -21,7 +21,7 @@ pub enum OSEventType {
     Release,
     Scroll,
 }
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum OSKeyCode {
     KeyA,
     KeyS,
@@ -134,7 +134,7 @@ pub enum OSKeyCode {
     KeyDownArrow,
     KeyUpArrow,
 }
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum OSKey {
     LeftMouseButton,
     RightMouseButton,

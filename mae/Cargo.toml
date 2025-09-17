@@ -31,7 +31,8 @@ features = [
   "Win32_Graphics_Gdi",
   "Win32_Graphics_OpenGL", # TODO: Make this optional later
   "Win32_System_LibraryLoader",
-  "Win32_UI_WindowsAndMessaging"
+  "Win32_System_Performance",
+  "Win32_UI_WindowsAndMessaging",
 ]
 
 [target.'cfg(target_os="android")'.dependencies]

@@ -291,9 +291,9 @@ impl IMUI {
     }
     pub fn eventloop(&mut self, mut build_ui_func: impl FnMut(&mut IMUI)) {
         #[cfg(debug_assertions)]
-        let mut time = 0f64;
-        #[cfg(debug_assertions)]
         let mut start = os::timer_value();
+        #[cfg(debug_assertions)]
+        let freq = os::timer_init();
         let mut fc = 0usize;
         #[cfg(debug_assertions)]
         self.drawer.renderer.vsync(false);
@@ -308,8 +308,9 @@ impl IMUI {
                     // XXX(xarkes): dirty, we should wake up once an event is triggered rather than polling all the time
                     // especially because it caps our FPS
                     // but for the time being this allows us not eating all the CPU
-                    // std::thread::sleep(core::time::Duration::from_millis(16));
-                    // continue;
+                    std::thread::sleep(core::time::Duration::from_millis(16));
+                    #[cfg(not(debug_assertions))]
+                    continue;
                 }
                 let maybe_new_size = self.drawer.renderer.win.get_size();
                 if maybe_new_size.0 != self.size.width || maybe_new_size.1 != self.size.height {
@@ -338,11 +339,11 @@ impl IMUI {
                 #[cfg(debug_assertions)]
                 {
                     let end = os::timer_value();
-                    time = (end - start) as f64;
+                    let time = (end - start) as f64;
                     let text = format!(
                         "debug build: {:.0}fps - {:.2}ms",
-                        1_000_000_000. / time,
-                        time / 1_000_000.
+                        freq / time,
+                        time * 1000. / freq
                     );
                     self.drawer.draw_text(
                         self.size.width / 2.

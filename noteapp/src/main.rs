@@ -29,7 +29,8 @@ fn main() {
     let mut show_search = false;
     let mut search = Rc::new(RefCell::new(String::from("")));
     let save_interval_seconds = 30.;
-    let mut last_save = mae::os::timer_value() as f64 / 1e9;
+    let freq = mae::os::timer_init();
+    let mut last_save = mae::os::timer_value() as f64 / freq;
     ui.eventloop(|ui| {
         ui.row(|ui| {
             ui.column(|ui| {
@@ -105,7 +106,7 @@ fn main() {
         };
 
         // common logic
-        let curtime = mae::os::timer_value() as f64 / 1e9;
+        let curtime = mae::os::timer_value() as f64 / freq;
         if last_save + save_interval_seconds < curtime {
             println!("Auto save...");
             noteapp.save();

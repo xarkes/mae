@@ -1,6 +1,14 @@
 use windows::{
-    Win32::Foundation::*, Win32::Graphics::Gdi::*, Win32::System::LibraryLoader::GetModuleHandleA,
-    Win32::System::LibraryLoader::GetProcAddress, Win32::UI::WindowsAndMessaging::*, core::*,
+    Win32::{
+        Foundation::*,
+        Graphics::Gdi::*,
+        System::{
+            LibraryLoader::GetModuleHandleA,
+            Performance::{QueryPerformanceCounter, QueryPerformanceFrequency},
+        },
+        UI::WindowsAndMessaging::*,
+    },
+    core::*,
 };
 
 use crate::{
@@ -90,13 +98,13 @@ impl Window {
         let mut events = Vec::new();
 
         let mut message = MSG::default();
+        let mut last_keydown = OSKey::Keyboard(OSKeyCode::KeyA);
         loop {
             unsafe {
                 if !PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
                     break;
                 }
             };
-            println!("Event: {:?}", message);
             let event = match message.message {
                 WM_MOUSEMOVE => Some(OSEvent {
                     ty: OSEventType::MouseMove,
@@ -133,24 +141,28 @@ impl Window {
                     chars: None,
                     delta: 0.,
                 }),
-                WM_KEYDOWN => Some(OSEvent {
+                WM_KEYDOWN => {
+                    // XXX: we assume WM_CHAR always comes after WM_KEYDOWN
+                    // This is because for now we do not handle properly having a
+                    // WM_KEYDOWN then a WM_CHAR for special characters like Return, Backspace, etc.
+                    // Atm it means we push two events for the same character, and the text input doesn't handle that.
+                    last_keydown = windows_keycode_to_oskey(message.wParam);
+                    None
+                    //Some(OSEvent {
+                    //    ty: OSEventType::Press,
+                    //    key: last_keydown,
+                    //    pos: Some(self.translate_loc(message.pt)),
+                    //    chars: None,
+                    //    delta: 0.,
+                    //})
+                }
+                WM_CHAR => Some(OSEvent {
                     ty: OSEventType::Press,
-                    key: windows_keycode_to_oskey(message.wParam),
+                    key: last_keydown,
                     pos: Some(self.translate_loc(message.pt)),
-                    chars: None,
+                    chars: Some(char::from_u32(message.wParam.0 as u32).unwrap()),
                     delta: 0.,
                 }),
-                WM_CHAR => {
-                    println!("hello there: {}", message.wParam.0);
-                    Some(OSEvent {
-                        ty: OSEventType::Press,
-                        // key: windows_keycode_to_oskey(message.wParam),
-                        key: OSKey::Keyboard(OSKeyCode::KeyA), // XXX: hack to avoid sending twice some characters with a previous WM_KEYDOWN event
-                        pos: Some(self.translate_loc(message.pt)),
-                        chars: Some(char::from_u32(message.wParam.0 as u32).unwrap()),
-                        delta: 0.,
-                    })
-                }
                 _ => None,
             };
             if let Some(event) = event {
@@ -271,7 +283,7 @@ fn windows_keycode_to_oskey(param: WPARAM) -> OSKey {
         0xBF => OSKey::Keyboard(OSKeyCode::KeySlash),
         0xC0 => OSKey::Keyboard(OSKeyCode::KeyGraveAccent),
         _ => {
-            println!("Key not handled: {:?}!", param.0);
+            println!("WARNING: Key not handled: {:?}!", param.0);
             OSKey::Keyboard(OSKeyCode::KeyA)
         }
     }
@@ -295,9 +307,15 @@ extern "system" fn wndproc(window: HWND, message: u32, wparam: WPARAM, lparam: L
 }
 
 pub fn timer_init() -> f64 {
-    // TODO(xarkes)
-    1.
+    let mut counter: i64 = 0;
+    // Returns 10_000_000 on Windows 11, Amd Ryzen CPU
+    unsafe { QueryPerformanceFrequency(&mut counter).unwrap() };
+    counter as f64
 }
 pub fn timer_value() -> u64 {
-    1
+    let mut ticks: i64 = 0;
+    unsafe {
+        QueryPerformanceCounter(&mut ticks).unwrap();
+    }
+    ticks as u64
 }
