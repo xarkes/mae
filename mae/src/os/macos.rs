@@ -327,7 +327,7 @@ unsafe extern "C" {
     fn clock_gettime_nsec_np(t: u64) -> u64;
 }
 pub fn timer_init() -> f64 {
-    1.
+    1_000_000_000.
 }
 pub fn timer_value() -> u64 {
     let _clock_monotonic_raw = 4;

@@ -171,50 +171,6 @@ pub enum UILocaleKind {
     TtbRtl, // Japanese like
 }
 
-struct UIStyle {
-    main_color: Color,
-    bg_color: Color,
-    text_color: Color,
-    margin: f32,
-    border_size: f32,
-    text_size: f32,
-    active_color: Color,
-}
-
-impl UIStyle {
-    pub fn default() -> Self {
-        UIStyle {
-            main_color: Color {
-                r: 40. / 256.,
-                g: 60. / 256.,
-                b: 140. / 256.,
-                a: 1.0,
-            },
-            bg_color: Color {
-                r: 10. / 256.,
-                g: 10. / 256.,
-                b: 10. / 256.,
-                a: 0.8,
-            },
-            text_color: Color {
-                r: 1.,
-                g: 1.,
-                b: 1.,
-                a: 1.,
-            },
-            margin: 0.,
-            border_size: 2.,
-            text_size: 12.,
-            active_color: Color {
-                r: 1.,
-                g: 0.6,
-                b: 0.6,
-                a: 1.,
-            },
-        }
-    }
-}
-
 pub struct UITheme {
     pub color_bg: Color,
     pub color_bg_popup: Color,
@@ -588,6 +544,7 @@ impl IMUI {
         self.apply_layout(root.clone());
     }
 
+    // TODO(xarkes): Rewrite using Clay's layout algorithm
     fn layout_roots(&mut self) {
         // TODO(xarkes): Merge normal root with "floating" roots
         self.layout_root(self.root.clone());
@@ -1138,32 +1095,6 @@ impl IMUI {
             }
         }
 
-        // // XXX: dirty - the whole event handling is dirty... god help me
-        // if uibox.borrow().resizable() && self.event.rmouse.is_some() {
-        //     if self.event.rclick.is_some() {
-        //         let delta_x = self.event.rmouse.unwrap().x - self.event.rclick.unwrap().x;
-        //         let delta_y = self.event.rmouse.unwrap().y - self.event.rclick.unwrap().y;
-        //         uibox.borrow_mut().resize_delta = Point::new(delta_x, delta_y);
-        //     } else if uibox.borrow().clicked() {
-        //         let sz = uibox.borrow().size;
-        //         uibox.borrow_mut().pref_size =
-        //             Some((UISize::DPixels(sz.width), UISize::DPixels(sz.height)));
-        //         uibox.borrow_mut().resize_delta = Point::default();
-        //     }
-        // }
-        // if uibox.borrow().draggable() && self.event.mouse.is_some() {
-        //     if self.event.click.is_some() {
-        //         // XXX: direct write to origin only works for floating panes
-        //         let delta_x = self.event.click.unwrap().x - self.event.mouse.unwrap().x;
-        //         let delta_y = self.event.click.unwrap().y - self.event.mouse.unwrap().y;
-        //         let fixed_origin = uibox.borrow().fixed_origin;
-        //         uibox.borrow_mut().origin =
-        //             Point::new(fixed_origin.x - delta_x, fixed_origin.y - delta_y);
-        //     } else if uibox.borrow().clicked() {
-        //         let mut uibox = uibox.borrow_mut();
-        //         uibox.fixed_origin = uibox.origin;
-        //     }
-        // }
         if point_in_rect(&uibox.borrow().bounds(), self.event.mouse) {
             uibox.borrow_mut().events |= UIBoxEvent::MouseOver as u64;
         }
