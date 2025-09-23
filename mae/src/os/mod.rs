@@ -141,12 +141,41 @@ pub enum OSKey {
     Keyboard(OSKeyCode),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum OSEventFlag {
+    Control = 1,
+    Alt = 2,
+    Shift = 4,
+
+    ControlAlt = 3,
+    ControlShift = 5,
+    AltShift = 6,
+    ControlAltShift = 7,
+}
+impl TryFrom<i32> for OSEventFlag {
+    type Error = ();
+
+    fn try_from(v: i32) -> Result<Self, Self::Error> {
+        match v {
+            x if x == OSEventFlag::Control as i32 => Ok(OSEventFlag::Control),
+            x if x == OSEventFlag::Alt as i32 => Ok(OSEventFlag::Alt),
+            x if x == OSEventFlag::ControlAlt as i32 => Ok(OSEventFlag::ControlAlt),
+            x if x == OSEventFlag::Shift as i32 => Ok(OSEventFlag::Shift),
+            x if x == OSEventFlag::ControlShift as i32 => Ok(OSEventFlag::ControlShift),
+            x if x == OSEventFlag::AltShift as i32 => Ok(OSEventFlag::AltShift),
+            x if x == OSEventFlag::ControlAltShift as i32 => Ok(OSEventFlag::ControlAltShift),
+            _ => Err(()),
+        }
+    }
+}
+
 pub struct OSEvent {
     pub ty: OSEventType,
     pub key: OSKey,
     pub pos: Option<Point>,
     pub chars: Option<char>,
     pub delta: f32,
+    pub flags: Option<OSEventFlag>,
 }
 
 pub type Window = os_impl::Window;

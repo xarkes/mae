@@ -2,7 +2,7 @@ extern crate objc2;
 
 use crate::imui::Point;
 
-use super::{OSEvent, OSEventType, OSKey, OSKeyCode};
+use super::{OSEvent, OSEventFlag, OSEventType, OSKey, OSKeyCode};
 use std::cell::OnceCell;
 
 use objc2::{
@@ -11,8 +11,8 @@ use objc2::{
 };
 use objc2_app_kit::{
     NSAnyEventMask, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
-    NSAutoresizingMaskOptions, NSBackingStoreType, NSEventType, NSMenu, NSMenuItem, NSView,
-    NSWindow, NSWindowDelegate, NSWindowStyleMask,
+    NSAutoresizingMaskOptions, NSBackingStoreType, NSEventModifierFlags, NSEventType, NSMenu,
+    NSMenuItem, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
 };
 use objc2_foundation::{
     MainThreadMarker, NSDate, NSDefaultRunLoopMode, NSNotification, NSObject, NSObjectProtocol,
@@ -226,6 +226,7 @@ impl Window {
                             pos: Some(self.translate_loc(ev.locationInWindow())),
                             chars: None,
                             delta: 0.,
+                            flags: None,
                         }),
                         NSEventType::RightMouseDragged => Some(OSEvent {
                             ty: OSEventType::MouseMove,
@@ -233,6 +234,7 @@ impl Window {
                             pos: Some(self.translate_loc(ev.locationInWindow())),
                             chars: None,
                             delta: 0.,
+                            flags: None,
                         }),
                         NSEventType::LeftMouseDown => Some(OSEvent {
                             ty: OSEventType::Press,
@@ -240,6 +242,7 @@ impl Window {
                             pos: Some(self.translate_loc(ev.locationInWindow())),
                             chars: None,
                             delta: 0.,
+                            flags: None,
                         }),
                         NSEventType::LeftMouseUp => Some(OSEvent {
                             ty: OSEventType::Release,
@@ -247,6 +250,7 @@ impl Window {
                             pos: Some(self.translate_loc(ev.locationInWindow())),
                             chars: None,
                             delta: 0.,
+                            flags: None,
                         }),
                         NSEventType::RightMouseDown => Some(OSEvent {
                             ty: OSEventType::Press,
@@ -254,6 +258,7 @@ impl Window {
                             pos: Some(self.translate_loc(ev.locationInWindow())),
                             chars: None,
                             delta: 0.,
+                            flags: None,
                         }),
                         NSEventType::RightMouseUp => Some(OSEvent {
                             ty: OSEventType::Release,
@@ -261,6 +266,7 @@ impl Window {
                             pos: Some(self.translate_loc(ev.locationInWindow())),
                             chars: None,
                             delta: 0.,
+                            flags: None,
                         }),
                         NSEventType::KeyDown => Some(OSEvent {
                             ty: OSEventType::Press,
@@ -268,6 +274,7 @@ impl Window {
                             pos: None,
                             chars: ev.characters().unwrap().to_string().chars().nth(0),
                             delta: 0.,
+                            flags: macos_keyflag_to_osflag(ev.modifierFlags()),
                         }),
                         NSEventType::LeftMouseDragged => Some(OSEvent {
                             ty: OSEventType::MouseMove,
@@ -275,6 +282,7 @@ impl Window {
                             pos: Some(self.translate_loc(ev.locationInWindow())),
                             chars: None,
                             delta: 0.,
+                            flags: None,
                         }),
                         // XXX(xarkes): I think this sucks to use key (LMB/RMB) to differentiate scroll axis
                         // Good enough for now, will likely have to improve after mobile support
@@ -286,6 +294,7 @@ impl Window {
                                 pos: Some(self.translate_loc(ev.locationInWindow())),
                                 chars: None,
                                 delta: ev.deltaX() as f32,
+                                flags: None,
                             }),
                             false => Some(OSEvent {
                                 ty: OSEventType::Scroll,
@@ -293,6 +302,7 @@ impl Window {
                                 pos: Some(self.translate_loc(ev.locationInWindow())),
                                 chars: None,
                                 delta: ev.deltaY() as f32,
+                                flags: None,
                             }),
                         },
                         // NSEventType::FlagsChanged => Some(OSEvent {
@@ -332,6 +342,20 @@ pub fn timer_init() -> f64 {
 pub fn timer_value() -> u64 {
     let _clock_monotonic_raw = 4;
     unsafe { clock_gettime_nsec_np(_clock_monotonic_raw) }
+}
+
+fn macos_keyflag_to_osflag(flag: NSEventModifierFlags) -> Option<OSEventFlag> {
+    let mut out = 0i32;
+    if flag.contains(NSEventModifierFlags::Control) {
+        out |= OSEventFlag::Control as i32;
+    }
+    if flag.contains(NSEventModifierFlags::Shift) {
+        out |= OSEventFlag::Shift as i32;
+    }
+    if flag.contains(NSEventModifierFlags::Option) {
+        out |= OSEventFlag::Alt as i32;
+    }
+    OSEventFlag::try_from(out).ok()
 }
 
 fn macos_keycode_to_oskey(keycode: u16) -> OSKey {

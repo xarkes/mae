@@ -14,7 +14,7 @@ use android_activity::AndroidApp;
 
 use crate::{
     draw::{self, Drawer},
-    os::{self, OSEvent, OSEventType, OSKey},
+    os::{self, OSEvent, OSEventFlag, OSEventType, OSKey, OSKeyCode},
     render::{self, RectCoords, V4f32, font_cache::FontCache},
 };
 
@@ -652,6 +652,24 @@ impl IMUI {
             None => None,
         }
     }
+    pub fn input(&mut self, key: OSKey, flags: Option<OSEventFlag>) -> bool {
+        let mut handled = false;
+        self.event.events.retain(|ev| {
+            if ev.key == key {
+                if flags.is_some() && ev.flags.is_some() {
+                    if flags.unwrap() as u32 & (ev.flags.unwrap() as u32) > 0 {
+                        handled = true;
+                        return false;
+                    }
+                } else {
+                    handled = true;
+                    return false;
+                }
+            }
+            true
+        });
+        handled
+    }
 
     /////////////////////////////////
     //// Widgets functions
@@ -880,7 +898,7 @@ impl IMUI {
                     cursor_box.borrow_mut().layout = Some(UILayout::Absolute);
                     cursor_box.borrow_mut().fixed_origin = Point::new(
                         bounds.x0 + cx + textarea.borrow().scrollx,
-                        bounds.y0 + cy + textarea.borrow().scrolly,
+                        bounds.y0 + cy + textarea.borrow().scrolly + 2.,
                     );
                     cursor_box.borrow_mut().style.bg_color = self.theme.color_text;
                 }

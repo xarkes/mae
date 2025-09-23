@@ -261,22 +261,27 @@ impl IMUITextInputState {
                     }
                     OSKeyCode::KeyEscape => {
                         // do nothing
+                        // TODO(xarkes): Remove focus?
                     }
                     _ => {
                         if let Some(data) = data {
-                            let byte_idx = get_str_insert_idx(self.idx);
-                            self.buffer.borrow_mut().insert(byte_idx, *data);
-                            bufchanged = true;
-                            self.update_cursor_loc(self.idx + 1);
+                            // TODO(xarkes): is it a good predicate to know what keys should be accepted?
+                            if !data.is_ascii_control() {
+                                let byte_idx = get_str_insert_idx(self.idx);
+                                self.buffer.borrow_mut().insert(byte_idx, *data);
+                                bufchanged = true;
+                                self.update_cursor_loc(self.idx + 1);
+                            }
                         }
                     }
                 }
 
                 if bufchanged {
-                    // self.focus.borrow_mut().events |= UIWidgetEvent::KeyPressed as u64;
                     self.changecount += 1;
+                    handled = true;
+                } else {
+                    handled = false;
                 }
-                handled = true;
             }
             _ => {
                 handled = false;

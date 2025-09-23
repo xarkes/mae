@@ -5,6 +5,9 @@ use mae::imui::IMUI;
 use mae::imui::UISize;
 use mae::imui::uibox::Color;
 use mae::imui::uibox::UIBoxRef2;
+use mae::os::OSEventFlag;
+use mae::os::OSKey;
+use mae::os::OSKeyCode;
 use mae::uisize;
 
 mod noteapp;
@@ -21,7 +24,6 @@ fn main() {
 
     // xarkes: init notes
     let mut noteapp = NoteApp::new();
-    println!("Selected default database type: local sqlite");
 
     // xarkes: draw UI
     let mut ui = IMUI::new(1024, 768);
@@ -111,6 +113,14 @@ fn main() {
             println!("Auto save...");
             noteapp.save();
             last_save = curtime;
+        }
+
+        // shortcuts
+        if ui.input(OSKey::Keyboard(OSKeyCode::KeyS), Some(OSEventFlag::Control)) {
+            noteapp.save();
+        }
+        if ui.input(OSKey::Keyboard(OSKeyCode::KeyN), Some(OSEventFlag::Control)) {
+            noteapp.newnote();
         }
     });
 
