@@ -196,6 +196,7 @@ pub struct IMUI {
     root: UIBoxRef,
     floating_roots: Vec<UIBoxRef>,
     locale_kind: UILocaleKind,
+    prompt: Option<UIBoxRef>,
 
     // per-build data
     size: Size,
@@ -237,6 +238,7 @@ impl IMUI {
             event: IMUIEventState::default(),
             text_input_state: None,
             locale_kind: UILocaleKind::LtrTtb,
+            prompt: None,
             root: root.clone(),
             floating_roots: Vec::new(),
             uiboxes: HashMap::new(),
@@ -624,16 +626,25 @@ impl IMUI {
         self.event.events = self.drawer.renderer.win.get_events();
 
         // xarkes: consume global scope events
+        let mut escape_key_pressed = false;
         self.event.events.retain(|ev| {
             self.dirty = true;
             let mut retain = true;
             if ev.ty == OSEventType::Press {
+                if ev.key == OSKey::Keyboard(OSKeyCode::KeyEscape) {
+                    escape_key_pressed = true;
+                }
                 if let Some(textinput) = self.text_input_state.as_mut() {
                     retain = !textinput.handle_event(&ev.key, &ev.chars);
                 }
             }
             retain
         });
+
+        if escape_key_pressed {
+            self.text_input_state = None;
+            self.clear_prompt();
+        }
         // TODO(xarkes): we may want to propagate the event back to the OS window when the application did not consume them
     }
     pub(crate) fn resize(&mut self) -> Size {

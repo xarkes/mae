@@ -3,12 +3,10 @@ use std::rc::Rc;
 
 use mae::imui::IMUI;
 use mae::imui::UISize;
-use mae::imui::uibox::Color;
 use mae::imui::uibox::UIBoxRef2;
 use mae::os::OSEventFlag;
 use mae::os::OSKey;
 use mae::os::OSKeyCode;
-use mae::uisize;
 
 mod noteapp;
 use noteapp::NoteApp;
@@ -81,31 +79,29 @@ fn main() {
         });
 
         // prompts
-        if show_search {
-            ui.prompt("#search_prompt", |ui| {
-                ui.label("Search for notes");
-                ui.line_edit(search.clone(), "#search")
-                    .width(UISize::Expand);
-                let search_filter = search.borrow();
-                for note in &noteapp.notes() {
-                    if search_filter.len() > 0 {
-                        if !fuzzy_search(search_filter.as_str(), note.name.as_str()) {
-                            continue;
-                        }
-                    }
-                    let button = ui.button(
-                        format!("> {}##button_label_{}", note.name, note.id).as_str(),
-                        None,
-                    );
-                    let buttonr = UIBoxRef2::new(button.clone());
-                    buttonr.background(ui.theme.color_bg_popup);
-                    if button.borrow().clicked() {
-                        noteapp.open(note.id);
-                        show_search = false;
+        ui.prompt("#search_prompt", &mut show_search, |ui, show| {
+            ui.label("Search for notes");
+            ui.line_edit(search.clone(), "#search")
+                .width(UISize::Expand);
+            let search_filter = search.borrow();
+            for note in &noteapp.notes() {
+                if search_filter.len() > 0 {
+                    if !fuzzy_search(search_filter.as_str(), note.name.as_str()) {
+                        continue;
                     }
                 }
-            });
-        };
+                let button = ui.button(
+                    format!("> {}##button_label_{}", note.name, note.id).as_str(),
+                    None,
+                );
+                let buttonr = UIBoxRef2::new(button.clone());
+                buttonr.background(ui.theme.color_bg_popup);
+                if button.borrow().clicked() {
+                    *show = false;
+                    noteapp.open(note.id);
+                }
+            }
+        });
 
         // common logic
         let curtime = mae::os::timer_value() as f64 / freq;
@@ -122,6 +118,10 @@ fn main() {
         if ui.input(OSKey::Keyboard(OSKeyCode::KeyN), Some(OSEventFlag::Control)) {
             noteapp.newnote();
         }
+        if ui.input(OSKey::Keyboard(OSKeyCode::KeyG), Some(OSEventFlag::Control)) {
+            show_search = true;
+            search = Rc::new(RefCell::new(String::from("")));
+        }
     });
 
     // TODO New: Deadline Oct 1st
@@ -130,7 +130,7 @@ fn main() {
     // - [ ] rework font atlas handling (proper multi-font + performance)
     //   - [ ] fix OGL textures
     // - [ ] have proper prompts (focus, escape, etc.)
-    // - [ ] support keybindings
+    // - [x] support keybindings
     // - [ ] support themes (at least light and dark)
     //   - [x] rename to theme
     // - [ ] make text editor better

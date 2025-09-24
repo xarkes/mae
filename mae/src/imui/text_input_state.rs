@@ -260,8 +260,7 @@ impl IMUITextInputState {
                         }
                     }
                     OSKeyCode::KeyEscape => {
-                        // do nothing
-                        // TODO(xarkes): Remove focus?
+                        // do nothing, let parent function handle it
                     }
                     _ => {
                         if let Some(data) = data {
