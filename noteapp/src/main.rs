@@ -81,8 +81,9 @@ fn main() {
         // prompts
         ui.prompt("#search_prompt", &mut show_search, |ui, show| {
             ui.label("Search for notes");
-            ui.line_edit(search.clone(), "#search")
-                .width(UISize::Expand);
+            let search_input = ui.line_edit(search.clone(), "#search");
+            search_input.width(UISize::Expand);
+            ui.focus(search_input);
             let search_filter = search.borrow();
             for note in &noteapp.notes() {
                 if search_filter.len() > 0 {

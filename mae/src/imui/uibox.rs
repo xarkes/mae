@@ -10,8 +10,12 @@ pub struct UIBoxRef2 {
 }
 
 impl UIBoxRef2 {
+    // Common APIs
     pub fn new(_box: Rc<RefCell<UIBox>>) -> Self {
         UIBoxRef2 { _box }
+    }
+    pub fn get(&self) -> Rc<RefCell<UIBox>> {
+        self._box.clone()
     }
 
     // Styling APIs

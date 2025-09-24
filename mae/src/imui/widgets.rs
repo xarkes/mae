@@ -72,18 +72,18 @@ impl IMUI {
         show: &mut bool,
         mut children: impl FnMut(&mut IMUI, &mut bool),
     ) {
+        let key = u64_hash_from_string(4736251, title);
+        if self.uiboxes.contains_key(&key) && self.prompt.is_none() {
+            // uibox was created before, but self.prompt is None, we should revert the bool
+            self.uiboxes.remove(&key);
+            *show = false;
+            return;
+        }
         if *show {
-            let key = u64_hash_from_string(4736251, title);
             let uibox = self.new_floating_root(
                 key,
                 Point::new(self.size.width / 4., self.size.height / 10.),
             );
-            if !uibox.borrow().visible {
-                // prompt exists and was set to not visible, switch back the bool
-                *show = false;
-                uibox.borrow_mut().visible = true;
-                return;
-            }
             uibox.borrow_mut().pref_width = UISize::DPixels(self.size.width / 2.);
             uibox.borrow_mut().pref_height = UISize::DPixels(self.size.height / 4.);
             self.parent_stack.push(uibox.clone());
@@ -98,7 +98,6 @@ impl IMUI {
 
     pub(crate) fn clear_prompt(&mut self) {
         if self.prompt.is_some() {
-            self.prompt.as_ref().unwrap().borrow_mut().visible = false;
             self.prompt = None;
         }
     }

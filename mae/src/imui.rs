@@ -263,6 +263,7 @@ impl IMUI {
                 if self.event.events.len() == 0 && fc > 2 && !self.dirty {
                     // xarkes: don't draw anything when not needed
                     // here we check for frame > 2 as we need 2 frames before displaying anything
+                    // this allows to run the logic that needs extra frames, e.g. showing and hiding a prompt
                     // XXX(xarkes): dirty, we should wake up once an event is triggered rather than polling all the time
                     // especially because it caps our FPS
                     // but for the time being this allows us not eating all the CPU
@@ -763,7 +764,7 @@ impl IMUI {
         );
         line_edit.borrow_mut().layout = Some(UILayout::Vertical);
         let multiline = false;
-        self.text_edit_impl(line_edit.clone(), text_buffer, multiline, false);
+        self.text_edit_impl(line_edit.clone(), text_buffer, multiline);
         UIBoxRef2::new(line_edit)
     }
     pub fn textarea(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIBoxRef2 {
@@ -821,8 +822,7 @@ impl IMUI {
                 }
 
                 let multiline = true;
-                let focus = false;
-                ui.text_edit_impl(textarea_.clone(), text_buffer.clone(), multiline, focus);
+                ui.text_edit_impl(textarea_.clone(), text_buffer.clone(), multiline);
 
                 if max_size_y > textarea_.borrow().size.height {
                     ui.scrollbar(textarea_.clone(), max_size_y, Axis::Y);
@@ -841,9 +841,8 @@ impl IMUI {
         textarea: UIBoxRef,
         text_buffer: Rc<RefCell<String>>,
         multiline: bool,
-        focus: bool,
     ) -> UIBoxRef {
-        if textarea.borrow().clicked() || (focus && self.text_input_state.is_none()) {
+        if textarea.borrow().clicked() {
             // xarkes: update the text input global state
             let mut state = IMUITextInputState::new(
                 // textarea.key,
@@ -1047,7 +1046,12 @@ impl IMUI {
         uibox
     }
 
+    pub fn focus(&mut self, target: UIBoxRef2) {
+        // self.text_input_state
+    }
+
     fn handle_uibox_event(&mut self, uibox: UIBoxRef) {
+        let mut should_clear_prompt = false;
         for ev in &self.event.events {
             let in_bounds = point_in_rect(&uibox.borrow().bounds(), ev.pos);
             let clickable = uibox.borrow().clickable();
@@ -1063,6 +1067,13 @@ impl IMUI {
                 && clickable
                 && in_bounds
             {
+                let in_prompt_bounds = match &self.prompt {
+                    Some(prompt) => point_in_rect(&prompt.borrow().bounds(), ev.pos),
+                    None => false,
+                };
+                if !in_prompt_bounds {
+                    should_clear_prompt = true;
+                }
                 self.event.click = ev.pos;
                 self.event.active = Some(uibox.borrow().key);
                 self.event.mouse = ev.pos;
@@ -1126,6 +1137,11 @@ impl IMUI {
 
         if point_in_rect(&uibox.borrow().bounds(), self.event.mouse) {
             uibox.borrow_mut().events |= UIBoxEvent::MouseOver as u64;
+        }
+
+        if self.prompt.is_some() && should_clear_prompt {
+            println!("Clearing");
+            self.clear_prompt();
         }
     }
 
