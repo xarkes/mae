@@ -81,9 +81,8 @@ fn main() {
         // prompts
         ui.prompt("#search_prompt", &mut show_search, |ui, show| {
             ui.label("Search for notes");
-            let search_input = ui.line_edit(search.clone(), "#search");
+            let search_input = ui.line_edit(search.clone(), "#search", true);
             search_input.width(UISize::Expand);
-            ui.focus(search_input);
             let search_filter = search.borrow();
             for note in &noteapp.notes() {
                 if search_filter.len() > 0 {
@@ -119,7 +118,7 @@ fn main() {
         if ui.input(OSKey::Keyboard(OSKeyCode::KeyN), Some(OSEventFlag::Control)) {
             noteapp.newnote();
         }
-        if ui.input(OSKey::Keyboard(OSKeyCode::KeyG), Some(OSEventFlag::Control)) {
+        if !show_search && ui.input(OSKey::Keyboard(OSKeyCode::KeyG), Some(OSEventFlag::Control)) {
             show_search = true;
             search = Rc::new(RefCell::new(String::from("")));
         }

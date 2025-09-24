@@ -755,7 +755,12 @@ impl IMUI {
         container
     }
 
-    pub fn line_edit(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIBoxRef2 {
+    pub fn line_edit(
+        &mut self,
+        text_buffer: Rc<RefCell<String>>,
+        id: &str,
+        focus: bool,
+    ) -> UIBoxRef2 {
         let line_edit = self.add_box_from_string(
             Some(id),
             UIBoxFlag::Clickable as u64
@@ -764,7 +769,7 @@ impl IMUI {
         );
         line_edit.borrow_mut().layout = Some(UILayout::Vertical);
         let multiline = false;
-        self.text_edit_impl(line_edit.clone(), text_buffer, multiline);
+        self.text_edit_impl(line_edit.clone(), text_buffer, multiline, focus);
         UIBoxRef2::new(line_edit)
     }
     pub fn textarea(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIBoxRef2 {
@@ -822,7 +827,7 @@ impl IMUI {
                 }
 
                 let multiline = true;
-                ui.text_edit_impl(textarea_.clone(), text_buffer.clone(), multiline);
+                ui.text_edit_impl(textarea_.clone(), text_buffer.clone(), multiline, false);
 
                 if max_size_y > textarea_.borrow().size.height {
                     ui.scrollbar(textarea_.clone(), max_size_y, Axis::Y);
@@ -841,8 +846,16 @@ impl IMUI {
         textarea: UIBoxRef,
         text_buffer: Rc<RefCell<String>>,
         multiline: bool,
+        force_focus: bool,
     ) -> UIBoxRef {
-        if textarea.borrow().clicked() {
+        if textarea.borrow().clicked()
+            || (force_focus
+                && (self.text_input_state.is_none()
+                    || self
+                        .text_input_state
+                        .as_ref()
+                        .is_some_and(|tis| tis.focus.borrow().key != textarea.borrow().key)))
+        {
             // xarkes: update the text input global state
             let mut state = IMUITextInputState::new(
                 // textarea.key,
@@ -1046,9 +1059,7 @@ impl IMUI {
         uibox
     }
 
-    pub fn focus(&mut self, target: UIBoxRef2) {
-        // self.text_input_state
-    }
+    pub fn focus(&mut self, target: UIBoxRef2) {}
 
     fn handle_uibox_event(&mut self, uibox: UIBoxRef) {
         let mut should_clear_prompt = false;
@@ -1176,8 +1187,7 @@ impl IMUI {
             self.handle_uibox_event(tooltip.clone());
             self.parent_stack.push(tooltip);
             {
-                let shortcut_string = "";
-                self.label(format!("{}{}", tooltip_text.unwrap(), shortcut_string).as_str());
+                self.label(tooltip_text.unwrap());
             }
             self.parent_stack.pop();
         }
