@@ -26,6 +26,9 @@ fn main() {
     // xarkes: draw UI
     let mut ui = IMUI::new(1024, 768);
 
+    // xarkes: define global shortcuts
+    let shortcut_save = (OSKey::Keyboard(OSKeyCode::KeyS), Some(OSEventFlag::Control));
+
     let mut show_search = false;
     let mut search = Rc::new(RefCell::new(String::from("")));
     let save_interval_seconds = 30.;
@@ -34,6 +37,7 @@ fn main() {
     ui.eventloop(|ui| {
         ui.row(|ui| {
             ui.column(|ui| {
+                // TODO: use shortcut_save to define the shortcut text
                 if ui
                     .button_icon(icon!(0xe161), Some("Save the database to fileystem."))
                     .borrow()
@@ -112,7 +116,7 @@ fn main() {
         }
 
         // shortcuts
-        if ui.input(OSKey::Keyboard(OSKeyCode::KeyS), Some(OSEventFlag::Control)) {
+        if ui.input(shortcut_save.0, shortcut_save.1) {
             noteapp.save();
         }
         if ui.input(OSKey::Keyboard(OSKeyCode::KeyN), Some(OSEventFlag::Control)) {
@@ -135,6 +139,7 @@ fn main() {
     //   - [x] rename to theme
     // - [ ] make text editor better
     //   - [ ] implement text selection, copy, paste, etc.
+    //     - [ ] implement mouse hold handling
     //   - [ ] change cursor when hover
     // - [ ] memory improvement (seems to use a lot of memory)
     // - [ ] implement proper fuzzy search (off-thread)

@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
-    os::{OSKey, OSKeyCode},
+    os::{OSEventFlag, OSKey, OSKeyCode},
     render::RectCoords,
 };
 
@@ -181,7 +181,12 @@ impl IMUITextInputState {
             curidx += line.chars().count() + 1; // +1 for '\n'
         }
     }
-    pub fn handle_event(&mut self, key: &OSKey, data: &Option<char>) -> bool {
+    pub fn handle_event(
+        &mut self,
+        key: &OSKey,
+        data: &Option<char>,
+        flags: Option<OSEventFlag>,
+    ) -> bool {
         let handled;
         let get_str_insert_idx = |idx| {
             if idx != self.buffer.borrow().len() {
@@ -191,6 +196,26 @@ impl IMUITextInputState {
         };
         match key {
             OSKey::Keyboard(keycode) => {
+                // Handle copy and paste
+                if flags.is_some()
+                    && flags.unwrap() as u32 & OSEventFlag::Control as u32
+                        == OSEventFlag::Control as u32
+                {
+                    match *keycode {
+                        OSKeyCode::KeyC => {
+                            // ctrl+c
+                            println!("Copy selection!");
+                            return true;
+                        }
+                        OSKeyCode::KeyV => {
+                            // ctrl+v
+                            println!("Paste selection!");
+                            return true;
+                        }
+                        _ => {}
+                    }
+                }
+
                 let mut bufchanged = false;
                 match keycode {
                     OSKeyCode::KeyBackspace => {

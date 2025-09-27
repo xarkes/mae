@@ -636,7 +636,7 @@ impl IMUI {
                     escape_key_pressed = true;
                 }
                 if let Some(textinput) = self.text_input_state.as_mut() {
-                    retain = !textinput.handle_event(&ev.key, &ev.chars);
+                    retain = !textinput.handle_event(&ev.key, &ev.chars, ev.flags);
                 }
             }
             retain
