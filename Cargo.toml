@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/mae",
+    "crates/app",
+]
+
+[profile.release]
+lto = true
+strip = true
+# codegen-units = 1 # TODO: To 1 to reduce binary size, but maybe just increases compilation time for no gain
+panic = "abort" # TODO: Maybe we don't want this in release mode
