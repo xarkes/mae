@@ -1,6 +1,6 @@
 extern crate x11;
 
-use super::{OSEvent, OSEventType, OSKey, OSKeyCode};
+use super::{OSEvent, OSEventType, OSKey, OSKeyCode, Point};
 use x11::xlib::{XIMPreeditNothing, XIMStatusNothing, XNInputStyle};
 
 pub struct Window {
@@ -112,8 +112,10 @@ impl Window {
                         ev = OSEvent {
                             ty: OSEventType::MouseMove,
                             key: OSKey::LeftMouseButton,
-                            pos: Some((event.motion.x as f32, event.motion.y as f32)),
+                            pos: Some(Point::new(event.motion.x as f32, event.motion.y as f32)),
                             chars: None,
+                            delta: 0.0,
+                            flags: None,
                         };
                     }
                     x11::xlib::ButtonPress => {
@@ -126,8 +128,10 @@ impl Window {
                                     OSKey::LeftMouseButton
                                 }
                             },
-                            pos: Some((event.button.x as f32, event.button.y as f32)),
+                            pos: Some(Point::new(event.button.x as f32, event.button.y as f32)),
                             chars: None,
+                            delta: 0.0,
+                            flags: None,
                         };
                     }
                     x11::xlib::ButtonRelease => {
@@ -140,8 +144,10 @@ impl Window {
                                     OSKey::LeftMouseButton
                                 }
                             },
-                            pos: Some((event.button.x as f32, event.button.y as f32)),
+                            pos: Some(Point::new(event.button.x as f32, event.button.y as f32)),
                             chars: None,
+                            delta: 0.0,
+                            flags: None,
                         };
                     }
                     x11::xlib::KeyPress => {
@@ -156,15 +162,18 @@ impl Window {
                             &mut ignore as *mut u64,
                             &mut return_status as *mut i32,
                         );
-                        let chars = str::from_utf8(buffer.as_slice()).unwrap();
+                        let chars_str = std::str::from_utf8(buffer.as_slice()).unwrap();
+                        let first_char = chars_str.chars().next().filter(|c| *c != '\0');
                         let ks =
                             x11::xlib::XKeycodeToKeysym(self.display, event.key.keycode as u8, 0)
                                 as u32;
                         ev = OSEvent {
                             ty: OSEventType::Press,
                             key: x11_keysym_to_oskey(ks),
-                            pos: Some((event.key.x as f32, event.key.y as f32)),
-                            chars: Some(String::from(chars)),
+                            pos: Some(Point::new(event.key.x as f32, event.key.y as f32)),
+                            chars: first_char,
+                            delta: 0.0,
+                            flags: None,
                         };
                     }
                     x11::xlib::KeyRelease => {
@@ -174,8 +183,10 @@ impl Window {
                         ev = OSEvent {
                             ty: OSEventType::Release,
                             key: x11_keysym_to_oskey(ks),
-                            pos: Some((event.key.x as f32, event.key.y as f32)),
+                            pos: Some(Point::new(event.key.x as f32, event.key.y as f32)),
                             chars: None,
+                            delta: 0.0,
+                            flags: None,
                         };
                     }
                     _ => {
