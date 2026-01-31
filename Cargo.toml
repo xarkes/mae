@@ -3,14 +3,6 @@ name = "mae"
 version = "0.0.1"
 edition = "2024"
 
-[lib]
-name = "mae"
-path = "src/lib.rs"
-
-[[bin]]
-name = "mae"
-path = "src/main.rs"
-
 [features]
 default = ["opengl", "cpu"]
 opengl = ["dep:gl"]

@@ -1,13 +1,18 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use mae::imui::IMUI;
-use mae::imui::UISize;
-use mae::imui::{MainAxisAlign, CrossAxisAlign};
-use mae::imui::uibox::{Color, UIBoxRef2};
-use mae::os::OSEventFlag;
-use mae::os::OSKey;
-use mae::os::OSKeyCode;
+mod draw;
+mod imui;
+mod os;
+mod render;
+
+use imui::IMUI;
+use imui::UISize;
+use imui::uibox::{Color, UIBoxRef2};
+use imui::{CrossAxisAlign, MainAxisAlign};
+use os::OSEventFlag;
+use os::OSKey;
+use os::OSKeyCode;
 
 mod noteapp;
 use noteapp::NoteApp;
@@ -44,8 +49,8 @@ fn main() {
     let mut show_search = false;
     let mut search = Rc::new(RefCell::new(String::from("")));
     let save_interval_seconds = 30.;
-    let freq = mae::os::timer_init();
-    let mut last_save = mae::os::timer_value() as f64 / freq;
+    let freq = os::timer_init();
+    let mut last_save = os::timer_value() as f64 / freq;
 
     ui.eventloop(|ui| {
         match current_view {
@@ -89,10 +94,7 @@ fn main() {
                             .height(UISize::Fixed(40.0))
                             .background(Color::new("#1ebc93"));
 
-                        let enter_pressed = ui.input(
-                            OSKey::Keyboard(OSKeyCode::KeyEnter),
-                            None,
-                        );
+                        let enter_pressed = ui.input(OSKey::Keyboard(OSKeyCode::KeyEnter), None);
 
                         if connect_btn.borrow().clicked() || enter_pressed {
                             let pass = passphrase.borrow();
@@ -194,7 +196,7 @@ fn main() {
                 });
 
                 // common logic
-                let curtime = mae::os::timer_value() as f64 / freq;
+                let curtime = os::timer_value() as f64 / freq;
                 if last_save + save_interval_seconds < curtime {
                     println!("Auto save...");
                     noteapp.save();
@@ -208,7 +210,9 @@ fn main() {
                 if ui.input(OSKey::Keyboard(OSKeyCode::KeyN), Some(OSEventFlag::Control)) {
                     noteapp.newnote();
                 }
-                if !show_search && ui.input(OSKey::Keyboard(OSKeyCode::KeyG), Some(OSEventFlag::Control)) {
+                if !show_search
+                    && ui.input(OSKey::Keyboard(OSKeyCode::KeyG), Some(OSEventFlag::Control))
+                {
                     show_search = true;
                     search = Rc::new(RefCell::new(String::from("")));
                 }
