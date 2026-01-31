@@ -5,7 +5,7 @@ mod widgets;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use text_input_state::IMUITextInputState;
 use uibox::{
-    Color, UIBox, UIBoxEvent, UIBoxFlag, UIBoxParams, UIBoxRef, UIBoxRef2, UIBoxStyle,
+    Color, Padding, UIBox, UIBoxEvent, UIBoxFlag, UIBoxParams, UIBoxRef, UIBoxRef2, UIBoxStyle,
     u64_hash_from_string,
 };
 
@@ -23,7 +23,7 @@ pub enum UITextAlign {
     Center,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum Axis {
     X,
     Y,
@@ -98,27 +98,40 @@ impl Size {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum UISize {
-    DPixels(f32),  // DPI scaled pixels; in current implementation all draws are dpi scaled
-    Percents(f32), // Percentages of parent's size
-    TextContent,   // Adapt to fit text attached to box
-    Children,      // Compute the sum of all children
-    ChildrenMax,   // Get the biggest child
-    Expand,        // Get the most available size
-}
-#[macro_export]
-macro_rules! uisize {
-    ($value:tt) => {
-        if let Some(val) = $value.strip_suffix("px") {
-            UISize::DPixels(val.parse::<f32>().unwrap())
-        } else if let Some(val) = $value.strip_suffix("%") {
-            UISize::Percents(val.parse::<f32>().unwrap() / 100.)
-        } else {
-            panic!("Unrecognized unit")
-        }
-    };
+    Fixed(f32),           // DPI-scaled pixels
+    Percent(f32),         // Percentage of parent's size
+    Fit,                  // Wrap to content (text or children)
+    FitMin(f32),          // Fit with minimum
+    FitMax(f32),          // Fit with maximum
+    FitMinMax(f32, f32),  // Fit with min and max
+    Grow,                 // Fill remaining space (multiple allowed!)
+    GrowMin(f32),         // Grow with minimum
+    GrowMax(f32),         // Grow with maximum
+    GrowMinMax(f32, f32), // Grow with min and max
+    GrowWeight(f32),      // Grow with weight for proportional distribution
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum MainAxisAlign {
+    #[default]
+    Start,
+    Center,
+    End,
+    SpaceBetween,
+    SpaceAround,
+    SpaceEvenly,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum CrossAxisAlign {
+    #[default]
+    Start,
+    Center,
+    End,
+    Stretch,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum UILayout {
     Vertical,    // Default, natural vertical layout - results depends on the localization
     VerticalLtr, // Vertical layout, forcing left to right reading
@@ -329,222 +342,460 @@ impl IMUI {
         }
     }
 
-    fn layout_resize_standalone(&self, root: UIBoxRef, axis: Axis) {
-        iter_root(root, |nodeptr| {
+    /// Phase 1: Bottom-up dimension calculation
+    /// Post-order traversal to calculate intrinsic sizes for Fixed and Fit elements
+    fn calculate_intrinsic_sizes(&self, root: UIBoxRef, axis: Axis) {
+        // Post-order traversal: process children first, then parent
+        iter_root_postorder(root, |nodeptr| {
             let mut node = nodeptr.borrow_mut();
+            let size_spec = match axis {
+                Axis::X => node.width,
+                Axis::Y => node.height,
+            };
 
-            let pref_size = [node.pref_width, node.pref_height];
-
-            match pref_size[axis.val()] {
-                UISize::DPixels(pixels) => {
-                    *node.size.axis_mut(axis) = pixels;
+            let computed = match size_spec {
+                UISize::Fixed(pixels) => pixels,
+                UISize::Fit | UISize::FitMin(_) | UISize::FitMax(_) | UISize::FitMinMax(_, _) => {
+                    let intrinsic = self.compute_fit_size(&node, axis);
+                    match size_spec {
+                        UISize::FitMin(min) => intrinsic.max(min),
+                        UISize::FitMax(max) => intrinsic.min(max),
+                        UISize::FitMinMax(min, max) => intrinsic.clamp(min, max),
+                        _ => intrinsic,
+                    }
                 }
-                UISize::TextContent => {
-                    if let Some(string) = &node.string {
-                        *node.size.axis_mut(axis) = match axis {
-                            Axis::X => {
-                                self.drawer
-                                    .get_text_size(
-                                        node.style.font_size,
-                                        string.as_str(),
-                                        string.len(),
-                                    )
-                                    .0
-                            }
-                            Axis::Y => self
-                                .drawer
-                                .renderer
-                                .font_cache
-                                .borrow()
-                                .line_height(node.style.font_size),
-                        }
+                UISize::Percent(pct) => {
+                    // Will be resolved in phase 2, but we need parent size
+                    // For now, mark as 0 - will be computed in assign phase
+                    if let Some(parent) = &node.parent {
+                        let parent_size = *parent.borrow().computed_size.axis(axis);
+                        let padding = match axis {
+                            Axis::X => parent.borrow().padding.horizontal(),
+                            Axis::Y => parent.borrow().padding.vertical(),
+                        };
+                        pct * (parent_size - padding)
                     } else {
-                        // xarkes: no attached string
-                        panic!("Size TextContent was requested, but box has no text!")
+                        0.0
                     }
                 }
-                _ => {
-                    // xarkes: other units are not considered standalone
+                // Grow variants: will be resolved in phase 2
+                UISize::Grow
+                | UISize::GrowMin(_)
+                | UISize::GrowMax(_)
+                | UISize::GrowMinMax(_, _)
+                | UISize::GrowWeight(_) => {
+                    // Mark with minimum size for now
+                    match size_spec {
+                        UISize::GrowMin(min) | UISize::GrowMinMax(min, _) => min,
+                        _ => 0.0,
+                    }
                 }
             };
-            false
+            *node.computed_size.axis_mut(axis) = computed;
         });
     }
-    fn layout_resize_upward_dependents(&self, root: UIBoxRef, axis: Axis) {
-        iter_root(root, |nodeptr| {
-            let mut node = nodeptr.borrow_mut();
 
-            let pref_size = [node.pref_width, node.pref_height];
-
-            let size = match pref_size[axis.val()] {
-                UISize::Percents(percents) => {
-                    let parent_size = &node.parent.as_ref().unwrap().borrow().size;
-                    percents * *parent_size.axis(axis)
+    /// Helper: compute intrinsic (fit) size based on content
+    fn compute_fit_size(&self, node: &UIBox, axis: Axis) -> f32 {
+        // If there's text content, use text size
+        if let Some(string) = &node.string {
+            return match axis {
+                Axis::X => {
+                    self.drawer
+                        .get_text_size(node.style.font_size, string.as_str(), string.len())
+                        .0
                 }
-                UISize::Expand => {
-                    let parent = node.parent.as_ref().unwrap();
-                    let parent_size = *parent.borrow().size.axis(axis);
-                    let mut siblings_size = 0.;
-                    let mut subtract = false;
-                    match parent.borrow().layout.unwrap() {
-                        UILayout::Horizontal
-                        | UILayout::HorizontalLtr
-                        | UILayout::HorizontalRtl => match axis {
-                            Axis::X => {
-                                subtract = true;
-                            }
-                            _ => {}
-                        },
-                        UILayout::Vertical | UILayout::VerticalLtr | UILayout::VerticalRtl => {
-                            match axis {
-                                Axis::Y => {
-                                    subtract = true;
-                                }
-                                _ => {}
-                            }
-                        }
-                        _ => {
-                            println!("TODO: Expand child for Absolute layout")
-                        }
-                    }
-                    if subtract {
-                        for child in &parent.borrow().children {
-                            if Rc::ptr_eq(child, &nodeptr) {
-                                continue;
-                            }
-                            match axis {
-                                Axis::X => debug_assert!(
-                                    child.borrow().pref_width != UISize::Expand,
-                                    "We don't support multiple Expand children yet."
-                                ),
-                                Axis::Y => debug_assert!(
-                                    child.borrow().pref_height != UISize::Expand,
-                                    "We don't support multiple Expand children yet."
-                                ),
-                            }
-                            siblings_size += child.borrow().size.axis(axis);
-                        }
-                        parent_size - siblings_size
-                    } else {
-                        parent_size
-                    }
-                }
-                _ => {
-                    // xarkes: other units are not considered upward dependents, or already computed
-                    *node.size.axis(axis)
-                }
+                Axis::Y => self
+                    .drawer
+                    .renderer
+                    .font_cache
+                    .borrow()
+                    .line_height(node.style.font_size),
             };
-            *node.size.axis_mut(axis) = size;
-            false
-        });
-    }
-    fn layout_resize_downward_dependents(&self, root: UIBoxRef, axis: Axis) {
-        iter_root(root, |nodeptr| {
-            let mut node = nodeptr.borrow_mut();
+        }
 
-            let pref_size = [node.pref_width, node.pref_height];
+        // Otherwise, compute from children
+        if node.children.is_empty() {
+            return 0.0;
+        }
 
-            match pref_size[axis.val()] {
-                UISize::Children => {
-                    let mut size = 0.;
-                    for child in &node.children {
-                        size += *child.borrow().size.axis(axis);
-                    }
-                    *node.size.axis_mut(axis) = size;
-                }
-                UISize::ChildrenMax => {
-                    let mut size_max = 0.;
-                    for child in &node.children {
-                        size_max = f32::max(size_max, *child.borrow().size.axis(axis));
-                    }
-                    *node.size.axis_mut(axis) = size_max;
-                }
-                _ => {
-                    // xarkes: other units are not considered downward dependents, or already computed
-                }
+        let padding = match axis {
+            Axis::X => node.padding.horizontal(),
+            Axis::Y => node.padding.vertical(),
+        };
+
+        let layout = node
+            .layout
+            .unwrap_or(UILayout::Vertical)
+            .specialize(self.locale_kind);
+        let is_main_axis = match layout {
+            UILayout::HorizontalLtr | UILayout::HorizontalRtl => axis == Axis::X,
+            UILayout::VerticalLtr | UILayout::VerticalRtl => axis == Axis::Y,
+            _ => axis == Axis::Y,
+        };
+
+        if is_main_axis {
+            // Sum of children along main axis + gaps
+            let mut total = 0.0;
+            for child in &node.children {
+                total += *child.borrow().computed_size.axis(axis);
+            }
+            let gaps = if node.children.len() > 1 {
+                node.child_gap * (node.children.len() - 1) as f32
+            } else {
+                0.0
             };
-            false
-        });
+            total + gaps + padding
+        } else {
+            // Max of children along cross axis
+            let mut max_size: f32 = 0.0;
+            for child in &node.children {
+                max_size = max_size.max(*child.borrow().computed_size.axis(axis));
+            }
+            max_size + padding
+        }
     }
-    fn apply_layout(&self, root: UIBoxRef) {
+
+    /// Phase 2: Top-down position assignment
+    /// Pre-order traversal to distribute space among Grow children and apply alignment
+    fn assign_positions_and_grow(&self, root: UIBoxRef, axis: Axis) {
         iter_root(root, |nodeptr| {
+            // Handle absolute positioning
+            {
+                let node = nodeptr.borrow();
+                if let Some(layout) = node.layout {
+                    if layout == UILayout::Absolute {
+                        let fixed = node.fixed_origin;
+                        drop(node);
+                        nodeptr.borrow_mut().origin = fixed;
+                        return false;
+                    }
+                }
+            }
+
+            // Skip if no parent (root node)
             if nodeptr.borrow().parent.is_none() {
                 return false;
             }
-            let mut node = nodeptr.borrow_mut();
 
-            // First special case: node has absolute position used for e.g. cursor
-            // XXX: This is where we need a position attribute rather than using layout to do this...
-            if let Some(layout) = node.layout {
-                match layout {
-                    UILayout::Absolute => {
-                        node.origin = node.fixed_origin;
-                        return false;
+            let parent = nodeptr.borrow().parent.clone().unwrap();
+
+            // First, gather info we need without holding mutable borrow
+            let (size_spec, parent_content_size, is_main_axis, cross_axis_align) = {
+                let node = nodeptr.borrow();
+                let parent_b = parent.borrow();
+
+                let size_spec = match axis {
+                    Axis::X => node.width,
+                    Axis::Y => node.height,
+                };
+
+                let parent_available = *parent_b.computed_size.axis(axis);
+                let padding = match axis {
+                    Axis::X => parent_b.padding.horizontal(),
+                    Axis::Y => parent_b.padding.vertical(),
+                };
+                let parent_content_size = parent_available - padding;
+
+                let parent_layout = parent_b
+                    .layout
+                    .unwrap_or(UILayout::Vertical)
+                    .specialize(self.locale_kind);
+                let is_main_axis = match parent_layout {
+                    UILayout::HorizontalLtr | UILayout::HorizontalRtl => axis == Axis::X,
+                    UILayout::VerticalLtr | UILayout::VerticalRtl => axis == Axis::Y,
+                    _ => axis == Axis::Y,
+                };
+
+                (
+                    size_spec,
+                    parent_content_size,
+                    is_main_axis,
+                    parent_b.cross_axis_align,
+                )
+            };
+
+            // Now calculate grow space if needed (no borrows held)
+            let grow_info = match size_spec {
+                UISize::Grow
+                | UISize::GrowMin(_)
+                | UISize::GrowMax(_)
+                | UISize::GrowMinMax(_, _)
+                | UISize::GrowWeight(_)
+                    if is_main_axis =>
+                {
+                    let parent_b = parent.borrow();
+                    Some(self.calculate_grow_space(&parent_b, axis))
+                }
+                _ => None,
+            };
+
+            // Now apply the computed sizes
+            {
+                let mut node = nodeptr.borrow_mut();
+
+                match size_spec {
+                    UISize::Grow
+                    | UISize::GrowMin(_)
+                    | UISize::GrowMax(_)
+                    | UISize::GrowMinMax(_, _)
+                    | UISize::GrowWeight(_) => {
+                        if is_main_axis {
+                            let (remaining, grow_count, total_weight) = grow_info.unwrap();
+
+                            let weight = match size_spec {
+                                UISize::GrowWeight(w) => w,
+                                _ => 1.0,
+                            };
+
+                            let share = if total_weight > 0.0 {
+                                remaining * (weight / total_weight)
+                            } else if grow_count > 0 {
+                                remaining / grow_count as f32
+                            } else {
+                                0.0
+                            };
+
+                            let final_size = match size_spec {
+                                UISize::GrowMin(min) => share.max(min),
+                                UISize::GrowMax(max) => share.min(max),
+                                UISize::GrowMinMax(min, max) => share.clamp(min, max),
+                                _ => share,
+                            };
+                            *node.computed_size.axis_mut(axis) = final_size.max(0.0);
+                        } else {
+                            let final_size = match size_spec {
+                                UISize::GrowMin(min) => parent_content_size.max(min),
+                                UISize::GrowMax(max) => parent_content_size.min(max),
+                                UISize::GrowMinMax(min, max) => parent_content_size.clamp(min, max),
+                                _ => parent_content_size,
+                            };
+                            *node.computed_size.axis_mut(axis) = final_size.max(0.0);
+                        }
                     }
                     _ => {}
                 }
+
+                // Handle cross-axis stretch alignment
+                if !is_main_axis && cross_axis_align == CrossAxisAlign::Stretch {
+                    match size_spec {
+                        UISize::Fit
+                        | UISize::FitMin(_)
+                        | UISize::FitMax(_)
+                        | UISize::FitMinMax(_, _) => {
+                            *node.computed_size.axis_mut(axis) = parent_content_size.max(0.0);
+                        }
+                        _ => {}
+                    }
+                }
             }
 
-            let parent = node.parent.as_ref().unwrap();
-            let layout = parent.borrow().layout;
-            if layout.is_none() {
-                println!("Warning: box has children but no layout");
-                // // xarkes: no layout means we will just position things relatively to parent
-                // let bounds = parent.borrow().bounds();
-                // node.origin = Point::new(bounds.x0, bounds.y0);
-                return false;
-            }
-            let layout = layout.unwrap().specialize(self.locale_kind);
-
-            match layout {
-                UILayout::VerticalLtr => {
-                    let insert_point = match node.previous.as_ref() {
-                        Some(prev) => Point::new(
-                            prev.borrow().origin.x,
-                            prev.borrow().origin.y + prev.borrow().size.height,
-                        ),
-                        None => {
-                            let origin = parent.borrow().origin;
-                            Point::new(
-                                origin.x + parent.borrow().scrollx,
-                                origin.y + parent.borrow().scrolly,
-                            )
-                        }
-                    };
-                    node.origin = insert_point;
-                }
-                UILayout::HorizontalLtr => {
-                    let insert_point = match node.previous.as_ref() {
-                        Some(prev) => Point::new(
-                            prev.borrow().origin.x + prev.borrow().size.width,
-                            prev.borrow().origin.y,
-                        ),
-                        None => {
-                            let origin = parent.borrow().origin;
-                            Point::new(
-                                origin.x + parent.borrow().scrollx,
-                                origin.y + parent.borrow().scrolly,
-                            )
-                        }
-                    };
-                    node.origin = insert_point;
-                }
-                _ => {
-                    println!("Unsupported layout");
-                }
-            }
+            // Now position this node within its parent
+            self.position_child_in_parent(nodeptr.clone(), axis);
 
             false
         });
     }
 
-    fn layout_root(&mut self, root: UIBoxRef) {
-        for axis in [Axis::X, Axis::Y] {
-            self.layout_resize_standalone(root.clone(), axis);
-            self.layout_resize_downward_dependents(root.clone(), axis);
-            self.layout_resize_upward_dependents(root.clone(), axis);
+    /// Calculate remaining space for Grow children and count them
+    fn calculate_grow_space(&self, parent: &UIBox, axis: Axis) -> (f32, usize, f32) {
+        let parent_available = *parent.computed_size.axis(axis);
+        let padding = match axis {
+            Axis::X => parent.padding.horizontal(),
+            Axis::Y => parent.padding.vertical(),
+        };
+
+        let gaps = if parent.children.len() > 1 {
+            parent.child_gap * (parent.children.len() - 1) as f32
+        } else {
+            0.0
+        };
+
+        let mut fixed_size = 0.0;
+        let mut grow_count = 0;
+        let mut total_weight = 0.0;
+
+        for child in &parent.children {
+            let child_b = child.borrow();
+            let size_spec = match axis {
+                Axis::X => child_b.width,
+                Axis::Y => child_b.height,
+            };
+
+            match size_spec {
+                UISize::Grow
+                | UISize::GrowMin(_)
+                | UISize::GrowMax(_)
+                | UISize::GrowMinMax(_, _) => {
+                    grow_count += 1;
+                    total_weight += 1.0;
+                }
+                UISize::GrowWeight(w) => {
+                    grow_count += 1;
+                    total_weight += w;
+                }
+                _ => {
+                    fixed_size += *child_b.computed_size.axis(axis);
+                }
+            }
         }
-        self.apply_layout(root.clone());
+
+        let remaining = (parent_available - padding - gaps - fixed_size).max(0.0);
+        (remaining, grow_count, total_weight)
+    }
+
+    /// Position a child within its parent based on layout and alignment
+    fn position_child_in_parent(&self, nodeptr: UIBoxRef, axis: Axis) {
+        // Gather all info we need first, without holding mutable borrows
+        let (
+            node_size,
+            previous,
+            is_main_axis,
+            padding_start,
+            padding_end,
+            parent_origin,
+            parent_size,
+            scroll_offset,
+            child_gap,
+            main_axis_align,
+            cross_axis_align,
+            total_children_size,
+            num_children,
+        ) = {
+            let node_b = nodeptr.borrow();
+            let parent = match &node_b.parent {
+                Some(p) => p.clone(),
+                None => return,
+            };
+            let node_size = *node_b.computed_size.axis(axis);
+            let previous = node_b.previous.clone();
+            drop(node_b);
+
+            let parent_b = parent.borrow();
+            let parent_layout = parent_b
+                .layout
+                .unwrap_or(UILayout::Vertical)
+                .specialize(self.locale_kind);
+
+            let is_main_axis = match parent_layout {
+                UILayout::HorizontalLtr | UILayout::HorizontalRtl => axis == Axis::X,
+                UILayout::VerticalLtr | UILayout::VerticalRtl => axis == Axis::Y,
+                _ => axis == Axis::Y,
+            };
+
+            let padding_start = match axis {
+                Axis::X => parent_b.padding.left,
+                Axis::Y => parent_b.padding.top,
+            };
+            let padding_end = match axis {
+                Axis::X => parent_b.padding.right,
+                Axis::Y => parent_b.padding.bottom,
+            };
+
+            let parent_origin = *parent_b.origin.axis(axis);
+            let parent_size = *parent_b.computed_size.axis(axis);
+            let scroll_offset = match axis {
+                Axis::X => parent_b.scrollx,
+                Axis::Y => parent_b.scrolly,
+            };
+            let child_gap = parent_b.child_gap;
+            let main_axis_align = parent_b.main_axis_align;
+            let cross_axis_align = parent_b.cross_axis_align;
+            let num_children = parent_b.children.len();
+
+            // Calculate total children size now while we don't have nodeptr borrowed
+            let total_children_size = self.calculate_total_children_size(&parent_b, axis);
+            drop(parent_b);
+
+            (
+                node_size,
+                previous,
+                is_main_axis,
+                padding_start,
+                padding_end,
+                parent_origin,
+                parent_size,
+                scroll_offset,
+                child_gap,
+                main_axis_align,
+                cross_axis_align,
+                total_children_size,
+                num_children,
+            )
+        };
+
+        // Calculate the position
+        let position = if is_main_axis {
+            match &previous {
+                Some(prev) => {
+                    let prev_b = prev.borrow();
+                    let prev_end = *prev_b.origin.axis(axis) + *prev_b.computed_size.axis(axis);
+                    prev_end + child_gap
+                }
+                None => {
+                    let base = parent_origin + padding_start + scroll_offset;
+                    let available_space =
+                        parent_size - padding_start - padding_end - total_children_size;
+
+                    match main_axis_align {
+                        MainAxisAlign::Start => base,
+                        MainAxisAlign::Center => base + available_space / 2.0,
+                        MainAxisAlign::End => base + available_space,
+                        MainAxisAlign::SpaceBetween => base,
+                        MainAxisAlign::SpaceAround => {
+                            let n = num_children as f32;
+                            if n > 0.0 {
+                                base + available_space / (2.0 * n)
+                            } else {
+                                base
+                            }
+                        }
+                        MainAxisAlign::SpaceEvenly => {
+                            let n = num_children as f32;
+                            base + available_space / (n + 1.0)
+                        }
+                    }
+                }
+            }
+        } else {
+            let available = parent_size - padding_start - padding_end;
+            match cross_axis_align {
+                CrossAxisAlign::Start => parent_origin + padding_start + scroll_offset,
+                CrossAxisAlign::Center => {
+                    parent_origin + padding_start + scroll_offset + (available - node_size) / 2.0
+                }
+                CrossAxisAlign::End => {
+                    parent_origin + padding_start + scroll_offset + available - node_size
+                }
+                CrossAxisAlign::Stretch => parent_origin + padding_start + scroll_offset,
+            }
+        };
+
+        // Now apply the position with a short mutable borrow
+        *nodeptr.borrow_mut().origin.axis_mut(axis) = position;
+    }
+
+    /// Calculate total size of children along an axis (including gaps)
+    fn calculate_total_children_size(&self, parent: &UIBox, axis: Axis) -> f32 {
+        let mut total = 0.0;
+        for child in &parent.children {
+            total += *child.borrow().computed_size.axis(axis);
+        }
+        if parent.children.len() > 1 {
+            total += parent.child_gap * (parent.children.len() - 1) as f32;
+        }
+        total
+    }
+
+    fn layout_root(&mut self, root: UIBoxRef) {
+        // Phase 1: Bottom-up intrinsic size calculation
+        for axis in [Axis::X, Axis::Y] {
+            self.calculate_intrinsic_sizes(root.clone(), axis);
+        }
+        // Phase 2: Top-down position and grow assignment
+        for axis in [Axis::X, Axis::Y] {
+            self.assign_positions_and_grow(root.clone(), axis);
+        }
     }
 
     // TODO(xarkes): Rewrite using Clay's layout algorithm
@@ -652,10 +903,10 @@ impl IMUI {
         self.size = Size::from(self.drawer.renderer.win.get_size());
         let render_size = self.drawer.renderer.win.get_render_size();
         self.drawer.renderer.resize(render_size.0, render_size.1);
-        self.root.borrow_mut().pref_width = UISize::DPixels(self.size.width);
-        self.root.borrow_mut().pref_height = UISize::DPixels(self.size.height);
-        self.root.borrow_mut().size.width = self.size.width;
-        self.root.borrow_mut().size.height = self.size.height;
+        self.root.borrow_mut().width = UISize::Fixed(self.size.width);
+        self.root.borrow_mut().height = UISize::Fixed(self.size.height);
+        self.root.borrow_mut().computed_size.width = self.size.width;
+        self.root.borrow_mut().computed_size.height = self.size.height;
         self.size
     }
     pub fn text_input_changecount(&self) -> Option<usize> {
@@ -690,8 +941,8 @@ impl IMUI {
 
         // XXX(xarkes): layout should be passed to add_box_from_string maybe
         row.borrow_mut().layout = Some(UILayout::Horizontal);
-        row.borrow_mut().pref_width = UISize::Expand;
-        row.borrow_mut().pref_height = UISize::Expand;
+        row.borrow_mut().width = UISize::Grow;
+        row.borrow_mut().height = UISize::Fit;
 
         self.parent_stack.push(row.clone());
         children(self);
@@ -703,8 +954,8 @@ impl IMUI {
 
         // XXX(xarkes): layout should be passed to add_box_from_string maybe
         column.borrow_mut().layout = Some(UILayout::Vertical);
-        column.borrow_mut().pref_width = UISize::Expand;
-        column.borrow_mut().pref_height = UISize::Expand;
+        column.borrow_mut().width = UISize::Grow;
+        column.borrow_mut().height = UISize::Fit;
 
         self.parent_stack.push(column.clone());
         children(self);
@@ -728,22 +979,22 @@ impl IMUI {
 
         if (key.is_some() && first_frame) || key.is_none() {
             let (w, h) = match layout.specialize(self.locale_kind) {
-                UILayout::VerticalLtr => (UISize::Percents(1.), UISize::Children),
-                UILayout::HorizontalLtr => (UISize::Percents(1.), UISize::ChildrenMax),
+                UILayout::VerticalLtr => (UISize::Percent(1.), UISize::Fit),
+                UILayout::HorizontalLtr => (UISize::Percent(1.), UISize::Fit),
                 _ => {
                     println!("Unsupported layout");
-                    (UISize::Percents(1.), UISize::Children)
+                    (UISize::Percent(1.), UISize::Fit)
                 }
             };
-            container.borrow_mut().pref_width = w;
-            container.borrow_mut().pref_height = h;
+            container.borrow_mut().width = w;
+            container.borrow_mut().height = h;
 
             if let Some(params) = params {
                 if let Some(width) = params.width {
-                    container.borrow_mut().pref_width = width;
+                    container.borrow_mut().width = width;
                 }
                 if let Some(height) = params.height {
-                    container.borrow_mut().pref_height = height;
+                    container.borrow_mut().height = height;
                 }
             }
         }
@@ -794,18 +1045,18 @@ impl IMUI {
                     Some(id),
                     UIBoxFlag::Clickable as u64 | UIBoxFlag::Scrollable as u64,
                 );
-                textarea_.borrow_mut().pref_width = UISize::Expand;
-                textarea_.borrow_mut().pref_height = UISize::Expand;
+                textarea_.borrow_mut().width = UISize::Grow;
+                textarea_.borrow_mut().height = UISize::Grow;
                 textarea_.borrow_mut().layout = Some(UILayout::Vertical);
 
                 // xarkes: fixup scrolling: event handler does not know the child's logic
                 {
                     let mut textarea = textarea_.borrow_mut();
-                    let can_scroll_y = max_size_y > textarea.size.height;
-                    let can_scroll_x = max_size_x > textarea.size.width;
+                    let can_scroll_y = max_size_y > textarea.computed_size.height;
+                    let can_scroll_x = max_size_x > textarea.computed_size.width;
 
                     if can_scroll_y {
-                        let max_scroll_y = textarea.size.height - max_size_y;
+                        let max_scroll_y = textarea.computed_size.height - max_size_y;
                         if textarea.scrolly > 0. {
                             textarea.scrolly = 0.;
                         } else if textarea.scrolly < max_scroll_y {
@@ -815,7 +1066,7 @@ impl IMUI {
                         textarea.scrolly = 0.;
                     }
                     if can_scroll_x {
-                        let max_scroll_x = textarea.size.width - max_size_x;
+                        let max_scroll_x = textarea.computed_size.width - max_size_x;
                         if textarea.scrollx > 0. {
                             textarea.scrollx = 0.;
                         } else if textarea.scrollx < max_scroll_x {
@@ -829,14 +1080,14 @@ impl IMUI {
                 let multiline = true;
                 ui.text_edit_impl(textarea_.clone(), text_buffer.clone(), multiline, false);
 
-                if max_size_y > textarea_.borrow().size.height {
+                if max_size_y > textarea_.borrow().computed_size.height {
                     ui.scrollbar(textarea_.clone(), max_size_y, Axis::Y);
                 }
                 textarea = Some(textarea_.clone());
             });
 
             let textarea_ref = textarea.unwrap();
-            if max_size_x > textarea_ref.borrow().size.width {
+            if max_size_x > textarea_ref.borrow().computed_size.width {
                 ui.scrollbar(textarea_ref.clone(), max_size_x, Axis::X);
             }
         })
@@ -865,13 +1116,15 @@ impl IMUI {
                 multiline,
             );
             let bounds = &textarea.borrow().bounds();
-            state.compute_valid_cursor_loc(
-                bounds,
-                &text_buffer.borrow(),
-                self.theme.size_text,
-                self.event.mouse.unwrap(),
-                Point::new(textarea.borrow().scrollx, textarea.borrow().scrolly),
-            );
+            if self.event.mouse.is_some() {
+                state.compute_valid_cursor_loc(
+                    bounds,
+                    &text_buffer.borrow(),
+                    self.theme.size_text,
+                    self.event.mouse.unwrap(),
+                    Point::new(textarea.borrow().scrollx, textarea.borrow().scrolly),
+                );
+            }
             self.text_input_state = Some(state);
         }
 
@@ -889,8 +1142,8 @@ impl IMUI {
                 let buffer = text_buffer.borrow();
                 let lines = buffer.lines();
                 let line_idx_start = (-1. * textarea.borrow().scrolly / line_height) as usize;
-                let line_idx_end =
-                    line_idx_start + (textarea.borrow().size.height / line_height) as usize;
+                let line_idx_end = line_idx_start
+                    + (textarea.borrow().computed_size.height / line_height) as usize;
                 for (i, line) in lines.enumerate() {
                     if i < line_idx_start {
                         // XXX: I still add a label here because of the way the position is computed
@@ -913,10 +1166,10 @@ impl IMUI {
                     let cy = tis.cursor_y;
                     let cursor_box =
                         self.add_box_from_string(None, UIBoxFlag::DrawBackground as u64);
-                    cursor_box.borrow_mut().pref_width =
-                        UISize::DPixels(textarea.borrow().style.font_size / 6.);
-                    cursor_box.borrow_mut().pref_height =
-                        UISize::DPixels(textarea.borrow().style.font_size);
+                    cursor_box.borrow_mut().width =
+                        UISize::Fixed(textarea.borrow().style.font_size / 6.);
+                    cursor_box.borrow_mut().height =
+                        UISize::Fixed(textarea.borrow().style.font_size);
                     let bounds = textarea.borrow().bounds();
                     cursor_box.borrow_mut().layout = Some(UILayout::Absolute);
                     cursor_box.borrow_mut().fixed_origin = Point::new(
@@ -984,7 +1237,7 @@ impl IMUI {
         flags: u64,
         root: bool,
     ) -> UIBoxRef {
-        let pref_size_default = (UISize::TextContent, UISize::TextContent);
+        let size_default = UISize::Fit;
         let uibox = match self.uiboxes.get(&key) {
             Some(uibox) => {
                 // xarkes: clear previous frame event info
@@ -1001,9 +1254,9 @@ impl IMUI {
             None => {
                 let uibox = Rc::new(RefCell::new(UIBox {
                     key,
-                    pref_width: pref_size_default.0,
-                    pref_height: pref_size_default.1,
-                    size: Size::default(),
+                    width: size_default,
+                    height: size_default,
+                    computed_size: Size::default(),
                     origin: Point::default(),
                     fixed_origin: Point::default(),
                     children: Vec::new(),
@@ -1016,6 +1269,11 @@ impl IMUI {
                     events: 0,
 
                     string,
+
+                    padding: Padding::default(),
+                    child_gap: 0.,
+                    main_axis_align: MainAxisAlign::default(),
+                    cross_axis_align: CrossAxisAlign::default(),
 
                     scrollx: 0.,
                     scrolly: 0.,
@@ -1182,8 +1440,8 @@ impl IMUI {
                 .font_cache
                 .borrow()
                 .line_height(self.theme.size_text);
-            tooltip.borrow_mut().pref_width = UISize::Children;
-            tooltip.borrow_mut().pref_height = UISize::DPixels(line_height);
+            tooltip.borrow_mut().width = UISize::Fit;
+            tooltip.borrow_mut().height = UISize::Fixed(line_height);
             self.handle_uibox_event(tooltip.clone());
             self.parent_stack.push(tooltip);
             {
@@ -1198,8 +1456,8 @@ impl IMUI {
         let uibox = self.button(label, tooltip_text);
         uibox.borrow_mut().style.font_icon = true;
         uibox.borrow_mut().style.font_size = 24.;
-        uibox.borrow_mut().pref_width = UISize::DPixels(25.);
-        uibox.borrow_mut().pref_height = UISize::DPixels(25.);
+        uibox.borrow_mut().width = UISize::Fixed(25.);
+        uibox.borrow_mut().height = UISize::Fixed(25.);
         uibox
     }
 }
@@ -1244,4 +1502,18 @@ fn iter_root(start_node: UIBoxRef, mut handle_node: impl FnMut(UIBoxRef) -> bool
             }
         }
     }
+}
+
+/// Post-order traversal: children first, then parent
+fn iter_root_postorder(start_node: UIBoxRef, mut handle_node: impl FnMut(UIBoxRef)) {
+    fn visit(node: UIBoxRef, handler: &mut impl FnMut(UIBoxRef)) {
+        // First visit all children
+        let children = node.borrow().children.clone();
+        for child in children {
+            visit(child, handler);
+        }
+        // Then handle this node
+        handler(node);
+    }
+    visit(start_node, &mut handle_node);
 }

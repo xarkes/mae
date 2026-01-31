@@ -2,8 +2,38 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::render::{RectCoords, V4f32};
 
-use super::{Point, Size, UILayout, UISize, color_rgb};
+use super::{CrossAxisAlign, MainAxisAlign, Point, Size, UILayout, UISize, color_rgb};
 pub type UIBoxRef = Rc<RefCell<UIBox>>;
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Padding {
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+    pub left: f32,
+}
+
+impl Padding {
+    pub fn new(top: f32, right: f32, bottom: f32, left: f32) -> Self {
+        Padding { top, right, bottom, left }
+    }
+
+    pub fn all(value: f32) -> Self {
+        Padding { top: value, right: value, bottom: value, left: value }
+    }
+
+    pub fn symmetric(vertical: f32, horizontal: f32) -> Self {
+        Padding { top: vertical, right: horizontal, bottom: vertical, left: horizontal }
+    }
+
+    pub fn horizontal(&self) -> f32 {
+        self.left + self.right
+    }
+
+    pub fn vertical(&self) -> f32 {
+        self.top + self.bottom
+    }
+}
 
 pub struct UIBoxRef2 {
     _box: Rc<RefCell<UIBox>>,
@@ -20,11 +50,11 @@ impl UIBoxRef2 {
 
     // Styling APIs
     pub fn width(&self, width: UISize) -> &Self {
-        self._box.borrow_mut().pref_width = width;
+        self._box.borrow_mut().width = width;
         self
     }
     pub fn height(&self, height: UISize) -> &Self {
-        self._box.borrow_mut().pref_height = height;
+        self._box.borrow_mut().height = height;
         self
     }
     pub fn background(&self, color: Color) -> &Self {
@@ -34,6 +64,36 @@ impl UIBoxRef2 {
     }
     pub fn text_color(&self, color: Color) -> &Self {
         self._box.borrow_mut().style.text_color = color;
+        self
+    }
+
+    // Layout APIs
+    pub fn padding(&self, p: Padding) -> &Self {
+        self._box.borrow_mut().padding = p;
+        self
+    }
+    pub fn padding_all(&self, v: f32) -> &Self {
+        self._box.borrow_mut().padding = Padding::all(v);
+        self
+    }
+    pub fn gap(&self, g: f32) -> &Self {
+        self._box.borrow_mut().child_gap = g;
+        self
+    }
+    pub fn align_main(&self, a: MainAxisAlign) -> &Self {
+        self._box.borrow_mut().main_axis_align = a;
+        self
+    }
+    pub fn align_cross(&self, a: CrossAxisAlign) -> &Self {
+        self._box.borrow_mut().cross_axis_align = a;
+        self
+    }
+    pub fn align(&self, main: MainAxisAlign, cross: CrossAxisAlign) -> &Self {
+        {
+            let mut b = self._box.borrow_mut();
+            b.main_axis_align = main;
+            b.cross_axis_align = cross;
+        }
         self
     }
 }
@@ -224,14 +284,21 @@ pub struct UIBox {
     // per-build data
     pub(crate) fixed_origin: Point,
     pub(crate) origin: Point,
-    pub(crate) pref_width: UISize,
-    pub(crate) pref_height: UISize,
-    pub(crate) size: Size,
+    pub(crate) width: UISize,            // renamed from pref_width
+    pub(crate) height: UISize,           // renamed from pref_height
+    pub(crate) computed_size: Size,      // renamed from size
     pub(crate) flags: u64,
     pub(crate) events: u64,
     pub(crate) string: Option<String>,
     pub(crate) visible: bool,
     pub(crate) layout: Option<UILayout>,
+
+    // layout configuration
+    pub(crate) padding: Padding,             // NEW
+    pub(crate) child_gap: f32,               // NEW
+    pub(crate) main_axis_align: MainAxisAlign,   // NEW
+    pub(crate) cross_axis_align: CrossAxisAlign, // NEW
+
     // per-build styling
     pub(crate) style: UIBoxStyle,
 
@@ -244,11 +311,11 @@ impl UIBox {
     pub fn root(id: String) -> Self {
         UIBox {
             key: u64_hash_from_string(1234, id.as_str()),
-            pref_width: UISize::Children,
-            pref_height: UISize::Children,
+            width: UISize::Fit,
+            height: UISize::Fit,
             origin: Point::default(),
             fixed_origin: Point::default(), // TODO: rename as drag_position
-            size: Size::default(),
+            computed_size: Size::default(),
             parent: None,
             previous: None,
             children: Vec::new(),
@@ -257,6 +324,10 @@ impl UIBox {
             flags: 0,
             events: 0,
             string: None,
+            padding: Padding::default(),
+            child_gap: 0.,
+            main_axis_align: MainAxisAlign::default(),
+            cross_axis_align: CrossAxisAlign::default(),
             scrollx: 0.,
             scrolly: 0.,
 
@@ -297,15 +368,15 @@ impl UIBox {
 
     /// Returns false if size is 0
     pub fn visible(&self) -> bool {
-        self.visible && self.size.width > 0. && self.size.height > 0.
+        self.visible && self.computed_size.width > 0. && self.computed_size.height > 0.
     }
 
     pub fn bounds(&self) -> RectCoords {
         RectCoords {
             x0: self.origin.x,
             y0: self.origin.y,
-            x1: self.origin.x + self.size.width,
-            y1: self.origin.y + self.size.height,
+            x1: self.origin.x + self.computed_size.width,
+            y1: self.origin.y + self.computed_size.height,
         }
     }
 }

@@ -3,6 +3,7 @@ use std::rc::Rc;
 
 use mae::imui::IMUI;
 use mae::imui::UISize;
+use mae::imui::{MainAxisAlign, CrossAxisAlign};
 use mae::imui::uibox::{Color, UIBoxRef2};
 use mae::os::OSEventFlag;
 use mae::os::OSKey;
@@ -49,77 +50,71 @@ fn main() {
     ui.eventloop(|ui| {
         match current_view {
             AppView::Login => {
-                // Dark background for the whole window
+                // Dark background for the whole window with centered content
                 ui.column(|ui| {
-                    // Vertical centering: top spacer (use percentage)
-                    ui.row(|_| {}).height(UISize::Percents(0.25));
+                    // Login card
+                    let card = ui.column(|ui| {
+                        // Title
+                        let title = ui.label("Remote Vault");
+                        UIBoxRef2::new(title).text_color(Color::new("#ffffff"));
 
-                    // Horizontal centering row
-                    ui.row(|ui| {
-                        // Left spacer (single Expand is fine)
-                        ui.column(|_| {}).width(UISize::Expand);
+                        // Subtitle
+                        let subtitle = ui.label("Enter your passphrase to unlock");
+                        UIBoxRef2::new(subtitle).text_color(Color::new("#888888"));
 
-                        // Login card
-                        let card = ui.column(|ui| {
-                            // Title
-                            let title = ui.label("Remote Vault");
-                            UIBoxRef2::new(title).text_color(Color::new("#ffffff"));
+                        // Spacer
+                        ui.row(|_| {}).height(UISize::Fixed(24.0));
 
-                            // Subtitle
-                            let subtitle = ui.label("Enter your passphrase to unlock");
-                            UIBoxRef2::new(subtitle).text_color(Color::new("#888888"));
+                        // Passphrase input
+                        let input = ui.line_edit(passphrase.clone(), "#passphrase", true);
+                        input
+                            .width(UISize::Fixed(280.0))
+                            .height(UISize::Fixed(36.0))
+                            .background(Color::new("#3a3a3a"));
 
-                            // Spacer
-                            ui.row(|_| {}).height(UISize::DPixels(24.0));
+                        // Spacer
+                        ui.row(|_| {}).height(UISize::Fixed(8.0));
 
-                            // Passphrase input
-                            let input = ui.line_edit(passphrase.clone(), "#passphrase", true);
-                            input
-                                .width(UISize::DPixels(280.0))
-                                .height(UISize::DPixels(36.0))
-                                .background(Color::new("#3a3a3a"));
+                        // Error message
+                        if let Some(ref err) = login_error {
+                            let err_label = ui.label(err.as_str());
+                            UIBoxRef2::new(err_label).text_color(Color::new("#ff6b6b"));
+                            ui.row(|_| {}).height(UISize::Fixed(8.0));
+                        }
 
-                            // Spacer
-                            ui.row(|_| {}).height(UISize::DPixels(8.0));
+                        // Connect button
+                        let connect_btn = ui.button("Unlock##login_btn", None);
+                        UIBoxRef2::new(connect_btn.clone())
+                            .width(UISize::Fixed(280.0))
+                            .height(UISize::Fixed(40.0))
+                            .background(Color::new("#1ebc93"));
 
-                            // Error message
-                            if let Some(ref err) = login_error {
-                                let err_label = ui.label(err.as_str());
-                                UIBoxRef2::new(err_label).text_color(Color::new("#ff6b6b"));
-                                ui.row(|_| {}).height(UISize::DPixels(8.0));
+                        let enter_pressed = ui.input(
+                            OSKey::Keyboard(OSKeyCode::KeyEnter),
+                            None,
+                        );
+
+                        if connect_btn.borrow().clicked() || enter_pressed {
+                            let pass = passphrase.borrow();
+                            if pass.is_empty() {
+                                login_error = Some("Passphrase cannot be empty".to_string());
+                            } else {
+                                // TODO: Connect to remote server with passphrase
+                                println!("Connecting with passphrase...");
+                                noteapp = Some(NoteApp::new());
+                                current_view = AppView::Main;
                             }
-
-                            // Connect button
-                            let connect_btn = ui.button("Unlock##login_btn", None);
-                            UIBoxRef2::new(connect_btn.clone())
-                                .width(UISize::DPixels(280.0))
-                                .height(UISize::DPixels(40.0))
-                                .background(Color::new("#1ebc93"));
-
-                            let enter_pressed = ui.input(
-                                OSKey::Keyboard(OSKeyCode::KeyEnter),
-                                None,
-                            );
-
-                            if connect_btn.borrow().clicked() || enter_pressed {
-                                let pass = passphrase.borrow();
-                                if pass.is_empty() {
-                                    login_error = Some("Passphrase cannot be empty".to_string());
-                                } else {
-                                    // TODO: Connect to remote server with passphrase
-                                    println!("Connecting with passphrase...");
-                                    noteapp = Some(NoteApp::new());
-                                    current_view = AppView::Main;
-                                }
-                            }
-                        });
-                        card.width(UISize::DPixels(320.0))
-                            .background(Color::new("#2a2a2a"));
-                    }).height(UISize::Percents(0.5));
-
-                    // Vertical centering: bottom spacer
-                    ui.row(|_| {}).height(UISize::Percents(0.25));
-                }).background(Color::new("#1a1a1a"));
+                        }
+                    });
+                    card.width(UISize::Fixed(320.0))
+                        .padding_all(16.0)
+                        .gap(4.0)
+                        .background(Color::new("#2a2a2a"));
+                })
+                .width(UISize::Grow)
+                .height(UISize::Grow)
+                .align(MainAxisAlign::Center, CrossAxisAlign::Center)
+                .background(Color::new("#1a1a1a"));
             }
 
             AppView::Main => {
@@ -165,7 +160,7 @@ fn main() {
                                 .unwrap();
                         }
                     })
-                    .width(UISize::ChildrenMax)
+                    .width(UISize::Fit)
                     .background(ui.theme.color_main);
 
                     ui.textarea(noteapp.buffer.clone(), "#textarea")
@@ -176,7 +171,7 @@ fn main() {
                 ui.prompt("#search_prompt", &mut show_search, |ui, show| {
                     ui.label("Search for notes");
                     let search_input = ui.line_edit(search.clone(), "#search", true);
-                    search_input.width(UISize::Expand);
+                    search_input.width(UISize::Grow);
                     let search_filter = search.borrow();
                     for note in &noteapp.notes() {
                         if search_filter.len() > 0 {

@@ -112,7 +112,7 @@ impl IMUITextInputState {
                 // xarkes: update box scrolling
                 {
                     let mut uibox = self.focus.borrow_mut();
-                    if self.cursor_x > uibox.size.width - uibox.scrollx
+                    if self.cursor_x > uibox.computed_size.width - uibox.scrollx
                         || self.cursor_x + uibox.scrollx < 0.
                     {
                         let line_idx = idx - curidx;
@@ -122,7 +122,7 @@ impl IMUITextInputState {
                                     .get_text_size(font_size, line, line.len())
                                     .0
                                     + 2. // cursor_width
-                                    - uibox.size.width);
+                                    - uibox.computed_size.width);
                         } else {
                             let line_char_idx =
                                 line.char_indices().map(|(i, _)| i).nth(line_idx).unwrap();
@@ -141,7 +141,7 @@ impl IMUITextInputState {
                                         )
                                         .0
                                         + cursor_width
-                                        - uibox.size.width);
+                                        - uibox.computed_size.width);
                             } else {
                                 // cursor at the left
                                 let left_char = line.chars().nth(line_idx).unwrap();
@@ -168,7 +168,7 @@ impl IMUITextInputState {
                     if uibox.scrollx != 0. {
                         uibox.scrollx = 0.;
                     }
-                    if self.cursor_y > uibox.size.height - uibox.scrolly {
+                    if self.cursor_y > uibox.computed_size.height - uibox.scrolly {
                         // cursor going down
                         uibox.scrolly -= fc.line_height(font_size);
                     } else if self.cursor_y < -1. * uibox.scrolly {

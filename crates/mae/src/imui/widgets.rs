@@ -1,9 +1,6 @@
-use crate::{
-    imui::{
-        UILayout, UISize,
-        uibox::{UIBoxFlag, UIBoxParams},
-    },
-    uisize,
+use crate::imui::{
+    UILayout, UISize,
+    uibox::{UIBoxFlag, UIBoxParams},
 };
 
 use super::{
@@ -21,8 +18,8 @@ impl IMUI {
     ) -> UIBoxRef {
         let key = u64_hash_from_string(4736251, title);
         let uibox = self.new_floating_root(key, pos);
-        uibox.borrow_mut().pref_width = UISize::DPixels(size.width);
-        uibox.borrow_mut().pref_height = UISize::Children;
+        uibox.borrow_mut().width = UISize::Fixed(size.width);
+        uibox.borrow_mut().height = UISize::Fit;
         self.handle_uibox_event(uibox.clone());
         self.parent_stack.push(uibox.clone());
         {
@@ -39,10 +36,10 @@ impl IMUI {
                         let (key, _) =
                             ui.get_key_from_string(Some(foldable_frame_id), uibox.clone());
                         if let Some(uibox) = ui.uiboxes.get(&key) {
-                            let old_size = uibox.borrow().pref_height;
-                            uibox.borrow_mut().pref_height = match old_size {
-                                UISize::Children => UISize::DPixels(0.),
-                                _ => UISize::Children,
+                            let old_size = uibox.borrow().height;
+                            uibox.borrow_mut().height = match old_size {
+                                UISize::Fit => UISize::Fixed(0.),
+                                _ => UISize::Fit,
                             };
                         }
                     }
@@ -84,8 +81,8 @@ impl IMUI {
                 key,
                 Point::new(self.size.width / 4., self.size.height / 10.),
             );
-            uibox.borrow_mut().pref_width = UISize::DPixels(self.size.width / 2.);
-            uibox.borrow_mut().pref_height = UISize::DPixels(self.size.height / 4.);
+            uibox.borrow_mut().width = UISize::Fixed(self.size.width / 2.);
+            uibox.borrow_mut().height = UISize::Fixed(self.size.height / 4.);
             self.parent_stack.push(uibox.clone());
             {
                 children(self, show);
@@ -104,16 +101,16 @@ impl IMUI {
 
     pub(crate) fn scrollbar(&mut self, scrollable: UIBoxRef, virtual_size: f32, axis: Axis) {
         debug_assert!(scrollable.borrow().scrollable_x());
-        if virtual_size <= *scrollable.borrow().size.axis(axis) {
+        if virtual_size <= *scrollable.borrow().computed_size.axis(axis) {
             return;
         }
         let mut params = UIBoxParams::new();
         match axis {
             Axis::X => {
-                params.height(uisize!("10px"));
+                params.height(UISize::Fixed(10.));
             }
             Axis::Y => {
-                params.width(uisize!("10px"));
+                params.width(UISize::Fixed(10.));
             }
         }
         let layout = match axis {
@@ -125,7 +122,7 @@ impl IMUI {
             Axis::Y => 'y',
         };
         self.container(None, layout, 0, Some(params), |ui| {
-            let box_size = scrollable.borrow().size;
+            let box_size = scrollable.borrow().computed_size;
             let scroll_pos = match axis {
                 Axis::X => scrollable.borrow().scrollx,
                 Axis::Y => scrollable.borrow().scrolly,
@@ -150,12 +147,12 @@ impl IMUI {
             );
             match axis {
                 Axis::X => {
-                    pre_scrollbar.borrow_mut().pref_width = UISize::DPixels(pre_size);
-                    pre_scrollbar.borrow_mut().pref_height = uisize!("100%");
+                    pre_scrollbar.borrow_mut().width = UISize::Fixed(pre_size);
+                    pre_scrollbar.borrow_mut().height = UISize::Percent(1.);
                 }
                 Axis::Y => {
-                    pre_scrollbar.borrow_mut().pref_width = uisize!("100%");
-                    pre_scrollbar.borrow_mut().pref_height = UISize::DPixels(pre_size);
+                    pre_scrollbar.borrow_mut().width = UISize::Percent(1.);
+                    pre_scrollbar.borrow_mut().height = UISize::Fixed(pre_size);
                 }
             }
             pre_scrollbar.borrow_mut().style.bg_color = bar_empty_color;
@@ -167,12 +164,12 @@ impl IMUI {
             );
             match axis {
                 Axis::X => {
-                    scrollbar.borrow_mut().pref_width = UISize::DPixels(bar_size);
-                    scrollbar.borrow_mut().pref_height = uisize!("100%");
+                    scrollbar.borrow_mut().width = UISize::Fixed(bar_size);
+                    scrollbar.borrow_mut().height = UISize::Percent(1.);
                 }
                 Axis::Y => {
-                    scrollbar.borrow_mut().pref_width = uisize!("100%");
-                    scrollbar.borrow_mut().pref_height = UISize::DPixels(bar_size);
+                    scrollbar.borrow_mut().width = UISize::Percent(1.);
+                    scrollbar.borrow_mut().height = UISize::Fixed(bar_size);
                 }
             }
             scrollbar.borrow_mut().style.bg_color = bar_color;
@@ -182,12 +179,12 @@ impl IMUI {
             );
             match axis {
                 Axis::X => {
-                    post_scrollbar.borrow_mut().pref_width = UISize::DPixels(post_size);
-                    post_scrollbar.borrow_mut().pref_height = uisize!("100%");
+                    post_scrollbar.borrow_mut().width = UISize::Fixed(post_size);
+                    post_scrollbar.borrow_mut().height = UISize::Percent(1.);
                 }
                 Axis::Y => {
-                    post_scrollbar.borrow_mut().pref_width = uisize!("100%");
-                    post_scrollbar.borrow_mut().pref_height = UISize::DPixels(post_size);
+                    post_scrollbar.borrow_mut().width = UISize::Percent(1.);
+                    post_scrollbar.borrow_mut().height = UISize::Fixed(post_size);
                 }
             }
             post_scrollbar.borrow_mut().style.bg_color = bar_empty_color;
