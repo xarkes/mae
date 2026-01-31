@@ -1,5 +1,7 @@
 // TODO(perf): Font parsing is slow at startup (~160ms for NotoSans, ~83ms for MaterialIcons).
-// Consider using native font APIs for better performance:
+// TODO(memory): fontdue uses significant RAM for parsed font structures (~50-100MB for large fonts).
+//
+// Consider using native font APIs for better performance AND memory usage:
 //   - Linux: FreeType (`freetype-rs` crate) - system library, highly optimized
 //   - macOS: Core Text (`core-text` crate) - hardware accelerated
 //   - Windows: DirectWrite (`dwrote` crate) - hardware accelerated
@@ -8,6 +10,7 @@
 //   2. System-level glyph caching (shared across apps)
 //   3. Font files often already memory-mapped by OS
 //   4. Better platform-specific hinting
+//   5. Lower memory footprint (shared system font data)
 
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
@@ -117,7 +120,8 @@ impl FontCache {
     pub fn new(font_bytes: &[u8]) -> Self {
         let t0 = std::time::Instant::now();
         let font = fontdue::Font::from_bytes(font_bytes, fontdue::FontSettings::default()).unwrap();
-        println!("[profile]   fontdue::Font::from_bytes: {:?}", t0.elapsed());
+        println!("[profile]   fontdue::Font::from_bytes: {:?} (input: {} KB)",
+                 t0.elapsed(), font_bytes.len() / 1024);
 
         let t1 = std::time::Instant::now();
         let atlas = Atlas::new();

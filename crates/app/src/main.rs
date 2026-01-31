@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use mae::imui::IMUI;
 use mae::imui::UISize;
-use mae::imui::uibox::UIBoxRef2;
+use mae::imui::uibox::{Color, UIBoxRef2};
 use mae::os::OSEventFlag;
 use mae::os::OSKey;
 use mae::os::OSKeyCode;
@@ -17,14 +17,25 @@ macro_rules! icon {
     };
 }
 
+#[derive(PartialEq)]
+enum AppView {
+    Login,
+    Main,
+}
+
 fn main() {
     println!("Starting Mae {}_alpha_0", env!("CARGO_PKG_VERSION"));
 
-    // xarkes: init notes
-    let mut noteapp = NoteApp::new();
+    // App state
+    let mut current_view = AppView::Login;
+    let mut passphrase = Rc::new(RefCell::new(String::new()));
+    let mut login_error: Option<String> = None;
+
+    // Note app (initialized lazily after login)
+    let mut noteapp: Option<NoteApp> = None;
 
     // xarkes: draw UI
-    let mut ui = IMUI::new(1024, 768);
+    let mut ui = IMUI::new(480, 360);
 
     // xarkes: define global shortcuts
     let shortcut_save = (OSKey::Keyboard(OSKeyCode::KeyS), Some(OSEventFlag::Control));
@@ -34,97 +45,178 @@ fn main() {
     let save_interval_seconds = 30.;
     let freq = mae::os::timer_init();
     let mut last_save = mae::os::timer_value() as f64 / freq;
+
     ui.eventloop(|ui| {
-        ui.row(|ui| {
-            ui.column(|ui| {
-                // TODO: use shortcut_save to define the shortcut text
-                if ui
-                    .button_icon(icon!(0xe161), Some("Save the database to fileystem."))
-                    .borrow()
-                    .clicked()
-                {
+        match current_view {
+            AppView::Login => {
+                // Dark background for the whole window
+                ui.column(|ui| {
+                    // Vertical centering: top spacer (use percentage)
+                    ui.row(|_| {}).height(UISize::Percents(0.25));
+
+                    // Horizontal centering row
+                    ui.row(|ui| {
+                        // Left spacer (single Expand is fine)
+                        ui.column(|_| {}).width(UISize::Expand);
+
+                        // Login card
+                        let card = ui.column(|ui| {
+                            // Title
+                            let title = ui.label("Remote Vault");
+                            UIBoxRef2::new(title).text_color(Color::new("#ffffff"));
+
+                            // Subtitle
+                            let subtitle = ui.label("Enter your passphrase to unlock");
+                            UIBoxRef2::new(subtitle).text_color(Color::new("#888888"));
+
+                            // Spacer
+                            ui.row(|_| {}).height(UISize::DPixels(24.0));
+
+                            // Passphrase input
+                            let input = ui.line_edit(passphrase.clone(), "#passphrase", true);
+                            input
+                                .width(UISize::DPixels(280.0))
+                                .height(UISize::DPixels(36.0))
+                                .background(Color::new("#3a3a3a"));
+
+                            // Spacer
+                            ui.row(|_| {}).height(UISize::DPixels(8.0));
+
+                            // Error message
+                            if let Some(ref err) = login_error {
+                                let err_label = ui.label(err.as_str());
+                                UIBoxRef2::new(err_label).text_color(Color::new("#ff6b6b"));
+                                ui.row(|_| {}).height(UISize::DPixels(8.0));
+                            }
+
+                            // Connect button
+                            let connect_btn = ui.button("Unlock##login_btn", None);
+                            UIBoxRef2::new(connect_btn.clone())
+                                .width(UISize::DPixels(280.0))
+                                .height(UISize::DPixels(40.0))
+                                .background(Color::new("#1ebc93"));
+
+                            let enter_pressed = ui.input(
+                                OSKey::Keyboard(OSKeyCode::KeyEnter),
+                                None,
+                            );
+
+                            if connect_btn.borrow().clicked() || enter_pressed {
+                                let pass = passphrase.borrow();
+                                if pass.is_empty() {
+                                    login_error = Some("Passphrase cannot be empty".to_string());
+                                } else {
+                                    // TODO: Connect to remote server with passphrase
+                                    println!("Connecting with passphrase...");
+                                    noteapp = Some(NoteApp::new());
+                                    current_view = AppView::Main;
+                                }
+                            }
+                        });
+                        card.width(UISize::DPixels(320.0))
+                            .background(Color::new("#2a2a2a"));
+                    }).height(UISize::Percents(0.5));
+
+                    // Vertical centering: bottom spacer
+                    ui.row(|_| {}).height(UISize::Percents(0.25));
+                }).background(Color::new("#1a1a1a"));
+            }
+
+            AppView::Main => {
+                let noteapp = noteapp.as_mut().unwrap();
+
+                ui.row(|ui| {
+                    ui.column(|ui| {
+                        // TODO: use shortcut_save to define the shortcut text
+                        if ui
+                            .button_icon(icon!(0xe161), Some("Save the database to fileystem."))
+                            .borrow()
+                            .clicked()
+                        {
+                            noteapp.save();
+                        }
+                        if ui
+                            .button_icon(icon!(0xefd3), Some("Create a new note"))
+                            .borrow()
+                            .clicked()
+                        {
+                            noteapp.newnote();
+                        }
+                        if ui
+                            .button_icon(icon!(0xe8b6), Some("Search notes."))
+                            .borrow()
+                            .clicked()
+                        {
+                            show_search = true;
+                            search = Rc::new(RefCell::new(String::from("")));
+                        }
+                        if ui
+                            .button_icon(
+                                icon!(0xe9fc),
+                                Some("Import previous notes to the application."),
+                            )
+                            .borrow()
+                            .clicked()
+                        {
+                            noteapp
+                                .import_from_markdown(std::path::Path::new(
+                                    "/Users/user/Downloads/AnyTypeDB/Anytype.20250720.222959.98",
+                                ))
+                                .unwrap();
+                        }
+                    })
+                    .width(UISize::ChildrenMax)
+                    .background(ui.theme.color_main);
+
+                    ui.textarea(noteapp.buffer.clone(), "#textarea")
+                        .background(ui.theme.color_bg_popup);
+                });
+
+                // prompts
+                ui.prompt("#search_prompt", &mut show_search, |ui, show| {
+                    ui.label("Search for notes");
+                    let search_input = ui.line_edit(search.clone(), "#search", true);
+                    search_input.width(UISize::Expand);
+                    let search_filter = search.borrow();
+                    for note in &noteapp.notes() {
+                        if search_filter.len() > 0 {
+                            if !fuzzy_search(search_filter.as_str(), note.name.as_str()) {
+                                continue;
+                            }
+                        }
+                        let button = ui.button(
+                            format!("> {}##button_label_{}", note.name, note.id).as_str(),
+                            None,
+                        );
+                        let buttonr = UIBoxRef2::new(button.clone());
+                        buttonr.background(ui.theme.color_bg_popup);
+                        if button.borrow().clicked() {
+                            *show = false;
+                            noteapp.open(note.id);
+                        }
+                    }
+                });
+
+                // common logic
+                let curtime = mae::os::timer_value() as f64 / freq;
+                if last_save + save_interval_seconds < curtime {
+                    println!("Auto save...");
+                    noteapp.save();
+                    last_save = curtime;
+                }
+
+                // shortcuts
+                if ui.input(shortcut_save.0, shortcut_save.1) {
                     noteapp.save();
                 }
-                if ui
-                    .button_icon(icon!(0xefd3), Some("Create a new note"))
-                    .borrow()
-                    .clicked()
-                {
+                if ui.input(OSKey::Keyboard(OSKeyCode::KeyN), Some(OSEventFlag::Control)) {
                     noteapp.newnote();
                 }
-                if ui
-                    .button_icon(icon!(0xe8b6), Some("Search notes."))
-                    .borrow()
-                    .clicked()
-                {
+                if !show_search && ui.input(OSKey::Keyboard(OSKeyCode::KeyG), Some(OSEventFlag::Control)) {
                     show_search = true;
                     search = Rc::new(RefCell::new(String::from("")));
                 }
-                if ui
-                    .button_icon(
-                        icon!(0xe9fc),
-                        Some("Import previous notes to the application."),
-                    )
-                    .borrow()
-                    .clicked()
-                {
-                    noteapp
-                        .import_from_markdown(std::path::Path::new(
-                            "/Users/user/Downloads/AnyTypeDB/Anytype.20250720.222959.98",
-                        ))
-                        .unwrap();
-                }
-            })
-            .width(UISize::ChildrenMax)
-            .background(ui.theme.color_main);
-
-            ui.textarea(noteapp.buffer.clone(), "#textarea")
-                .background(ui.theme.color_bg_popup);
-        });
-
-        // prompts
-        ui.prompt("#search_prompt", &mut show_search, |ui, show| {
-            ui.label("Search for notes");
-            let search_input = ui.line_edit(search.clone(), "#search", true);
-            search_input.width(UISize::Expand);
-            let search_filter = search.borrow();
-            for note in &noteapp.notes() {
-                if search_filter.len() > 0 {
-                    if !fuzzy_search(search_filter.as_str(), note.name.as_str()) {
-                        continue;
-                    }
-                }
-                let button = ui.button(
-                    format!("> {}##button_label_{}", note.name, note.id).as_str(),
-                    None,
-                );
-                let buttonr = UIBoxRef2::new(button.clone());
-                buttonr.background(ui.theme.color_bg_popup);
-                if button.borrow().clicked() {
-                    *show = false;
-                    noteapp.open(note.id);
-                }
             }
-        });
-
-        // common logic
-        let curtime = mae::os::timer_value() as f64 / freq;
-        if last_save + save_interval_seconds < curtime {
-            println!("Auto save...");
-            noteapp.save();
-            last_save = curtime;
-        }
-
-        // shortcuts
-        if ui.input(shortcut_save.0, shortcut_save.1) {
-            noteapp.save();
-        }
-        if ui.input(OSKey::Keyboard(OSKeyCode::KeyN), Some(OSEventFlag::Control)) {
-            noteapp.newnote();
-        }
-        if !show_search && ui.input(OSKey::Keyboard(OSKeyCode::KeyG), Some(OSEventFlag::Control)) {
-            show_search = true;
-            search = Rc::new(RefCell::new(String::from("")));
         }
     });
 
