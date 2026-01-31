@@ -942,7 +942,7 @@ impl IMUI {
         // XXX(xarkes): layout should be passed to add_box_from_string maybe
         row.borrow_mut().layout = Some(UILayout::Horizontal);
         row.borrow_mut().width = UISize::Grow;
-        row.borrow_mut().height = UISize::Fit;
+        row.borrow_mut().height = UISize::Grow;
 
         self.parent_stack.push(row.clone());
         children(self);
@@ -955,7 +955,7 @@ impl IMUI {
         // XXX(xarkes): layout should be passed to add_box_from_string maybe
         column.borrow_mut().layout = Some(UILayout::Vertical);
         column.borrow_mut().width = UISize::Grow;
-        column.borrow_mut().height = UISize::Fit;
+        column.borrow_mut().height = UISize::Grow;
 
         self.parent_stack.push(column.clone());
         children(self);

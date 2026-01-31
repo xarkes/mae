@@ -107,6 +107,7 @@ fn main() {
                         }
                     });
                     card.width(UISize::Fixed(320.0))
+                        .height(UISize::Fit)
                         .padding_all(16.0)
                         .gap(4.0)
                         .background(Color::new("#2a2a2a"));
