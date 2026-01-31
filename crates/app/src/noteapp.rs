@@ -72,16 +72,8 @@ impl Database {
             .unwrap();
         let note_iter = stmt
             .query_map([], |row| {
-                let id: u64 = match row.get_ref(0)? {
-                    rusqlite::types::ValueRef::Integer(i) => i as u64,
-                    rusqlite::types::ValueRef::Text(s) => std::str::from_utf8(s)
-                        .unwrap_or("0")
-                        .parse()
-                        .unwrap_or(0),
-                    _ => 0,
-                };
                 Ok(Note {
-                    id,
+                    id: row.get(0)?,
                     name: row.get(1)?,
                     content: row.get(2)?,
                 })
