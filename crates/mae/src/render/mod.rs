@@ -1,16 +1,28 @@
 pub mod font_cache;
 #[cfg(feature = "opengl")]
 mod opengl;
+#[cfg(feature = "cpu")]
+mod cpu;
 
 use std::{cell::RefCell, rc::Rc};
 
 use crate::os::Window;
 use font_cache::FontCache;
 
+pub trait RenderBackend {
+    fn update_font_texture(&mut self, atlas: &font_cache::Atlas) -> u32;
+    fn resize(&mut self, w: f32, h: f32);
+    fn begin_frame(&mut self);
+    fn end_frame(&mut self);
+    fn render(&mut self, batches: &Vec<RenderBatch>);
+    #[cfg(debug_assertions)]
+    fn vsync(&mut self, enable: bool);
+}
+
 pub struct RenderBatch {
-    data: Vec<Rect2DInst>,
-    bytes_count: isize,
-    texture: Option<u32>,
+    pub(crate) data: Vec<Rect2DInst>,
+    pub(crate) bytes_count: isize,
+    pub(crate) texture: Option<u32>,
 }
 
 #[repr(C)]
@@ -117,9 +129,38 @@ impl RenderBatch {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Backend {
+    #[cfg(feature = "opengl")]
+    OpenGL,
+    #[cfg(feature = "cpu")]
+    CPU,
+}
+
+impl Backend {
+    /// Returns the default backend (prefers OpenGL if available)
+    pub fn default_backend() -> Self {
+        #[cfg(feature = "opengl")]
+        return Backend::OpenGL;
+        #[cfg(all(feature = "cpu", not(feature = "opengl")))]
+        return Backend::CPU;
+    }
+
+    /// Returns backend from MAE_RENDERER environment variable, or default
+    pub fn from_env() -> Self {
+        match std::env::var("MAE_RENDERER").as_deref() {
+            #[cfg(feature = "opengl")]
+            Ok("opengl") => Backend::OpenGL,
+            #[cfg(feature = "cpu")]
+            Ok("cpu") => Backend::CPU,
+            _ => Self::default_backend(),
+        }
+    }
+}
+
 pub struct Renderer {
     pub win: Window,
-    pub ctx: Box<opengl::GLContext>,
+    ctx: Box<dyn RenderBackend>,
     pub font_cache: Rc<RefCell<FontCache>>,
     pub icon_font_cache: Rc<RefCell<FontCache>>,
     batches: Vec<RenderBatch>,
@@ -128,25 +169,14 @@ pub struct Renderer {
 use log;
 impl Renderer {
     pub fn new(win: Window) -> Self {
-        // TODO(xarkes): Can we have this at compile time rather than runtime?
-        // debug_assert!(std::mem::size_of::<Rect2DInst>() == 4 * 4 * 3);
-        log::debug!("render new");
-        let mut available_renderers = Vec::new();
-        if cfg!(feature = "opengl") {
-            available_renderers.push("opengl");
-        }
+        Self::with_backend(win, Backend::from_env())
+    }
 
-        if available_renderers.is_empty() {
-            panic!("No renderer available!");
-        }
+    pub fn with_backend(win: Window, backend: Backend) -> Self {
+        println!("render new with backend: {:?}", backend);
 
-        let renderer = available_renderers[0];
-        let ctx = match renderer {
-            "opengl" => Box::new(opengl::GLContext::new(&win)),
-            _ => {
-                panic!("Renderer not implemented!");
-            }
-        };
+        let ctx: Box<dyn RenderBackend> = Self::create_backend(&win, backend);
+
         let font_cache = Rc::new(RefCell::new(FontCache::new(include_bytes!(
             "../../assets/NotoSans-Regular.ttf"
         ))));
@@ -165,6 +195,15 @@ impl Renderer {
         renderer.update_font_texture(false);
         renderer.update_font_texture(true);
         renderer
+    }
+
+    fn create_backend(win: &Window, backend: Backend) -> Box<dyn RenderBackend> {
+        match backend {
+            #[cfg(feature = "opengl")]
+            Backend::OpenGL => Box::new(opengl::GLContext::new(win)),
+            #[cfg(feature = "cpu")]
+            Backend::CPU => Box::new(cpu::CPUContext::new(win)),
+        }
     }
 
     pub fn update_font_texture(&mut self, font_icon: bool) {

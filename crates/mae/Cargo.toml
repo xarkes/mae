@@ -7,8 +7,9 @@ edition = "2024"
 name = "mae"
 
 [features]
-default = ["opengl"]
+default = ["opengl", "cpu"]
 opengl = ["dep:gl"]
+cpu = []
 
 [dependencies]
 fontdue = "0.9.3"

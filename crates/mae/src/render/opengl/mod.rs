@@ -267,6 +267,33 @@ impl GLContext {
     }
 }
 
+impl super::RenderBackend for GLContext {
+    fn update_font_texture(&mut self, atlas: &super::font_cache::Atlas) -> u32 {
+        GLContext::update_font_texture(self, atlas)
+    }
+
+    fn resize(&mut self, w: f32, h: f32) {
+        GLContext::resize(self, w, h)
+    }
+
+    fn begin_frame(&mut self) {
+        GLContext::begin_frame(self)
+    }
+
+    fn end_frame(&mut self) {
+        GLContext::end_frame(self)
+    }
+
+    fn render(&mut self, batches: &Vec<super::RenderBatch>) {
+        GLContext::render(self, batches)
+    }
+
+    #[cfg(debug_assertions)]
+    fn vsync(&mut self, enable: bool) {
+        GLContext::vsync(self, enable)
+    }
+}
+
 fn compile_shader(src: &str, ty: GLenum) -> GLuint {
     let shader;
     unsafe {
