@@ -1,80 +1,30 @@
+// TODO(perf): Font parsing is slow at startup (~160ms for NotoSans, ~83ms for MaterialIcons).
+// Consider using native font APIs for better performance:
+//   - Linux: FreeType (`freetype-rs` crate) - system library, highly optimized
+//   - macOS: Core Text (`core-text` crate) - hardware accelerated
+//   - Windows: DirectWrite (`dwrote` crate) - hardware accelerated
+// Native APIs benefit from:
+//   1. Optimized C/C++ font parsing
+//   2. System-level glyph caching (shared across apps)
+//   3. Font files often already memory-mapped by OS
+//   4. Better platform-specific hinting
+
 use std::collections::HashMap;
-use std::hash::Hash;
+use std::num::NonZeroUsize;
 
-struct LRUEntry<K, V> {
-    #[allow(dead_code)]
-    key: K,
-    val: V,
-    prev: *mut LRUEntry<K, V>,
-    next: *mut LRUEntry<K, V>,
+use lru::LruCache;
+
+const CACHE_GLYPH_COUNT: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(512) };
+
+/// Quantize font size to avoid floating point precision issues.
+/// Rounds to nearest 0.5pt, returns a key suitable for HashMap lookup.
+#[inline]
+fn quantize_size(size: f32) -> (u32, f32) {
+    // Round to nearest 0.5 (multiply by 2, round, divide by 2)
+    let quantized = (size * 2.0).round() / 2.0;
+    let key = (quantized * 2.0) as u32; // Unique key for each 0.5 increment
+    (key, quantized)
 }
-
-struct LRUCache<K, V> {
-    #[allow(dead_code)]
-    max: usize,
-    first: *mut LRUEntry<K, V>,
-    // last: *mut LRUEntry<K, V>,
-    map: HashMap<K, Box<LRUEntry<K, V>>>,
-}
-
-impl<K, V> LRUCache<K, V>
-where
-    K: Hash + Eq + Clone,
-{
-    pub fn new(max: usize) -> Self {
-        LRUCache {
-            max,
-            first: std::ptr::null_mut(),
-            // last: std::ptr::null_mut(),
-            map: HashMap::<K, Box<LRUEntry<K, V>>>::new(),
-        }
-    }
-
-    pub fn get(&self, key: &K) -> Option<&V> {
-        match self.map.get(key) {
-            Some(entry) => Some(&entry.val),
-            _ => None,
-        }
-    }
-
-    pub fn set(&mut self, key: K, value: V) {
-        match self.map.get_mut(&key) {
-            Some(existing) => {
-                // Element is in cache, move it to head
-                // SAFETY: Pointer set from a Box pointer, which will (should?) never be moved
-                if existing.prev != std::ptr::null_mut() {
-                    unsafe { (*existing.prev).next = existing.next };
-                }
-                if existing.next != std::ptr::null_mut() {
-                    unsafe { (*existing.next).prev = existing.prev };
-                }
-                existing.prev = self.first;
-                existing.next = std::ptr::null_mut();
-                self.first = existing.as_mut();
-            }
-            None => {
-                // Element is not in cache, add it to head
-                let mut entry = Box::new(LRUEntry {
-                    key: key.clone(),
-                    val: value,
-                    prev: self.first,
-                    next: std::ptr::null_mut(),
-                });
-                let entry_ptr: *mut LRUEntry<K, V> = &mut *entry;
-                self.map.insert(key, entry);
-                if self.first != std::ptr::null_mut() {
-                    // SAFETY: Pointer set from a Box pointer, which will (should?) never be moved
-                    unsafe { self.first.as_mut().unwrap().next = entry_ptr };
-                }
-                self.first = entry_ptr;
-                // TODO(xarkes): Evict when we get above the max
-            }
-        }
-    }
-}
-
-// TODO(xarkes): Seems like max glyph count is not really relevant, as what matters is if the atlas texture(s) is full or not
-const CACHE_GLYPH_COUNT: usize = 512;
 const ATLAS_WIDTH: usize = 1024;
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -152,7 +102,7 @@ impl Atlas {
 }
 
 struct GlyphCache {
-    table: LRUCache<char, Glyph>,
+    table: LruCache<char, Glyph>,
     table_ascii: [Glyph; 256],
 }
 
@@ -165,18 +115,18 @@ pub struct FontCache {
 }
 impl FontCache {
     pub fn new(font_bytes: &[u8]) -> Self {
-        // XXX(xarkes): It seems that fontdue is not able to handle emojis rasterization.
-        // In addition, we may want in the future to have a way to handle font "fallback"
-        // i.e. looking up for a glyph in a separate font when the current one does not provide it.
-        // NOTE(xarkes): A quick search shows that apparently no font bundles all languages, so most likely we should
-        // have multiple fonts (e.g. Google Noto) and load them depending on the language?
-        // Not sure what's the best way to proceed here.
-        // let font = include_bytes!(font_file) as &[u8];
+        let t0 = std::time::Instant::now();
         let font = fontdue::Font::from_bytes(font_bytes, fontdue::FontSettings::default()).unwrap();
+        println!("[profile]   fontdue::Font::from_bytes: {:?}", t0.elapsed());
+
+        let t1 = std::time::Instant::now();
+        let atlas = Atlas::new();
+        println!("[profile]   Atlas::new: {:?}", t1.elapsed());
+
         FontCache {
             font,
             glyph_cache: HashMap::new(),
-            atlas: Atlas::new(),
+            atlas,
             dirty: true,
             texture_id: 0,
         }
@@ -185,65 +135,92 @@ impl FontCache {
     /// Add a glyph to the cache
     /// Must be called only if you are sure the glyph is not in the cache already
     fn add(&mut self, glyph: char, size: f32) -> Option<&Glyph> {
-        let keysize = (size * 100.) as u32;
+        let (keysize, quantized_size) = quantize_size(size);
         if !self.font.has_glyph(glyph) {
             return None;
         }
 
         let cache = self.glyph_cache.get_mut(&keysize).unwrap();
-        debug_assert!(cache.table.get(&glyph).is_none());
-        let (metrics, bitmap) = self.font.rasterize(glyph, size);
+        debug_assert!(cache.table.peek(&glyph).is_none());
+        let (metrics, bitmap) = self.font.rasterize(glyph, quantized_size);
         let glyph_data = self.atlas.add_glyph(metrics, bitmap);
         self.dirty = true;
         if glyph.len_utf8() == 1 {
             cache.table_ascii[glyph as u8 as usize] = glyph_data;
             Some(&cache.table_ascii[glyph as u8 as usize])
         } else {
-            cache.table.set(glyph, glyph_data);
-            Some(cache.table.get(&glyph).unwrap())
+            cache.table.put(glyph, glyph_data);
+            Some(cache.table.peek(&glyph).unwrap())
         }
     }
 
-    /// Retrieve rasterized glyph
-    /// If not in cache, add it
-    fn get_internal(&mut self, glyph: char, size: f32) -> Option<&Glyph> {
-        let keysize = (size * 100.) as u32;
-        if self.glyph_cache.get(&keysize).is_none() {
-            // cache for specified size does not exist, create it
+    fn ensure_size_cache(&mut self, size: f32) -> u32 {
+        let (keysize, _) = quantize_size(size);
+
+        if !self.glyph_cache.contains_key(&keysize) {
             self.glyph_cache.insert(
                 keysize,
                 GlyphCache {
-                    table: LRUCache::new(CACHE_GLYPH_COUNT),
+                    table: LruCache::new(CACHE_GLYPH_COUNT),
                     table_ascii: [Glyph::default(); 256],
                 },
             );
+            // Pre-rasterize ASCII
             for ccode in 0..=255u8 {
                 self.add(ccode as char, size);
             }
-            return self.get_internal(glyph, size);
         }
 
-        // xarkes: for perf purpose, ASCII table is in a separate cache
-        let cache = &self.glyph_cache.get(&keysize).unwrap();
-        if glyph.len_utf8() == 1 {
-            return Some(&cache.table_ascii[glyph as u8 as usize]);
-        } else {
-            let metrics = cache.table.get(&glyph);
-            if metrics.is_some() {
-                return metrics;
-            }
-        }
-
-        None
+        keysize
     }
 
     pub fn get(&mut self, glyph: char, size: f32) -> &Glyph {
-        if self.get_internal(glyph, size).is_none() {
-            if self.add(glyph, size).is_none() {
-                return self.get_internal('?', size).unwrap();
+        let (_, quantized_size) = quantize_size(size);
+        let keysize = self.ensure_size_cache(size);
+
+        // Fast path: ASCII (always pre-cached)
+        if glyph.len_utf8() == 1 {
+            return &self.glyph_cache.get(&keysize).unwrap().table_ascii[glyph as u8 as usize];
+        }
+
+        // Check if non-ASCII glyph is already cached (peek doesn't update LRU order)
+        let needs_rasterize = self
+            .glyph_cache
+            .get(&keysize)
+            .unwrap()
+            .table
+            .peek(&glyph)
+            .is_none();
+
+        if needs_rasterize {
+            // Rasterize and cache the glyph
+            if self.font.has_glyph(glyph) {
+                let (metrics, bitmap) = self.font.rasterize(glyph, quantized_size);
+                let glyph_data = self.atlas.add_glyph(metrics, bitmap);
+                self.dirty = true;
+                self.glyph_cache
+                    .get_mut(&keysize)
+                    .unwrap()
+                    .table
+                    .put(glyph, glyph_data);
+            } else {
+                // Fallback to '?'
+                return &self.glyph_cache.get(&keysize).unwrap().table_ascii['?' as usize];
             }
         }
-        self.get_internal(glyph, size).unwrap()
+
+        // Use get to update LRU order, then return reference via peek
+        self.glyph_cache
+            .get_mut(&keysize)
+            .unwrap()
+            .table
+            .get(&glyph);
+        self.glyph_cache
+            .get(&keysize)
+            .unwrap()
+            .table
+            .peek(&glyph)
+            .unwrap()
     }
 
     /// Retrieve the current atlas

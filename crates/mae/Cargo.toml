@@ -13,6 +13,7 @@ cpu = []
 
 [dependencies]
 fontdue = "0.9.3"
+lru = "0.16"
 mae-macros = { version = "*", path = "./mae_macros" }
 gl = { version = "*", optional = true }
 log = "0.4"
