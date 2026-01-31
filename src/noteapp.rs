@@ -15,7 +15,7 @@ use rusqlite::{Connection, Result};
 
 #[derive(Clone)]
 pub struct Note {
-    pub id: u64,
+    pub id: i64,
     pub name: String,
     pub content: String,
 }
@@ -65,7 +65,7 @@ impl Database {
         }
     }
 
-    pub fn all_notes(&self) -> HashMap<u64, Note> {
+    pub fn all_notes(&self) -> HashMap<i64, Note> {
         let mut stmt = self
             .conn
             .prepare("SELECT id, name, content FROM note")
@@ -106,7 +106,7 @@ impl Database {
             .unwrap();
     }
 
-    pub fn save_all(&self, notes: &mut HashMap<u64, Note>) {
+    pub fn save_all(&self, notes: &mut HashMap<i64, Note>) {
         for note in notes {
             let mut note = note.1;
             self.conform_note(&mut note, true);
@@ -117,8 +117,8 @@ impl Database {
 
 pub(crate) struct NoteApp {
     db: Database,
-    notes: HashMap<u64, Note>,
-    curnote: u64,
+    notes: HashMap<i64, Note>,
+    curnote: i64,
     pub buffer: Rc<RefCell<String>>,
 }
 impl NoteApp {
@@ -163,7 +163,7 @@ impl NoteApp {
         self.db.save_all(&mut self.notes);
     }
 
-    pub fn open(&mut self, id: u64) {
+    pub fn open(&mut self, id: i64) {
         self.save_current();
         self.curnote = id;
         self.buffer = Rc::new(RefCell::new(self.notes.get(&id).unwrap().content.clone()));
@@ -174,7 +174,7 @@ impl NoteApp {
         self.save_current();
 
         // get highest id
-        let mut id = 0;
+        let mut id: i64 = 0;
         for k in self.notes.keys() {
             if k > &id {
                 id = *k;
@@ -182,7 +182,7 @@ impl NoteApp {
         }
 
         // create new note, and switch to it
-        let id = id + 1;
+        let id: i64 = id + 1;
         self.notes.insert(
             id,
             Note {
