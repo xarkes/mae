@@ -1,9 +1,0 @@
-[package]
-name = "app"
-version = "0.0.1"
-edition = "2024"
-
-[dependencies]
-mae = { version = "*", path = "../mae" }
-rusqlite = { version = "0.37.0", features = ["bundled"] }
-

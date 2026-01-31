@@ -1,12 +1,55 @@
-[workspace]
-resolver = "2"
-members = [
-    "crates/mae",
-    "crates/app",
+[package]
+name = "mae"
+version = "0.0.1"
+edition = "2024"
+
+[lib]
+name = "mae"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mae"
+path = "src/main.rs"
+
+[features]
+default = ["opengl", "cpu"]
+opengl = ["dep:gl"]
+cpu = []
+
+[dependencies]
+fontdue = "0.9.3"
+lru = "0.16"
+mae-macros = { version = "*", path = "./mae_macros" }
+gl = { version = "*", optional = true }
+log = "0.4"
+rusqlite = { version = "0.37.0", features = ["bundled"] }
+
+[target.'cfg(target_os="linux")'.dependencies]
+x11 = { version = "2.21.0", features = ["xlib", "glx"] }
+
+[target.'cfg(target_os="macos")'.dependencies]
+objc2 = "*"
+objc2-app-kit = "*"
+objc2-foundation = "*"
+
+[target.'cfg(target_os="windows")'.dependencies.windows]
+version = "*"
+features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Graphics_OpenGL",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Performance",
+  "Win32_UI_WindowsAndMessaging",
 ]
+
+[target.'cfg(target_os="android")'.dependencies]
+android_logger = "0.15"
+android-activity = { version = "0.6", features = ["game-activity"] }
+khronos-egl = { version = "6.0.0", features = ["dynamic"] }
+libloading = { version = "*" }
 
 [profile.release]
 lto = true
 strip = true
-# codegen-units = 1 # TODO: To 1 to reduce binary size, but maybe just increases compilation time for no gain
-panic = "abort" # TODO: Maybe we don't want this in release mode
+panic = "abort"
