@@ -49,6 +49,12 @@ impl Point {
     fn default() -> Self {
         Point { x: 0., y: 0. }
     }
+    pub fn x(&self) -> f32 {
+        self.x
+    }
+    pub fn y(&self) -> f32 {
+        self.y
+    }
     pub fn axis(&self, axis: Axis) -> &f32 {
         match axis {
             Axis::X => &self.x,
@@ -174,6 +180,7 @@ struct IMUIEventState {
     active: Option<u64>,
     rmouse: Option<Point>,
     rclick: Option<Point>,
+    left_mouse_held: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -882,6 +889,14 @@ impl IMUI {
         self.event.events.retain(|ev| {
             self.dirty = true;
             let mut retain = true;
+            // Track global mouse button state
+            if ev.key == OSKey::LeftMouseButton {
+                if ev.ty == OSEventType::Press {
+                    self.event.left_mouse_held = true;
+                } else if ev.ty == OSEventType::Release {
+                    self.event.left_mouse_held = false;
+                }
+            }
             if ev.ty == OSEventType::Press {
                 if ev.key == OSKey::Keyboard(OSKeyCode::KeyEscape) {
                     escape_key_pressed = true;
@@ -932,6 +947,16 @@ impl IMUI {
             true
         });
         handled
+    }
+
+    /// Get current mouse position
+    pub fn mouse_position(&self) -> Option<Point> {
+        self.event.mouse
+    }
+
+    /// Check if left mouse button is currently held down
+    pub fn mouse_down(&self) -> bool {
+        self.event.left_mouse_held
     }
 
     /////////////////////////////////

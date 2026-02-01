@@ -52,6 +52,10 @@ fn main() {
     let freq = os::timer_init();
     let mut last_save = os::timer_value() as f64 / freq;
 
+    // Sidebar resize state
+    let mut sidebar_width: f32 = 220.0;
+    let mut resizing_sidebar = false;
+
     ui.eventloop(|ui| {
         match current_view {
             AppView::Login => {
@@ -191,8 +195,33 @@ fn main() {
                             }
                         }
                     })
-                    .width(UISize::Fixed(220.0))
+                    .width(UISize::Fixed(sidebar_width))
                     .background(sidebar_bg);
+
+                    // Resize handle (using button for built-in click handling)
+                    let resize_handle = ui.button("##resize_handle", None);
+                    let resize_ref = UIBoxRef2::new(resize_handle.clone());
+                    resize_ref
+                        .width(UISize::Fixed(6.0))
+                        .height(UISize::Grow)
+                        .background(Color::new("#313244"));
+
+                    // Check if resize handle is being dragged
+                    if resize_handle.borrow().click() {
+                        resizing_sidebar = true;
+                    }
+                    if resizing_sidebar {
+                        if let Some(mouse_pos) = ui.mouse_position() {
+                            sidebar_width = mouse_pos.x().max(100.0).min(500.0);
+                        }
+                        if !ui.mouse_down() {
+                            resizing_sidebar = false;
+                        }
+                    }
+                    // Highlight handle on hover or while dragging
+                    if resize_handle.borrow().hover() || resizing_sidebar {
+                        resize_ref.background(Color::new("#45475a"));
+                    }
 
                     // Main editor area
                     ui.column(|ui| {
