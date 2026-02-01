@@ -5,7 +5,7 @@ mod widgets;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use text_input_state::IMUITextInputState;
 use uibox::{
-    Color, Padding, UIBox, UIBoxEvent, UIBoxFlag, UIBoxParams, UIBoxRef, UIBoxHandle, UIBoxStyle,
+    Color, Padding, UIBox, UIBoxEvent, UIBoxFlag, UIBoxHandle, UIBoxParams, UIBoxRef, UIBoxStyle,
     u64_hash_from_string,
 };
 
@@ -224,7 +224,7 @@ pub struct IMUI {
     text_input_state: Option<IMUITextInputState>,
 
     // focus state (raddbg-inspired deferred focus)
-    focus_active: Option<String>,      // current frame's active focus key
+    focus_active: Option<String>, // current frame's active focus key
     next_focus_active: Option<String>, // staged for next frame
 
     // ui construction helpers
@@ -1059,10 +1059,7 @@ impl IMUI {
     }
     pub fn textarea(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIBoxHandle {
         // check if this textarea should auto-focus (raddbg-inspired deferred focus)
-        let force_focus = self
-            .focus_active
-            .as_ref()
-            .is_some_and(|key| key == id);
+        let force_focus = self.focus_active.as_ref().is_some_and(|key| key == id);
         if force_focus {
             self.focus_active = None; // consume the focus request
         }
@@ -1121,7 +1118,12 @@ impl IMUI {
                 }
 
                 let multiline = true;
-                ui.text_edit_impl(textarea_.clone(), text_buffer.clone(), multiline, force_focus);
+                ui.text_edit_impl(
+                    textarea_.clone(),
+                    text_buffer.clone(),
+                    multiline,
+                    force_focus,
+                );
 
                 if max_size_y > textarea_.borrow().computed_size.height {
                     ui.scrollbar(textarea_.clone(), max_size_y, Axis::Y);
@@ -1205,19 +1207,26 @@ impl IMUI {
             // draw cursor
             if let Some(tis) = &self.text_input_state {
                 if tis.focus.borrow().key == textarea.borrow().key {
+                    let font_size = textarea.borrow().style.font_size;
+                    let cursor_height = self
+                        .drawer
+                        .renderer
+                        .font_cache
+                        .borrow()
+                        .line_height(font_size);
+                    // Cursor spans most of the line height, with small padding
+                    // Offset slightly to account for descender space in line_height
                     let cx = tis.cursor_x;
                     let cy = tis.cursor_y;
                     let cursor_box =
                         self.add_box_from_string(None, UIBoxFlag::DrawBackground as u64);
-                    cursor_box.borrow_mut().width =
-                        UISize::Fixed(textarea.borrow().style.font_size / 6.);
-                    cursor_box.borrow_mut().height =
-                        UISize::Fixed(textarea.borrow().style.font_size);
+                    cursor_box.borrow_mut().width = UISize::Fixed(2.);
+                    cursor_box.borrow_mut().height = UISize::Fixed(cursor_height);
                     let bounds = textarea.borrow().bounds();
                     cursor_box.borrow_mut().layout = Some(UILayout::Absolute);
                     cursor_box.borrow_mut().fixed_origin = Point::new(
                         bounds.x0 + cx + textarea.borrow().scrollx,
-                        bounds.y0 + cy + textarea.borrow().scrolly + 2.,
+                        bounds.y0 + cy + textarea.borrow().scrolly - 3., // XXX: 3. is completely arbitrary
                     );
                     cursor_box.borrow_mut().style.bg_color = self.theme.color_text;
                 }
