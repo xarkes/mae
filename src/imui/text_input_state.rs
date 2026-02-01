@@ -189,10 +189,11 @@ impl IMUITextInputState {
     ) -> bool {
         let handled;
         let get_str_insert_idx = |idx| {
-            if idx < self.buffer.borrow().len() {
-                return self.buffer.borrow().char_indices().nth(idx).unwrap().0;
+            let buffer = self.buffer.borrow();
+            match buffer.char_indices().nth(idx) {
+                Some((byte_idx, _)) => byte_idx,
+                None => buffer.len(), // idx is at or past end, return byte length for appending
             }
-            return std::cmp::max(idx, self.buffer.borrow().len());
         };
         match key {
             OSKey::Keyboard(keycode) => {
