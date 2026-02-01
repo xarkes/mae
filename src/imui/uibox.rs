@@ -35,62 +35,64 @@ impl Padding {
     }
 }
 
-pub struct UIBoxRef2 {
-    _box: Rc<RefCell<UIBox>>,
+/// A handle to a UIBox that provides a fluent builder API for styling and layout.
+/// Use this for configuring widgets after creation.
+pub struct UIBoxHandle {
+    inner: UIBoxRef,
 }
 
-impl UIBoxRef2 {
+impl UIBoxHandle {
     // Common APIs
-    pub fn new(_box: Rc<RefCell<UIBox>>) -> Self {
-        UIBoxRef2 { _box }
+    pub fn new(inner: UIBoxRef) -> Self {
+        UIBoxHandle { inner }
     }
     pub fn get(&self) -> Rc<RefCell<UIBox>> {
-        self._box.clone()
+        self.inner.clone()
     }
 
     // Styling APIs
     pub fn width(&self, width: UISize) -> &Self {
-        self._box.borrow_mut().width = width;
+        self.inner.borrow_mut().width = width;
         self
     }
     pub fn height(&self, height: UISize) -> &Self {
-        self._box.borrow_mut().height = height;
+        self.inner.borrow_mut().height = height;
         self
     }
     pub fn background(&self, color: Color) -> &Self {
-        self._box.borrow_mut().flags |= UIBoxFlag::DrawBackground as u64;
-        self._box.borrow_mut().style.bg_color = color;
+        self.inner.borrow_mut().flags |= UIBoxFlag::DrawBackground as u64;
+        self.inner.borrow_mut().style.bg_color = color;
         self
     }
     pub fn text_color(&self, color: Color) -> &Self {
-        self._box.borrow_mut().style.text_color = color;
+        self.inner.borrow_mut().style.text_color = color;
         self
     }
 
     // Layout APIs
     pub fn padding(&self, p: Padding) -> &Self {
-        self._box.borrow_mut().padding = p;
+        self.inner.borrow_mut().padding = p;
         self
     }
     pub fn padding_all(&self, v: f32) -> &Self {
-        self._box.borrow_mut().padding = Padding::all(v);
+        self.inner.borrow_mut().padding = Padding::all(v);
         self
     }
     pub fn gap(&self, g: f32) -> &Self {
-        self._box.borrow_mut().child_gap = g;
+        self.inner.borrow_mut().child_gap = g;
         self
     }
     pub fn align_main(&self, a: MainAxisAlign) -> &Self {
-        self._box.borrow_mut().main_axis_align = a;
+        self.inner.borrow_mut().main_axis_align = a;
         self
     }
     pub fn align_cross(&self, a: CrossAxisAlign) -> &Self {
-        self._box.borrow_mut().cross_axis_align = a;
+        self.inner.borrow_mut().cross_axis_align = a;
         self
     }
     pub fn align(&self, main: MainAxisAlign, cross: CrossAxisAlign) -> &Self {
         {
-            let mut b = self._box.borrow_mut();
+            let mut b = self.inner.borrow_mut();
             b.main_axis_align = main;
             b.cross_axis_align = cross;
         }

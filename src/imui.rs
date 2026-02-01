@@ -5,7 +5,7 @@ mod widgets;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use text_input_state::IMUITextInputState;
 use uibox::{
-    Color, Padding, UIBox, UIBoxEvent, UIBoxFlag, UIBoxParams, UIBoxRef, UIBoxRef2, UIBoxStyle,
+    Color, Padding, UIBox, UIBoxEvent, UIBoxFlag, UIBoxParams, UIBoxRef, UIBoxHandle, UIBoxStyle,
     u64_hash_from_string,
 };
 
@@ -970,7 +970,7 @@ impl IMUI {
 
     /////////////////////////////////
     //// Widgets functions
-    pub fn row(&mut self, children: impl FnOnce(&mut IMUI)) -> UIBoxRef2 {
+    pub fn row(&mut self, children: impl FnOnce(&mut IMUI)) -> UIBoxHandle {
         let row = self.add_box_from_string(None, 0);
 
         // XXX(xarkes): layout should be passed to add_box_from_string maybe
@@ -981,9 +981,9 @@ impl IMUI {
         self.parent_stack.push(row.clone());
         children(self);
         self.parent_stack.pop();
-        UIBoxRef2::new(row)
+        UIBoxHandle::new(row)
     }
-    pub fn column(&mut self, children: impl FnOnce(&mut IMUI)) -> UIBoxRef2 {
+    pub fn column(&mut self, children: impl FnOnce(&mut IMUI)) -> UIBoxHandle {
         let column = self.add_box_from_string(None, 0);
 
         // XXX(xarkes): layout should be passed to add_box_from_string maybe
@@ -994,7 +994,7 @@ impl IMUI {
         self.parent_stack.push(column.clone());
         children(self);
         self.parent_stack.pop();
-        UIBoxRef2::new(column)
+        UIBoxHandle::new(column)
     }
     pub fn container(
         &mut self,
@@ -1045,7 +1045,7 @@ impl IMUI {
         text_buffer: Rc<RefCell<String>>,
         id: &str,
         focus: bool,
-    ) -> UIBoxRef2 {
+    ) -> UIBoxHandle {
         let line_edit = self.add_box_from_string(
             Some(id),
             UIBoxFlag::Clickable as u64
@@ -1055,9 +1055,9 @@ impl IMUI {
         line_edit.borrow_mut().layout = Some(UILayout::Vertical);
         let multiline = false;
         self.text_edit_impl(line_edit.clone(), text_buffer, multiline, focus);
-        UIBoxRef2::new(line_edit)
+        UIBoxHandle::new(line_edit)
     }
-    pub fn textarea(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIBoxRef2 {
+    pub fn textarea(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIBoxHandle {
         // check if this textarea should auto-focus (raddbg-inspired deferred focus)
         let force_focus = self
             .focus_active
@@ -1360,7 +1360,7 @@ impl IMUI {
         uibox
     }
 
-    pub fn focus(&mut self, target: UIBoxRef2) {}
+    pub fn focus(&mut self, target: UIBoxHandle) {}
 
     fn handle_uibox_event(&mut self, uibox: UIBoxRef) {
         let mut should_clear_prompt = false;
@@ -1457,9 +1457,9 @@ impl IMUI {
         }
     }
 
-    pub fn button_new(&mut self, label: &str) -> UIBoxRef2 {
+    pub fn button_new(&mut self, label: &str) -> UIBoxHandle {
         let button = self.button(label, None);
-        UIBoxRef2::new(button)
+        UIBoxHandle::new(button)
     }
     pub fn button(&mut self, label: &str, tooltip_text: Option<&str>) -> UIBoxRef {
         let uibox = self.add_box_from_string(

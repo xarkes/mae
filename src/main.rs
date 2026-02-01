@@ -8,7 +8,7 @@ mod render;
 
 use imui::IMUI;
 use imui::UISize;
-use imui::uibox::{Color, UIBoxRef2};
+use imui::uibox::{Color, UIBoxHandle};
 use imui::{CrossAxisAlign, MainAxisAlign};
 use os::OSEventFlag;
 use os::OSKey;
@@ -71,11 +71,11 @@ fn main() {
                     let card = ui.column(|ui| {
                         // Title
                         let title = ui.label("Remote Vault");
-                        UIBoxRef2::new(title).text_color(Color::new("#ffffff"));
+                        UIBoxHandle::new(title).text_color(Color::new("#ffffff"));
 
                         // Subtitle
                         let subtitle = ui.label("Enter your passphrase to unlock");
-                        UIBoxRef2::new(subtitle).text_color(Color::new("#888888"));
+                        UIBoxHandle::new(subtitle).text_color(Color::new("#888888"));
 
                         // Spacer
                         ui.row(|_| {}).height(UISize::Fixed(24.0));
@@ -93,13 +93,13 @@ fn main() {
                         // Error message
                         if let Some(ref err) = login_error {
                             let err_label = ui.label(err.as_str());
-                            UIBoxRef2::new(err_label).text_color(Color::new("#ff6b6b"));
+                            UIBoxHandle::new(err_label).text_color(Color::new("#ff6b6b"));
                             ui.row(|_| {}).height(UISize::Fixed(8.0));
                         }
 
                         // Connect button
                         let connect_btn = ui.button("Unlock##login_btn", None);
-                        UIBoxRef2::new(connect_btn.clone())
+                        UIBoxHandle::new(connect_btn.clone())
                             .width(UISize::Fixed(280.0))
                             .height(UISize::Fixed(40.0))
                             .background(Color::new("#1ebc93"));
@@ -173,7 +173,7 @@ fn main() {
 
                         // Notes section header
                         let header = ui.label("Notes");
-                        UIBoxRef2::new(header)
+                        UIBoxHandle::new(header)
                             .text_color(text_dim)
                             .padding_all(12.0);
 
@@ -191,7 +191,7 @@ fn main() {
                                 format!("{}##note_{}", display_name, note.id).as_str(),
                                 None,
                             );
-                            let button_ref = UIBoxRef2::new(button.clone());
+                            let button_ref = UIBoxHandle::new(button.clone());
                             button_ref.width(UISize::Grow).padding_all(10.0).background(
                                 if is_selected {
                                     note_selected_bg
@@ -209,7 +209,7 @@ fn main() {
 
                     // Resize handle (using button for built-in click handling)
                     let resize_handle = ui.button("##resize_handle", None);
-                    let resize_ref = UIBoxRef2::new(resize_handle.clone());
+                    let resize_ref = UIBoxHandle::new(resize_handle.clone());
                     resize_ref
                         .width(UISize::Fixed(6.0))
                         .height(UISize::Grow)
@@ -247,7 +247,7 @@ fn main() {
                             })
                             .unwrap_or_else(|| "Untitled".to_string());
                         let header = ui.label(note_title.as_str());
-                        UIBoxRef2::new(header)
+                        UIBoxHandle::new(header)
                             .text_color(Color::new("#cdd6f4"))
                             .padding_all(12.0);
 
@@ -281,7 +281,7 @@ fn main() {
                             format!("> {}##button_label_{}", note.name, note.id).as_str(),
                             None,
                         );
-                        let buttonr = UIBoxRef2::new(button.clone());
+                        let buttonr = UIBoxHandle::new(button.clone());
                         buttonr.background(ui.theme.color_bg_popup);
                         if button.borrow().clicked() {
                             *show = false;
