@@ -38,27 +38,20 @@ impl Database {
     }
 
     fn conform_note(&self, note: &mut Note, writing: bool) {
-        // xarkes: always add newline at the end, this helps our textarea
-        if note.content.len() == 0 || note.content.chars().last().unwrap() != '\n' {
-            note.content.push_str("\n");
-        }
-
         // xarkes: replace empty title with the beginning of the document
         // XXX: currently note name is useless
-        if note.name.len() == 0 {
-            let mut len = std::cmp::min(note.content.len(), 80);
-            let mut pos = usize::MAX;
-            while pos == usize::MAX && len > 0 {
-                pos = match note.content.char_indices().nth(len) {
-                    Some(idx) => idx.0,
-                    None => usize::MAX,
-                };
-                len -= 1;
-            }
-            if pos != usize::MAX {
-                let content_slice = &note.content[..pos];
-                note.name = String::from(content_slice.replace('\n', ""));
-            }
+        let mut len = std::cmp::min(note.content.len(), 80);
+        let mut pos = usize::MAX;
+        while pos == usize::MAX && len > 0 {
+            pos = match note.content.char_indices().nth(len) {
+                Some(idx) => idx.0,
+                None => usize::MAX,
+            };
+            len -= 1;
+        }
+        if pos != usize::MAX {
+            let content_slice = &note.content[..pos];
+            note.name = String::from(content_slice.replace('\n', ""));
         }
         if note.name.len() == 0 && !writing {
             note.name = String::from("(empty note)");
@@ -169,7 +162,12 @@ impl NoteApp {
         self.buffer = Rc::new(RefCell::new(self.notes.get(&id).unwrap().content.clone()));
     }
 
-    pub fn newnote(&mut self) {
+    pub fn new_note(&mut self) {
+        // do nothing if current note is empty
+        if self.buffer.borrow().is_empty() {
+            return;
+        }
+
         // xarkes: save current buffer to note
         self.save_current();
 

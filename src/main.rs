@@ -150,7 +150,7 @@ fn main() {
                                 .borrow()
                                 .clicked()
                             {
-                                noteapp.newnote();
+                                noteapp.new_note();
                             }
                             if ui
                                 .button_icon(icon!(0xe8b6), Some("Search (Ctrl+G)"))
@@ -186,10 +186,13 @@ fn main() {
                                 None,
                             );
                             let button_ref = UIBoxRef2::new(button.clone());
-                            button_ref
-                                .width(UISize::Grow)
-                                .padding_all(10.0)
-                                .background(if is_selected { note_selected_bg } else { note_hover_bg });
+                            button_ref.width(UISize::Grow).padding_all(10.0).background(
+                                if is_selected {
+                                    note_selected_bg
+                                } else {
+                                    note_hover_bg
+                                },
+                            );
                             if button.borrow().clicked() {
                                 noteapp.open(note.id);
                             }
@@ -229,7 +232,13 @@ fn main() {
                         let cur_id = noteapp.current_note_id();
                         let current_note = noteapp.notes().into_iter().find(|n| n.id == cur_id);
                         let note_title = current_note
-                            .map(|n| if n.name.len() > 50 { format!("{}...", &n.name[..50]) } else { n.name })
+                            .map(|n| {
+                                if n.name.len() > 50 {
+                                    format!("{}...", &n.name[..50])
+                                } else {
+                                    n.name
+                                }
+                            })
                             .unwrap_or_else(|| "Untitled".to_string());
                         let header = ui.label(note_title.as_str());
                         UIBoxRef2::new(header)
@@ -288,7 +297,7 @@ fn main() {
                     noteapp.save();
                 }
                 if ui.input(OSKey::Keyboard(OSKeyCode::KeyN), Some(OSEventFlag::Control)) {
-                    noteapp.newnote();
+                    noteapp.new_note();
                 }
                 if !show_search
                     && ui.input(OSKey::Keyboard(OSKeyCode::KeyG), Some(OSEventFlag::Control))
@@ -299,23 +308,6 @@ fn main() {
             }
         }
     });
-
-    // TODO New: Deadline Oct 1st
-    // - [~] change params() way of setting style (maybe not and just KISS)
-    // - [~] fix current layout
-    // - [ ] rework font atlas handling (proper multi-font + performance)
-    //   - [ ] fix OGL textures
-    // - [ ] have proper prompts (focus, escape, etc.)
-    // - [x] support keybindings
-    // - [ ] support themes (at least light and dark)
-    //   - [x] rename to theme
-    // - [ ] make text editor better
-    //   - [ ] implement text selection, copy, paste, etc.
-    //     - [ ] implement mouse hold handling
-    //   - [ ] change cursor when hover
-    // - [ ] memory improvement (seems to use a lot of memory)
-    // - [ ] implement proper fuzzy search (off-thread)
-    //   - [ ] maybe add API to work off-thread
 }
 
 fn fuzzy_search(filter: &str, data: &str) -> bool {
