@@ -39,12 +39,12 @@ fn main() {
     println!("Starting Mae {}_alpha_0", env!("CARGO_PKG_VERSION"));
 
     // App state
-    let mut current_view = AppView::Login;
+    let mut current_view = AppView::Main;
     let passphrase = Rc::new(RefCell::new(String::new()));
     let mut login_error: Option<String> = None;
 
     // Note app (initialized lazily after login)
-    let mut noteapp: Option<NoteApp> = None;
+    let mut noteapp: Option<NoteApp> = Some(NoteApp::new());
 
     // xarkes: draw UI
     let mut ui = IMUI::new(480, 360);
