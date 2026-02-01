@@ -943,14 +943,21 @@ impl IMUI {
         let mut handled = false;
         self.event.events.retain(|ev| {
             if ev.key == key {
-                if flags.is_some() && ev.flags.is_some() {
-                    if flags.unwrap() as u32 & (ev.flags.unwrap() as u32) > 0 {
+                match (flags, ev.flags) {
+                    // We require modifier, event has modifier - check if they match
+                    (Some(required), Some(actual)) => {
+                        if (required as u32) & (actual as u32) > 0 {
+                            handled = true;
+                            return false;
+                        }
+                    }
+                    // We require modifier, but event has none - don't match
+                    (Some(_), None) => {}
+                    // We don't require modifier - match regardless of event flags
+                    (None, _) => {
                         handled = true;
                         return false;
                     }
-                } else {
-                    handled = true;
-                    return false;
                 }
             }
             true

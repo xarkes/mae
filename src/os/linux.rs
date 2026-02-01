@@ -1,6 +1,6 @@
 extern crate x11;
 
-use super::{OSEvent, OSEventType, OSKey, OSKeyCode, Point};
+use super::{OSEvent, OSEventFlag, OSEventType, OSKey, OSKeyCode, Point};
 use x11::xlib::{XIMPreeditNothing, XIMStatusNothing, XNInputStyle};
 
 pub struct Window {
@@ -167,13 +167,14 @@ impl Window {
                         let ks =
                             x11::xlib::XKeycodeToKeysym(self.display, event.key.keycode as u8, 0)
                                 as u32;
+                        let flags = x11_state_to_flags(event.key.state);
                         ev = OSEvent {
                             ty: OSEventType::Press,
                             key: x11_keysym_to_oskey(ks),
                             pos: Some(Point::new(event.key.x as f32, event.key.y as f32)),
                             chars: first_char,
                             delta: 0.0,
-                            flags: None,
+                            flags,
                         };
                     }
                     x11::xlib::KeyRelease => {
@@ -227,6 +228,29 @@ pub fn timer_value() -> u64 {
         );
     }
     ts.tv_sec * 1_000_000_000 + ts.tv_nsec
+}
+
+/// Convert X11 key state (modifier mask) to OSEventFlag
+fn x11_state_to_flags(state: u32) -> Option<OSEventFlag> {
+    // X11 modifier masks
+    const SHIFT_MASK: u32 = 1 << 0;   // ShiftMask
+    const CONTROL_MASK: u32 = 1 << 2; // ControlMask
+    const MOD1_MASK: u32 = 1 << 3;    // Mod1Mask (Alt)
+
+    let ctrl = (state & CONTROL_MASK) != 0;
+    let alt = (state & MOD1_MASK) != 0;
+    let shift = (state & SHIFT_MASK) != 0;
+
+    match (ctrl, alt, shift) {
+        (true, true, true) => Some(OSEventFlag::ControlAltShift),
+        (true, true, false) => Some(OSEventFlag::ControlAlt),
+        (true, false, true) => Some(OSEventFlag::ControlShift),
+        (true, false, false) => Some(OSEventFlag::Control),
+        (false, true, true) => Some(OSEventFlag::AltShift),
+        (false, true, false) => Some(OSEventFlag::Alt),
+        (false, false, true) => Some(OSEventFlag::Shift),
+        (false, false, false) => None,
+    }
 }
 
 fn x11_keysym_to_oskey(keysym: u32) -> OSKey {
