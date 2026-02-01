@@ -223,6 +223,10 @@ pub struct IMUI {
     event: IMUIEventState,
     text_input_state: Option<IMUITextInputState>,
 
+    // focus state (raddbg-inspired deferred focus)
+    focus_active: Option<String>,      // current frame's active focus key
+    next_focus_active: Option<String>, // staged for next frame
+
     // ui construction helpers
     parent_stack: Vec<UIBoxRef>,
     uiboxes: HashMap<u64, UIBoxRef>,
@@ -257,6 +261,8 @@ impl IMUI {
             },
             event: IMUIEventState::default(),
             text_input_state: None,
+            focus_active: None,
+            next_focus_active: None,
             locale_kind: UILocaleKind::LtrTtb,
             prompt: None,
             root: root.clone(),
@@ -301,6 +307,9 @@ impl IMUI {
             {
                 self.root.borrow_mut().children.clear();
                 self.floating_roots.clear();
+
+                // commit staged focus (raddbg-inspired deferred focus)
+                self.focus_active = self.next_focus_active.take();
             }
 
             // xarkes: build interface
@@ -1049,6 +1058,15 @@ impl IMUI {
         UIBoxRef2::new(line_edit)
     }
     pub fn textarea(&mut self, text_buffer: Rc<RefCell<String>>, id: &str) -> UIBoxRef2 {
+        // check if this textarea should auto-focus (raddbg-inspired deferred focus)
+        let force_focus = self
+            .focus_active
+            .as_ref()
+            .is_some_and(|key| key == id);
+        if force_focus {
+            self.focus_active = None; // consume the focus request
+        }
+
         // xarkes: compute scrollbars
         let max_size_x = {
             let buf = text_buffer.borrow();
@@ -1103,7 +1121,7 @@ impl IMUI {
                 }
 
                 let multiline = true;
-                ui.text_edit_impl(textarea_.clone(), text_buffer.clone(), multiline, false);
+                ui.text_edit_impl(textarea_.clone(), text_buffer.clone(), multiline, force_focus);
 
                 if max_size_y > textarea_.borrow().computed_size.height {
                     ui.scrollbar(textarea_.clone(), max_size_y, Axis::Y);
@@ -1184,7 +1202,7 @@ impl IMUI {
             } else {
                 self.label(text_buffer.borrow().as_str());
             }
-            // cursor
+            // draw cursor
             if let Some(tis) = &self.text_input_state {
                 if tis.focus.borrow().key == textarea.borrow().key {
                     let cx = tis.cursor_x;
@@ -1484,6 +1502,17 @@ impl IMUI {
         uibox.borrow_mut().width = UISize::Fixed(25.);
         uibox.borrow_mut().height = UISize::Fixed(25.);
         uibox
+    }
+
+    pub fn reset_text_input_state(&mut self) {
+        self.text_input_state = None;
+    }
+
+    /// Request focus on a widget by key for the next frame.
+    /// The focus will be committed at the start of the next frame and consumed
+    /// when the matching widget is built.
+    pub fn set_focus_active(&mut self, key: &str) {
+        self.next_focus_active = Some(key.to_string());
     }
 }
 

@@ -29,6 +29,12 @@ enum AppView {
     Main,
 }
 
+fn open_new_note(noteapp: &mut NoteApp, ui: &mut IMUI) {
+    noteapp.new_note();
+    ui.reset_text_input_state();
+    ui.set_focus_active("#textarea"); // focus textarea on next frame
+}
+
 fn main() {
     println!("Starting Mae {}_alpha_0", env!("CARGO_PKG_VERSION"));
 
@@ -56,7 +62,7 @@ fn main() {
     let mut sidebar_width: f32 = 220.0;
     let mut resizing_sidebar = false;
 
-    ui.eventloop(|ui| {
+    ui.eventloop(|mut ui| {
         match current_view {
             AppView::Login => {
                 // Dark background for the whole window with centered content
@@ -125,7 +131,7 @@ fn main() {
             }
 
             AppView::Main => {
-                let noteapp = noteapp.as_mut().unwrap();
+                let mut noteapp = noteapp.as_mut().unwrap();
                 let sidebar_bg = Color::new("#1e1e2e");
                 let sidebar_header_bg = Color::new("#181825");
                 let editor_bg = Color::new("#11111b");
@@ -150,7 +156,7 @@ fn main() {
                                 .borrow()
                                 .clicked()
                             {
-                                noteapp.new_note();
+                                open_new_note(&mut noteapp, ui);
                             }
                             if ui
                                 .button_icon(icon!(0xe8b6), Some("Search (Ctrl+G)"))
@@ -297,7 +303,7 @@ fn main() {
                     noteapp.save();
                 }
                 if ui.input(OSKey::Keyboard(OSKeyCode::KeyN), Some(OSEventFlag::Control)) {
-                    noteapp.new_note();
+                    open_new_note(&mut noteapp, &mut ui);
                 }
                 if !show_search
                     && ui.input(OSKey::Keyboard(OSKeyCode::KeyG), Some(OSEventFlag::Control))
