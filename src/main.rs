@@ -167,6 +167,7 @@ fn main() {
                                 search = Rc::new(RefCell::new(String::from("")));
                             }
                         })
+                        .height(UISize::Fit)
                         .padding_all(8.0)
                         .gap(4.0)
                         .background(sidebar_header_bg);
@@ -205,6 +206,7 @@ fn main() {
                         }
                     })
                     .width(UISize::Fixed(sidebar_width))
+                    .align_main(MainAxisAlign::Start)
                     .background(sidebar_bg);
 
                     // Resize handle (using button for built-in click handling)
