@@ -189,10 +189,10 @@ impl IMUITextInputState {
     ) -> bool {
         let handled;
         let get_str_insert_idx = |idx| {
-            if idx != self.buffer.borrow().len() {
+            if idx < self.buffer.borrow().len() {
                 return self.buffer.borrow().char_indices().nth(idx).unwrap().0;
             }
-            return self.idx;
+            return std::cmp::max(idx, self.buffer.borrow().len());
         };
         match key {
             OSKey::Keyboard(keycode) => {
@@ -291,8 +291,14 @@ impl IMUITextInputState {
                         if let Some(data) = data {
                             // TODO(xarkes): is it a good predicate to know what keys should be accepted?
                             if !data.is_ascii_control() {
+                                // if we insert beyond the buffer, it means we want to insert on a newline, so insert it
                                 let byte_idx = get_str_insert_idx(self.idx);
-                                self.buffer.borrow_mut().insert(byte_idx, *data);
+                                if self.idx > self.buffer.borrow().len() {
+                                    self.buffer.borrow_mut().push('\n');
+                                    self.buffer.borrow_mut().push(*data);
+                                } else {
+                                    self.buffer.borrow_mut().insert(byte_idx, *data);
+                                }
                                 bufchanged = true;
                                 self.update_cursor_loc(self.idx + 1);
                             }
