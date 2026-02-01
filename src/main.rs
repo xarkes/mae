@@ -195,8 +195,30 @@ fn main() {
                     .background(sidebar_bg);
 
                     // Main editor area
-                    ui.textarea(noteapp.buffer.clone(), "#textarea")
-                        .background(editor_bg);
+                    ui.column(|ui| {
+                        // Editor header with current note info
+                        let cur_id = noteapp.current_note_id();
+                        let current_note = noteapp.notes().into_iter().find(|n| n.id == cur_id);
+                        let note_title = current_note
+                            .map(|n| if n.name.len() > 50 { format!("{}...", &n.name[..50]) } else { n.name })
+                            .unwrap_or_else(|| "Untitled".to_string());
+                        let header = ui.label(note_title.as_str());
+                        UIBoxRef2::new(header)
+                            .text_color(Color::new("#cdd6f4"))
+                            .padding_all(12.0);
+
+                        // Separator line
+                        let separator = ui.row(|_| {});
+                        separator
+                            .height(UISize::Fixed(1.0))
+                            .background(Color::new("#313244"));
+
+                        // Text editor with padding
+                        ui.textarea(noteapp.buffer.clone(), "#textarea")
+                            .padding_all(16.0)
+                            .background(Color::new("#1e1e2e"));
+                    })
+                    .background(editor_bg);
                 });
 
                 // prompts
