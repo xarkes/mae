@@ -199,6 +199,10 @@ impl NoteApp {
         Vec::from_iter(self.notes.values().cloned())
     }
 
+    pub fn current_note_id(&self) -> i64 {
+        self.curnote
+    }
+
     pub fn import_from_markdown(&self, folder: &std::path::Path) -> Result<(), Error> {
         if !std::fs::exists(folder).is_ok_and(|exists| exists == true) {
             return Err(Error::new(ErrorKind::NotFound, "Markdown folder not found"));

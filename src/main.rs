@@ -34,7 +34,7 @@ fn main() {
 
     // App state
     let mut current_view = AppView::Login;
-    let mut passphrase = Rc::new(RefCell::new(String::new()));
+    let passphrase = Rc::new(RefCell::new(String::new()));
     let mut login_error: Option<String> = None;
 
     // Note app (initialized lazily after login)
@@ -122,52 +122,81 @@ fn main() {
 
             AppView::Main => {
                 let noteapp = noteapp.as_mut().unwrap();
+                let sidebar_bg = Color::new("#1e1e2e");
+                let sidebar_header_bg = Color::new("#181825");
+                let editor_bg = Color::new("#11111b");
+                let note_hover_bg = Color::new("#313244");
+                let note_selected_bg = Color::new("#45475a");
+                let text_dim = Color::new("#6c7086");
 
                 ui.row(|ui| {
+                    // Left sidebar
                     ui.column(|ui| {
-                        // TODO: use shortcut_save to define the shortcut text
-                        if ui
-                            .button_icon(icon!(0xe161), Some("Save the database to fileystem."))
-                            .borrow()
-                            .clicked()
-                        {
-                            noteapp.save();
-                        }
-                        if ui
-                            .button_icon(icon!(0xefd3), Some("Create a new note"))
-                            .borrow()
-                            .clicked()
-                        {
-                            noteapp.newnote();
-                        }
-                        if ui
-                            .button_icon(icon!(0xe8b6), Some("Search notes."))
-                            .borrow()
-                            .clicked()
-                        {
-                            show_search = true;
-                            search = Rc::new(RefCell::new(String::from("")));
-                        }
-                        if ui
-                            .button_icon(
-                                icon!(0xe9fc),
-                                Some("Import previous notes to the application."),
-                            )
-                            .borrow()
-                            .clicked()
-                        {
-                            noteapp
-                                .import_from_markdown(std::path::Path::new(
-                                    "/Users/user/Downloads/AnyTypeDB/Anytype.20250720.222959.98",
-                                ))
-                                .unwrap();
+                        // Toolbar row
+                        ui.row(|ui| {
+                            if ui
+                                .button_icon(icon!(0xe161), Some("Save (Ctrl+S)"))
+                                .borrow()
+                                .clicked()
+                            {
+                                noteapp.save();
+                            }
+                            if ui
+                                .button_icon(icon!(0xefd3), Some("New note (Ctrl+N)"))
+                                .borrow()
+                                .clicked()
+                            {
+                                noteapp.newnote();
+                            }
+                            if ui
+                                .button_icon(icon!(0xe8b6), Some("Search (Ctrl+G)"))
+                                .borrow()
+                                .clicked()
+                            {
+                                show_search = true;
+                                search = Rc::new(RefCell::new(String::from("")));
+                            }
+                        })
+                        .padding_all(8.0)
+                        .gap(4.0)
+                        .background(sidebar_header_bg);
+
+                        // Notes section header
+                        let header = ui.label("Notes");
+                        UIBoxRef2::new(header)
+                            .text_color(text_dim)
+                            .padding_all(12.0);
+
+                        // Notes list
+                        let notes = noteapp.notes();
+                        let current_id = noteapp.current_note_id();
+                        for note in &notes {
+                            let is_selected = note.id == current_id;
+                            let display_name = if note.name.len() > 24 {
+                                format!("{}...", &note.name[..24])
+                            } else {
+                                note.name.clone()
+                            };
+                            let button = ui.button(
+                                format!("{}##note_{}", display_name, note.id).as_str(),
+                                None,
+                            );
+                            let button_ref = UIBoxRef2::new(button.clone());
+                            button_ref
+                                .width(UISize::Grow)
+                                .padding_all(10.0)
+                                .background(if is_selected { note_selected_bg } else { note_hover_bg });
+                            if button.borrow().clicked() {
+                                noteapp.open(note.id);
+                            }
                         }
                     })
-                    .width(UISize::Fit)
-                    .background(ui.theme.color_main);
+                    .width(UISize::Fixed(220.0))
+                    .background(sidebar_bg);
 
+                    // Main editor area
                     ui.textarea(noteapp.buffer.clone(), "#textarea")
-                        .background(ui.theme.color_bg_popup);
+                        .background(editor_bg);
                 });
 
                 // prompts
