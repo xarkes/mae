@@ -184,6 +184,7 @@ impl Color {
 pub enum UIBoxFlag {
     // event related
     Clickable = 1u64,
+    TextInput = 2u64, // text input area (for cursor shape)
     ScrollableX = 8u64,
     ScrollableY = 16u64,
 

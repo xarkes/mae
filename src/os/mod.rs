@@ -178,6 +178,17 @@ pub struct OSEvent {
     pub flags: Option<OSEventFlag>,
 }
 
+/// Cursor types for the mouse pointer
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum OSCursor {
+    #[default]
+    Arrow,      // Default pointer
+    IBeam,      // Text cursor
+    Hand,       // Clickable/pointer
+    ResizeH,    // Horizontal resize
+    ResizeV,    // Vertical resize
+}
+
 pub type Window = os_impl::Window;
 
 pub fn timer_init() -> f64 {

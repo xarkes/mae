@@ -14,7 +14,7 @@ use android_activity::AndroidApp;
 
 use crate::{
     draw::{self, Drawer},
-    os::{self, OSEvent, OSEventFlag, OSEventType, OSKey, OSKeyCode},
+    os::{self, OSCursor, OSEvent, OSEventFlag, OSEventType, OSKey, OSKeyCode},
     render::{self, RectCoords, V4f32, font_cache::FontCache},
 };
 
@@ -222,6 +222,7 @@ pub struct IMUI {
     size: Size,
     event: IMUIEventState,
     text_input_state: Option<IMUITextInputState>,
+    cursor: OSCursor, // cursor to show this frame
 
     // focus state (raddbg-inspired deferred focus)
     focus_active: Option<String>, // current frame's active focus key
@@ -261,6 +262,7 @@ impl IMUI {
             },
             event: IMUIEventState::default(),
             text_input_state: None,
+            cursor: OSCursor::Arrow,
             focus_active: None,
             next_focus_active: None,
             locale_kind: UILocaleKind::LtrTtb,
@@ -310,6 +312,9 @@ impl IMUI {
 
                 // commit staged focus (raddbg-inspired deferred focus)
                 self.focus_active = self.next_focus_active.take();
+
+                // reset cursor to default for this frame
+                self.cursor = OSCursor::Arrow;
             }
 
             // xarkes: build interface
@@ -354,6 +359,9 @@ impl IMUI {
                     self.dirty = false;
                     fc = 0;
                 }
+
+                // apply cursor
+                self.drawer.renderer.win.set_cursor(self.cursor);
             }
         }
     }
@@ -1090,7 +1098,7 @@ impl IMUI {
             ui.row(|ui| {
                 let textarea_ = ui.add_box_from_string(
                     Some(id),
-                    UIBoxFlag::Clickable as u64 | UIBoxFlag::Scrollable as u64,
+                    UIBoxFlag::Clickable as u64 | UIBoxFlag::Scrollable as u64 | UIBoxFlag::TextInput as u64,
                 );
                 textarea_.borrow_mut().width = UISize::Grow;
                 textarea_.borrow_mut().height = UISize::Grow;
@@ -1465,6 +1473,14 @@ impl IMUI {
 
         if point_in_rect(&uibox.borrow().bounds(), self.event.mouse) {
             uibox.borrow_mut().events |= UIBoxEvent::MouseOver as u64;
+
+            // Update cursor based on element type
+            let flags = uibox.borrow().flags;
+            if (flags & UIBoxFlag::TextInput as u64) != 0 {
+                self.cursor = OSCursor::IBeam;
+            } else if (flags & UIBoxFlag::Clickable as u64) != 0 {
+                self.cursor = OSCursor::Hand;
+            }
         }
 
         if self.prompt.is_some() && should_clear_prompt {

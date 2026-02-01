@@ -1,6 +1,6 @@
 extern crate x11;
 
-use super::{OSEvent, OSEventFlag, OSEventType, OSKey, OSKeyCode, Point};
+use super::{OSCursor, OSEvent, OSEventFlag, OSEventType, OSKey, OSKeyCode, Point};
 use x11::xlib::{XIMPreeditNothing, XIMStatusNothing, XNInputStyle};
 
 pub struct Window {
@@ -9,6 +9,7 @@ pub struct Window {
     pub win: u64,
     xic: x11::xlib::XIC,
     pub dpi: f32,
+    current_cursor: OSCursor,
 }
 
 fn create_window(width: u32, height: u32) -> (*mut x11::xlib::Display, u64) {
@@ -81,6 +82,7 @@ impl Window {
                 win,
                 xic,
                 dpi: 1.0, // TODO(xarkes): Do that better
+                current_cursor: OSCursor::Arrow,
             }
         }
     }
@@ -94,6 +96,29 @@ impl Window {
         // TODO -> compute dpi from screen
         // (self.size.0 * self.dpi, self.size.1 * self.dpi)
         (self.size.0, self.size.1)
+    }
+
+    /// Set the mouse cursor shape
+    pub fn set_cursor(&mut self, cursor: OSCursor) {
+        if self.current_cursor == cursor {
+            return;
+        }
+        self.current_cursor = cursor;
+
+        // X11 cursor font glyph indices
+        let cursor_shape = match cursor {
+            OSCursor::Arrow => 68,    // XC_left_ptr
+            OSCursor::IBeam => 152,   // XC_xterm
+            OSCursor::Hand => 60,     // XC_hand2
+            OSCursor::ResizeH => 108, // XC_sb_h_double_arrow
+            OSCursor::ResizeV => 116, // XC_sb_v_double_arrow
+        };
+
+        unsafe {
+            let cursor_font = x11::xlib::XCreateFontCursor(self.display, cursor_shape);
+            x11::xlib::XDefineCursor(self.display, self.win, cursor_font);
+            x11::xlib::XFreeCursor(self.display, cursor_font);
+        }
     }
 
     pub fn get_events(&mut self) -> Vec<OSEvent> {
