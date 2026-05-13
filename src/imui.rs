@@ -615,7 +615,6 @@ impl IMUI {
 
     pub fn eventloop(&mut self, mut build_ui_func: impl FnMut(&mut IMUI)) {
         loop {
-            let frame_start = self.now_seconds();
             self.pull_consume_events();
             let had_events = !self.events.is_empty();
             let mut resized = false;
@@ -641,14 +640,6 @@ impl IMUI {
             build_ui_func(self);
             self.end_frame();
             self.update_fps();
-
-            if self.render_continuously {
-                let elapsed = self.now_seconds() - frame_start;
-                let target = 1.0 / 60.0;
-                if elapsed < target {
-                    std::thread::sleep(core::time::Duration::from_secs_f64(target - elapsed));
-                }
-            }
         }
     }
 

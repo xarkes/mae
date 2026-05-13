@@ -1,12 +1,13 @@
 use mae::{
-    imui::{
-        uibox::Color, CrossAxisAlign, IMUI, MainAxisAlign, UISize, UIBoxHandle, UiSignal,
-    },
+    imui::{CrossAxisAlign, IMUI, MainAxisAlign, UIBoxHandle, UISize, UiSignal, uibox::Color},
     os::{OSEventFlag, OSKey, OSKeyCode},
 };
 
 fn main() {
-    println!("Starting Mae GUI framework demo {}", env!("CARGO_PKG_VERSION"));
+    println!(
+        "Starting Mae GUI framework demo {}",
+        env!("CARGO_PKG_VERSION")
+    );
 
     let mut ui = IMUI::new(920, 620);
     let mut input = String::from("Edit me");
@@ -110,10 +111,10 @@ fn main() {
 }
 
 fn toggle_switch(ui: &mut IMUI, enabled: bool) -> UIBoxHandle {
-    let label = if enabled { "60 FPS" } else { "Dirty" };
-    let button = ui.button(&format!("{label}##render_mode_toggle"), Some("Toggle frame pacing"));
-    ui.width(button, UISize::Pixels(86.0));
-    ui.height(button, UISize::Pixels(32.0));
+    let button = ui.button(
+        &format!("Lazy rendering##render_mode_toggle"),
+        Some("Toggle frame pacing"),
+    );
     ui.background(
         button,
         if enabled {
@@ -178,7 +179,10 @@ fn widget_page(ui: &mut IMUI, input: &mut String, text: &mut String, counter: us
     let body = ui.column(|ui| {
         section_title(ui, "Signals");
         let signal_row = ui.row(|ui| {
-            let button = ui.button("Click target", Some("Reports press/hover/click signal state"));
+            let button = ui.button(
+                "Click target",
+                Some("Reports press/hover/click signal state"),
+            );
             ui.width(button, UISize::Pixels(160.0));
             ui.height(button, UISize::Pixels(36.0));
             let report = signal_report(button);

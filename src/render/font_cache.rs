@@ -369,8 +369,7 @@ impl FontCache {
 
     /// Rasterize a glyph using FreeType
     fn rasterize(&self, glyph: char, size: f32) -> Option<(RasterMetrics, Vec<u8>)> {
-        // Set the pixel size (convert pt to pixels, assuming 96 DPI)
-        let pixel_size = (size * 96.0 / 72.0).round() as u32;
+        let pixel_size = size.round().max(1.0) as u32;
         self.face
             .set_pixel_sizes(0, pixel_size)
             .expect("Failed to set pixel size");
@@ -549,8 +548,7 @@ impl FontCache {
     }
 
     pub fn line_height(&self, font_size: f32) -> f32 {
-        // Set pixel size to get accurate metrics
-        let pixel_size = (font_size * 96.0 / 72.0).round() as u32;
+        let pixel_size = font_size.round().max(1.0) as u32;
         self.face
             .set_pixel_sizes(0, pixel_size)
             .expect("Failed to set pixel size");
