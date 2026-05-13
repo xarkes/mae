@@ -623,6 +623,7 @@ pub struct IMUI {
     free_boxes: Vec<usize>,
     frame_boxes: Vec<usize>,
     root: usize,
+    overlay_root: usize,
     parent_stack: Vec<usize>,
     build_index: u64,
     render_continuously: bool,
@@ -688,6 +689,7 @@ impl IMUI {
             free_boxes: Vec::new(),
             frame_boxes: Vec::new(),
             root: 0,
+            overlay_root: 0,
             parent_stack: Vec::new(),
             build_index: 0,
             render_continuously: true,
@@ -756,6 +758,19 @@ impl IMUI {
         self.boxes[root.idx].rect =
             RectCoords::from_size(0.0, 0.0, self.size.width, self.size.height);
         self.boxes[root.idx].child_layout_axis = Axis::X;
+
+        let overlay_root = self.alloc_box(Some("###overlay_root"), UIBoxFlags::NONE);
+        self.overlay_root = overlay_root.idx;
+        self.boxes[overlay_root.idx].flags |= UIBoxFlags::FLOATING_X | UIBoxFlags::FLOATING_Y;
+        self.boxes[overlay_root.idx].fixed_position = Point::new(0.0, 0.0);
+        self.boxes[overlay_root.idx].pref_size = [
+            UISize::Pixels(self.size.width),
+            UISize::Pixels(self.size.height),
+        ];
+        self.boxes[overlay_root.idx].computed_size = self.size;
+        self.boxes[overlay_root.idx].rect =
+            RectCoords::from_size(0.0, 0.0, self.size.width, self.size.height);
+        self.boxes[overlay_root.idx].child_layout_axis = Axis::Y;
     }
 
     fn end_frame(&mut self) {
@@ -1025,6 +1040,7 @@ impl IMUI {
         id: Option<&str>,
         children: impl FnOnce(&mut IMUI),
     ) -> UIBoxHandle {
+        self.parent_stack.push(self.overlay_root);
         let handle = self.alloc_box(id, UIBoxFlags::DRAW_BACKGROUND | UIBoxFlags::DRAW_BORDER);
         self.boxes[handle.idx].fixed_position = pos;
         self.boxes[handle.idx].flags |= UIBoxFlags::FLOATING_X | UIBoxFlags::FLOATING_Y;
@@ -1032,6 +1048,7 @@ impl IMUI {
         self.boxes[handle.idx].pref_size = [UISize::ChildrenSum, UISize::ChildrenSum];
         self.parent_stack.push(handle.idx);
         children(self);
+        self.parent_stack.pop();
         self.parent_stack.pop();
         handle
     }
@@ -1384,10 +1401,16 @@ impl IMUI {
             UISize::TextContent(padding) => {
                 let text = self.boxes[idx].display_string.clone().unwrap_or_default();
                 let font_size = self.boxes[idx].style.font_size;
+                let margin = self.boxes[idx].style.margin;
                 let (w, h) = self.text_size(font_size, &text);
                 match axis {
-                    Axis::X => w + padding + self.boxes[idx].padding.horizontal(),
-                    Axis::Y => h.max(font_size) + padding + self.boxes[idx].padding.vertical(),
+                    Axis::X => w + padding + self.boxes[idx].padding.horizontal() + margin * 2.0,
+                    Axis::Y => {
+                        h.max(font_size)
+                            + padding
+                            + self.boxes[idx].padding.vertical()
+                            + margin * 2.0
+                    }
                 }
             }
             UISize::ParentPct(_) | UISize::ChildrenSum | UISize::Fill => {
@@ -1409,13 +1432,20 @@ impl IMUI {
         let mut size: f32 = 0.0;
         if axis == child_axis {
             for child in &self.boxes[idx].children {
+                if self.box_is_out_of_flow(*child) {
+                    continue;
+                }
                 size += self.boxes[*child].computed_size.axis(axis);
             }
-            if self.boxes[idx].children.len() > 1 {
-                size += self.boxes[idx].child_gap * (self.boxes[idx].children.len() - 1) as f32;
+            let child_count = self.in_flow_child_count(idx);
+            if child_count > 1 {
+                size += self.boxes[idx].child_gap * (child_count - 1) as f32;
             }
         } else {
             for child in &self.boxes[idx].children {
+                if self.box_is_out_of_flow(*child) {
+                    continue;
+                }
                 size = size.max(self.boxes[*child].computed_size.axis(axis));
             }
         }
@@ -1480,7 +1510,15 @@ impl IMUI {
     }
 
     fn position_on_main_axis(&self, idx: usize, parent: usize, axis: Axis) -> f32 {
-        let children = &self.boxes[parent].children;
+        if self.box_is_out_of_flow(idx) {
+            return self.boxes[idx].fixed_position.axis(axis);
+        }
+        let children: Vec<usize> = self.boxes[parent]
+            .children
+            .iter()
+            .copied()
+            .filter(|child| !self.box_is_out_of_flow(*child))
+            .collect();
         let child_pos = children.iter().position(|child| *child == idx).unwrap_or(0);
         let padding_start = self.boxes[parent].padding.min_axis(axis);
         let padding_end = self.boxes[parent].padding.max_axis(axis);
@@ -1537,18 +1575,24 @@ impl IMUI {
             .children
             .iter()
             .copied()
-            .filter(|idx| self.boxes[*idx].pref_size[axis_idx(axis)] == UISize::Fill)
+            .filter(|idx| {
+                !self.box_is_out_of_flow(*idx)
+                    && self.boxes[*idx].pref_size[axis_idx(axis)] == UISize::Fill
+            })
             .collect();
         if fill_children.is_empty() {
             return;
         }
         let padding = self.boxes[parent].padding.axis(axis);
-        let gaps = self.boxes[parent].child_gap
-            * self.boxes[parent].children.len().saturating_sub(1) as f32;
+        let child_count = self.in_flow_child_count(parent);
+        let gaps = self.boxes[parent].child_gap * child_count.saturating_sub(1) as f32;
         let fixed: f32 = self.boxes[parent]
             .children
             .iter()
-            .filter(|idx| self.boxes[**idx].pref_size[axis_idx(axis)] != UISize::Fill)
+            .filter(|idx| {
+                !self.box_is_out_of_flow(**idx)
+                    && self.boxes[**idx].pref_size[axis_idx(axis)] != UISize::Fill
+            })
             .map(|idx| self.boxes[*idx].computed_size.axis(axis))
             .sum();
         let available =
@@ -1560,7 +1604,12 @@ impl IMUI {
     }
 
     fn total_children_size(&self, parent: usize, axis: Axis) -> f32 {
-        let children = &self.boxes[parent].children;
+        let children: Vec<usize> = self.boxes[parent]
+            .children
+            .iter()
+            .copied()
+            .filter(|child| !self.box_is_out_of_flow(*child))
+            .collect();
         let mut total: f32 = children
             .iter()
             .map(|child| self.boxes[*child].computed_size.axis(axis))
@@ -1569,6 +1618,19 @@ impl IMUI {
             total += self.boxes[parent].child_gap * (children.len() - 1) as f32;
         }
         total
+    }
+
+    fn box_is_out_of_flow(&self, idx: usize) -> bool {
+        self.boxes[idx].flags.contains(UIBoxFlags::FLOATING_X)
+            || self.boxes[idx].flags.contains(UIBoxFlags::FLOATING_Y)
+    }
+
+    fn in_flow_child_count(&self, parent: usize) -> usize {
+        self.boxes[parent]
+            .children
+            .iter()
+            .filter(|child| !self.box_is_out_of_flow(**child))
+            .count()
     }
 
     fn set_rect_axis(&mut self, idx: usize, axis: Axis, min: f32, size: f32) {
@@ -1588,10 +1650,18 @@ impl IMUI {
         if self.drawer.is_none() {
             return;
         }
-        self.draw_ui_root(self.root);
+        self.draw_ui_root_skipping(self.root, Some(self.overlay_root));
+        self.draw_ui_root(self.overlay_root);
     }
 
     fn draw_ui_root(&mut self, idx: usize) {
+        self.draw_ui_root_skipping(idx, None);
+    }
+
+    fn draw_ui_root_skipping(&mut self, idx: usize, skip_idx: Option<usize>) {
+        if skip_idx == Some(idx) {
+            return;
+        }
         if !self.boxes[idx].visible {
             return;
         }
@@ -1624,8 +1694,8 @@ impl IMUI {
                     style.font_size,
                     &text,
                     text.len(),
-                    rect.x1 - padding.right,
-                    rect.y1 - padding.bottom,
+                    rect.x1 - padding.right - style.margin,
+                    rect.y1 - padding.bottom - style.margin,
                     style.text_color,
                     false,
                     style.font_icon,
@@ -1634,7 +1704,7 @@ impl IMUI {
         }
         let children = self.boxes[idx].children.clone();
         for child in children {
-            self.draw_ui_root(child);
+            self.draw_ui_root_skipping(child, skip_idx);
         }
     }
 
@@ -1677,7 +1747,7 @@ impl IMUI {
         self.hot_key = None;
         self.cursor = OSCursor::Arrow;
 
-        let frame_boxes = self.frame_boxes.clone();
+        let frame_boxes = self.frame_boxes_in_hit_test_order();
         let mut hover_candidate = None;
 
         for &idx in &frame_boxes {
@@ -1707,6 +1777,35 @@ impl IMUI {
                 OSCursor::Hand
             };
         }
+    }
+
+    fn frame_boxes_in_hit_test_order(&self) -> Vec<usize> {
+        let mut normal = Vec::new();
+        let mut overlay = Vec::new();
+        for &idx in &self.frame_boxes {
+            if self.is_overlay_box(idx) {
+                overlay.push(idx);
+            } else {
+                normal.push(idx);
+            }
+        }
+        normal.extend(overlay);
+        normal
+    }
+
+    fn is_overlay_box(&self, idx: usize) -> bool {
+        idx == self.overlay_root || self.box_has_ancestor(idx, self.overlay_root)
+    }
+
+    fn box_has_ancestor(&self, idx: usize, ancestor: usize) -> bool {
+        let mut parent = self.boxes[idx].parent;
+        while let Some(parent_idx) = parent {
+            if parent_idx == ancestor {
+                return true;
+            }
+            parent = self.boxes[parent_idx].parent;
+        }
+        false
     }
 
     fn release_box(&mut self, idx: usize) {
@@ -1883,6 +1982,48 @@ mod tests {
     }
 
     #[test]
+    fn text_content_size_reserves_draw_margin() {
+        let mut ui = IMUI::new_for_test(400.0, 200.0);
+        ui.begin_frame();
+        let label = ui.label("abc");
+        ui.layout_root(ui.root);
+
+        let (text_width, text_height) = ui.text_size(ui.boxes[label.idx()].style.font_size, "abc");
+        let margin = ui.boxes[label.idx()].style.margin;
+
+        assert!(ui.boxes[label.idx()].computed_size.width >= text_width + margin * 2.0);
+        assert!(ui.boxes[label.idx()].computed_size.height >= text_height + margin * 2.0);
+    }
+
+    #[test]
+    fn floating_boxes_do_not_affect_parent_flow_size_or_gaps() {
+        let mut ui = IMUI::new_for_test(400.0, 200.0);
+
+        ui.begin_frame();
+        let row = ui.row(|ui| {
+            let a = ui.label("a");
+            ui.width(a, UISize::Pixels(40.0));
+            ui.height(a, UISize::Pixels(20.0));
+
+            let floating = ui.floating_pane_at(Point::new(100.0, 100.0), Some("###float"), |ui| {
+                let child = ui.label("floating");
+                ui.width(child, UISize::Pixels(80.0));
+                ui.height(child, UISize::Pixels(20.0));
+            });
+            ui.width(floating, UISize::Pixels(80.0));
+            ui.height(floating, UISize::Pixels(20.0));
+
+            let b = ui.label("b");
+            ui.width(b, UISize::Pixels(50.0));
+            ui.height(b, UISize::Pixels(20.0));
+        });
+        ui.gap(row, 10.0);
+        ui.layout_root(ui.root);
+
+        assert_eq!(ui.boxes[row.idx()].computed_size.width, 100.0);
+    }
+
+    #[test]
     fn keyed_boxes_are_reused_across_consecutive_frames() {
         let mut ui = IMUI::new_for_test(400.0, 200.0);
 
@@ -2001,6 +2142,33 @@ mod tests {
         ui.padding_all(overlay, 0.0);
         ui.gap(overlay, 0.0);
 
+        ui.end_frame();
+
+        let overlay_button = overlay_button.unwrap();
+        assert!(ui.boxes[base.idx()].signal.mouse_over());
+        assert!(!ui.boxes[base.idx()].signal.hovering());
+        assert!(ui.boxes[overlay_button.idx()].signal.hovering());
+    }
+
+    #[test]
+    fn overlay_box_wins_hovering_even_when_declared_before_normal_box() {
+        let mut ui = IMUI::new_for_test(400.0, 200.0);
+        ui.mouse = Some(Point::new(20.0, 20.0));
+
+        ui.begin_frame();
+        let mut overlay_button = None;
+        let overlay = ui.floating_pane_at(Point::new(0.0, 0.0), Some("###overlay"), |ui| {
+            let button = ui.button("Overlay###overlay_button", None);
+            ui.width(button, UISize::Pixels(120.0));
+            ui.height(button, UISize::Pixels(40.0));
+            overlay_button = Some(button);
+        });
+        ui.padding_all(overlay, 0.0);
+        ui.gap(overlay, 0.0);
+
+        let base = ui.button("Base###base", None);
+        ui.width(base, UISize::Pixels(120.0));
+        ui.height(base, UISize::Pixels(40.0));
         ui.end_frame();
 
         let overlay_button = overlay_button.unwrap();

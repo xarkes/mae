@@ -43,12 +43,6 @@ fn main() {
                     nav_button(ui, "Render", 2, &mut selected_tab);
                 });
                 ui.gap(nav, 6.0);
-
-                let toggle = ui.button("Toggle panel", Some("Ctrl+T"));
-                ui.width(toggle, UISize::ParentPct(1.0));
-                if toggle.clicked() {
-                    show_panel = !show_panel;
-                }
             });
             ui.width(sidebar, UISize::Pixels(210.0));
             ui.height(sidebar, UISize::ParentPct(1.0));
@@ -149,7 +143,7 @@ fn main() {
                 ui.align(header, MainAxisAlign::Start, CrossAxisAlign::Center);
 
                 match selected_tab {
-                    0 => layout_page(ui, show_panel),
+                    0 => layout_page(ui, &mut show_panel),
                     1 => widget_page(ui, &mut input, &mut text, &mut counter),
                     _ => render_page(ui),
                 }
@@ -197,36 +191,61 @@ fn nav_button(ui: &mut IMUI, label: &str, id: usize, selected_tab: &mut usize) {
     }
 }
 
-fn layout_page(ui: &mut IMUI, show_panel: bool) {
-    let body = ui.row(|ui| {
-        let left = ui.column(|ui| {
-            section_title(ui, "Sizing");
-            metric_row(ui, "Pixels", "Fixed sizes");
-            metric_row(ui, "ParentPct", "Relative to parent");
-            metric_row(ui, "ChildrenSum", "Content driven");
-            metric_row(ui, "Fill", "Remaining space");
-        });
-        ui.width(left, UISize::Fill);
-        ui.height(left, UISize::ParentPct(1.0));
-        ui.padding_all(left, 14.0);
-        ui.gap(left, 8.0);
-        ui.background(left, Color::new("#242a32"));
+fn layout_page(ui: &mut IMUI, show_panel: &mut bool) {
+    let page = ui.column(|ui| {
+        let controls = ui.row(|ui| {
+            let toggle = ui.button("Toggle panel", Some("Ctrl+T"));
+            ui.width(toggle, UISize::Pixels(140.0));
+            ui.height(toggle, UISize::Pixels(32.0));
+            if toggle.clicked() {
+                *show_panel = !*show_panel;
+            }
 
-        if show_panel {
-            let right = ui.column(|ui| {
-                section_title(ui, "Floating-friendly");
-                ui.label("This panel is a normal container in the demo, but it uses the same fixed-position support as floating panes and tooltips.");
+            let state = ui.label(if *show_panel {
+                "Panel visible"
+            } else {
+                "Panel hidden"
             });
-            ui.width(right, UISize::Pixels(280.0));
-            ui.height(right, UISize::ParentPct(1.0));
-            ui.padding_all(right, 14.0);
-            ui.gap(right, 8.0);
-            ui.background(right, Color::new("#1d3434"));
-        }
+            ui.height(state, UISize::Pixels(28.0));
+            ui.text_color(state, Color::new("#9aa4af"));
+        });
+        ui.height(controls, UISize::Pixels(36.0));
+        ui.gap(controls, 10.0);
+        ui.align(controls, MainAxisAlign::Start, CrossAxisAlign::Center);
+
+        let body = ui.row(|ui| {
+            let left = ui.column(|ui| {
+                section_title(ui, "Sizing");
+                metric_row(ui, "Pixels", "Fixed sizes");
+                metric_row(ui, "ParentPct", "Relative to parent");
+                metric_row(ui, "ChildrenSum", "Content driven");
+                metric_row(ui, "Fill", "Remaining space");
+            });
+            ui.width(left, UISize::Fill);
+            ui.height(left, UISize::ParentPct(1.0));
+            ui.padding_all(left, 14.0);
+            ui.gap(left, 8.0);
+            ui.background(left, Color::new("#242a32"));
+
+            if *show_panel {
+                let right = ui.column(|ui| {
+                    section_title(ui, "Floating-friendly");
+                    ui.label("This panel is a normal container in the demo, but it uses the same fixed-position support as floating panes and tooltips.");
+                });
+                ui.width(right, UISize::Pixels(280.0));
+                ui.height(right, UISize::ParentPct(1.0));
+                ui.padding_all(right, 14.0);
+                ui.gap(right, 8.0);
+                ui.background(right, Color::new("#1d3434"));
+            }
+        });
+        ui.width(body, UISize::ParentPct(1.0));
+        ui.height(body, UISize::Fill);
+        ui.gap(body, 12.0);
     });
-    ui.width(body, UISize::ParentPct(1.0));
-    ui.height(body, UISize::Fill);
-    ui.gap(body, 12.0);
+    ui.width(page, UISize::ParentPct(1.0));
+    ui.height(page, UISize::Fill);
+    ui.gap(page, 12.0);
 }
 
 fn widget_page(ui: &mut IMUI, input: &mut String, text: &mut String, counter: &mut usize) {
