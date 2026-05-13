@@ -67,7 +67,7 @@ fn main() {
                         "fps --".to_string()
                     };
                     let fps = ui.label(&fps_text);
-                    ui.width(fps, UISize::Pixels(72.0));
+                    ui.width(fps, UISize::Pixels(64.0));
                     ui.height(fps, UISize::Pixels(30.0));
                     ui.text_color(fps, Color::new("#9aa4af"));
 
@@ -94,6 +94,7 @@ fn main() {
                         &format!("Renderer: {}##renderer_dropdown", current_backend.label()),
                         Some("Select the active renderer"),
                     );
+                    ui.width(renderer_button, UISize::Pixels(150.0));
                     ui.height(renderer_button, UISize::Pixels(32.0));
                     if renderer_button.clicked() {
                         renderer_menu_open = !renderer_menu_open;
@@ -101,8 +102,12 @@ fn main() {
 
                     if renderer_menu_open {
                         let trigger_bounds = ui.bounds(renderer_button);
+                        let menu_width = 180.0;
                         let menu = ui.floating_pane_at(
-                            mae::imui::Point::new(trigger_bounds.x0, trigger_bounds.y1 + 6.0),
+                            mae::imui::Point::new(
+                                trigger_bounds.x1 - menu_width,
+                                trigger_bounds.y1 + 6.0,
+                            ),
                             Some("###renderer_menu"),
                             |ui| {
                                 for backend in Backend::available() {
@@ -115,7 +120,7 @@ fn main() {
                                         ),
                                         None,
                                     );
-                                    ui.width(option, UISize::Pixels(180.0));
+                                    ui.width(option, UISize::Pixels(menu_width));
                                     ui.height(option, UISize::Pixels(30.0));
                                     ui.background(
                                         option,
@@ -150,12 +155,14 @@ fn main() {
             });
             ui.width(content, UISize::Fill);
             ui.height(content, UISize::ParentPct(1.0));
-            ui.padding_all(content, 18.0);
+            ui.padding_all(content, 14.0);
             ui.gap(content, 12.0);
             ui.background(content, Color::new("#15191f"));
         });
         ui.width(root, UISize::ParentPct(1.0));
         ui.height(root, UISize::ParentPct(1.0));
+        ui.padding_all(root, 10.0);
+        ui.gap(root, 10.0);
         ui.background(root, Color::new("#101318"));
     });
 }
@@ -221,22 +228,24 @@ fn layout_page(ui: &mut IMUI, show_panel: &mut bool) {
                 metric_row(ui, "ChildrenSum", "Content driven");
                 metric_row(ui, "Fill", "Remaining space");
             });
-            ui.width(left, UISize::Fill);
             ui.height(left, UISize::ParentPct(1.0));
             ui.padding_all(left, 14.0);
             ui.gap(left, 8.0);
             ui.background(left, Color::new("#242a32"));
 
             if *show_panel {
+                ui.width(left, UISize::ParentPct(0.62));
                 let right = ui.column(|ui| {
                     section_title(ui, "Floating-friendly");
                     ui.label("This panel is a normal container in the demo, but it uses the same fixed-position support as floating panes and tooltips.");
                 });
-                ui.width(right, UISize::Pixels(280.0));
+                ui.width(right, UISize::Fill);
                 ui.height(right, UISize::ParentPct(1.0));
                 ui.padding_all(right, 14.0);
                 ui.gap(right, 8.0);
                 ui.background(right, Color::new("#1d3434"));
+            } else {
+                ui.width(left, UISize::Fill);
             }
         });
         ui.width(body, UISize::ParentPct(1.0));

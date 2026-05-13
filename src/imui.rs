@@ -1460,18 +1460,46 @@ impl IMUI {
         } else {
             self.boxes[idx].computed_size.axis(axis)
         };
+        self.apply_downward_size(idx, axis, parent_content);
+
+        // Resolve direct children on this axis before recursing so descendants
+        // observe the final parent size (especially for Fill children).
+        let children = self.boxes[idx].children.clone();
+        for child in &children {
+            if self.box_is_out_of_flow(*child) {
+                continue;
+            }
+            let content = (self.boxes[idx].computed_size.axis(axis) - self.boxes[idx].padding.axis(axis))
+                .max(0.0);
+            self.apply_downward_size(*child, axis, content);
+        }
+        if self.boxes[idx].child_layout_axis == axis {
+            self.distribute_fill_children(idx, axis);
+        }
+
+        let children = self.boxes[idx].children.clone();
+        for child in children {
+            self.calc_downwards(child, axis);
+        }
+    }
+
+    fn apply_downward_size(&mut self, idx: usize, axis: Axis, parent_content: f32) {
         match self.boxes[idx].pref_size[axis_idx(axis)] {
             UISize::ParentPct(pct) => self.boxes[idx]
                 .computed_size
                 .set_axis(axis, (parent_content * pct).max(0.0)),
-            UISize::Fill => self.boxes[idx]
-                .computed_size
-                .set_axis(axis, parent_content.max(0.0)),
+            UISize::Fill => {
+                // On the parent's main axis, Fill is resolved by
+                // `distribute_fill_children`; don't overwrite that result here.
+                if let Some(parent) = self.boxes[idx].parent {
+                    if self.boxes[parent].child_layout_axis == axis {
+                        return;
+                    }
+                }
+                // On cross-axis, Fill behaves like ParentPct(1.0).
+                self.boxes[idx].computed_size.set_axis(axis, parent_content.max(0.0));
+            }
             _ => {}
-        }
-        let children = self.boxes[idx].children.clone();
-        for child in children {
-            self.calc_downwards(child, axis);
         }
     }
 
@@ -2021,6 +2049,35 @@ mod tests {
         ui.layout_root(ui.root);
 
         assert_eq!(ui.boxes[row.idx()].computed_size.width, 100.0);
+    }
+
+    #[test]
+    fn fill_and_parent_pct_share_remaining_width_without_overflow() {
+        let mut ui = IMUI::new_for_test(1000.0, 300.0);
+        ui.begin_frame();
+        let row = ui.row(|ui| {
+            let left = ui.label("left");
+            ui.width(left, UISize::Fill);
+            ui.height(left, UISize::Pixels(20.0));
+
+            let right = ui.label("right");
+            ui.width(right, UISize::ParentPct(0.34));
+            ui.height(right, UISize::Pixels(20.0));
+        });
+        ui.width(row, UISize::ParentPct(1.0));
+        ui.height(row, UISize::Pixels(30.0));
+        ui.padding_all(row, 10.0);
+        ui.gap(row, 12.0);
+        ui.layout_root(ui.root);
+
+        let children = ui.boxes[row.idx()].children.clone();
+        let left_w = ui.boxes[children[0]].computed_size.width;
+        let right_w = ui.boxes[children[1]].computed_size.width;
+        let available = ui.boxes[row.idx()].computed_size.width - ui.boxes[row.idx()].padding.horizontal();
+        let used = left_w + right_w + ui.boxes[row.idx()].child_gap;
+
+        assert!(used <= available + 0.01, "used={used} available={available}");
+        assert!(left_w > 0.0);
     }
 
     #[test]
