@@ -6,16 +6,21 @@
 //
 // Use `--features freetype --no-default-features` to use freetype instead of fontdue.
 
+#[cfg(any(feature = "fontdue", all(feature = "freetype", target_os = "linux")))]
 use std::collections::HashMap;
+#[cfg(any(feature = "fontdue", all(feature = "freetype", target_os = "linux")))]
 use std::num::NonZeroUsize;
 
+#[cfg(any(feature = "fontdue", all(feature = "freetype", target_os = "linux")))]
 use lru::LruCache;
 
+#[cfg(any(feature = "fontdue", all(feature = "freetype", target_os = "linux")))]
 const CACHE_GLYPH_COUNT: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(512) };
 
 /// Quantize font size to avoid floating point precision issues.
 /// Rounds to nearest 0.5pt, returns a key suitable for HashMap lookup.
 #[inline]
+#[cfg(any(feature = "fontdue", all(feature = "freetype", target_os = "linux")))]
 fn quantize_size(size: f32) -> (u32, f32) {
     // Round to nearest 0.5 (multiply by 2, round, divide by 2)
     let quantized = (size * 2.0).round() / 2.0;
@@ -52,6 +57,7 @@ pub struct Atlas {
 }
 
 /// Metrics from rasterization, used by Atlas::add_glyph
+#[cfg(any(feature = "fontdue", all(feature = "freetype", target_os = "linux")))]
 struct RasterMetrics {
     width: usize,
     height: usize,
@@ -73,6 +79,7 @@ impl Atlas {
     }
 
     /// Add a glyph to the current atlas
+    #[cfg(any(feature = "fontdue", all(feature = "freetype", target_os = "linux")))]
     fn add_glyph(&mut self, metrics: RasterMetrics, bitmap: Vec<u8>) -> Glyph {
         if self.next_y >= self.height {
             // TODO(xarkes): Implement atlas eviction
@@ -112,6 +119,7 @@ impl Atlas {
     }
 }
 
+#[cfg(any(feature = "fontdue", all(feature = "freetype", target_os = "linux")))]
 struct GlyphCache {
     table: LruCache<char, Glyph>,
     table_ascii: [Glyph; 256],
@@ -309,12 +317,12 @@ impl FontCache {
 // FreeType backend
 // ============================================================================
 
-#[cfg(all(feature = "freetype", target_os = "linux"))]
+#[cfg(all(feature = "freetype", not(feature = "fontdue"), target_os = "linux"))]
 use freetype::Library as FtLibrary;
-#[cfg(all(feature = "freetype", target_os = "linux"))]
+#[cfg(all(feature = "freetype", not(feature = "fontdue"), target_os = "linux"))]
 use freetype::face::LoadFlag;
 
-#[cfg(all(feature = "freetype", target_os = "linux"))]
+#[cfg(all(feature = "freetype", not(feature = "fontdue"), target_os = "linux"))]
 pub struct FontCache {
     library: FtLibrary,
     face_data: Vec<u8>, // Keep font data alive for the face
@@ -325,7 +333,7 @@ pub struct FontCache {
     pub(crate) texture_id: u32,
 }
 
-#[cfg(all(feature = "freetype", target_os = "linux"))]
+#[cfg(all(feature = "freetype", not(feature = "fontdue"), target_os = "linux"))]
 impl FontCache {
     pub fn new(font_bytes: &[u8]) -> Self {
         let t0 = std::time::Instant::now();
@@ -554,23 +562,66 @@ impl FontCache {
 }
 
 // ============================================================================
-// Compile-time checks for font backend selection
+// Fallback backend
 // ============================================================================
 
-// On Linux: either freetype or fontdue must be enabled
-#[cfg(all(
-    target_os = "linux",
-    not(any(feature = "fontdue", feature = "freetype"))
-))]
-compile_error!("On Linux, either 'fontdue' or 'freetype' feature must be enabled");
+#[cfg(not(any(feature = "fontdue", all(feature = "freetype", target_os = "linux"))))]
+pub struct FontCache {
+    glyph: Glyph,
+    atlas: Atlas,
+    pub(crate) dirty: bool,
+    pub(crate) texture_id: u32,
+}
 
-// On non-Linux: fontdue is required (freetype not available)
-#[cfg(all(
-    not(target_os = "linux"),
-    not(feature = "fontdue")
-))]
-compile_error!("On non-Linux platforms, 'fontdue' feature must be enabled for font rendering");
+#[cfg(not(any(feature = "fontdue", all(feature = "freetype", target_os = "linux"))))]
+impl FontCache {
+    pub fn new(_font_bytes: &[u8]) -> Self {
+        FontCache {
+            glyph: Glyph::default(),
+            atlas: Atlas::new(),
+            dirty: true,
+            texture_id: 0,
+        }
+    }
+
+    pub fn get(&mut self, _glyph: char, size: f32) -> &Glyph {
+        self.glyph = Glyph {
+            width: 0,
+            height: 0,
+            advance: size * 0.6,
+            x0: 0.0,
+            y0: 0.0,
+            x1: 0.0,
+            y1: 0.0,
+            xoff: 0.0,
+            yoff: 0.0,
+        };
+        &self.glyph
+    }
+
+    pub fn atlas(&self) -> &Atlas {
+        &self.atlas
+    }
+
+    pub fn get_cursor_position(&mut self, size: f32, text: &str, cursorx: f32) -> (f32, usize) {
+        let advance = size * 0.6;
+        let idx = (cursorx / advance).round().max(0.0) as usize;
+        let capped = idx.min(text.chars().count());
+        (capped as f32 * advance, capped)
+    }
+
+    pub fn get_text_size(&mut self, size: f32, text: &str, length: usize) -> (f32, f32) {
+        let count = text
+            .char_indices()
+            .take_while(|(idx, _)| *idx < length)
+            .filter(|(_, c)| *c != '\t')
+            .count();
+        (count as f32 * size * 0.6, size)
+    }
+
+    pub fn line_height(&self, font_size: f32) -> f32 {
+        font_size * 1.2
+    }
+}
 
 // On Linux: both shouldn't be enabled simultaneously
-#[cfg(all(target_os = "linux", feature = "fontdue", feature = "freetype"))]
-compile_error!("Only one of 'fontdue' or 'freetype' features can be enabled at a time");

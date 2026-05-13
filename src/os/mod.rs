@@ -14,7 +14,7 @@ mod os_impl;
 
 use super::imui::Point;
 
-#[derive(PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum OSEventType {
     MouseMove,
     Press,
@@ -169,6 +169,7 @@ impl TryFrom<i32> for OSEventFlag {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct OSEvent {
     pub ty: OSEventType,
     pub key: OSKey,

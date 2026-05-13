@@ -1,324 +1,265 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-
-mod draw;
-mod imui;
-mod os;
-mod render;
-
-use imui::IMUI;
-use imui::UISize;
-use imui::uibox::{Color, UIBoxHandle};
-use imui::{CrossAxisAlign, MainAxisAlign};
-use os::OSEventFlag;
-use os::OSKey;
-use os::OSKeyCode;
-
-mod noteapp;
-use noteapp::NoteApp;
-
-macro_rules! icon {
-    ($value:tt) => {
-        char::from_u32($value).unwrap().to_string().as_str()
-    };
-}
-
-#[derive(PartialEq)]
-enum AppView {
-    Login,
-    Main,
-}
-
-fn open_new_note(noteapp: &mut NoteApp, ui: &mut IMUI) {
-    noteapp.new_note();
-    ui.reset_text_input_state();
-    ui.set_focus_active("#textarea"); // focus textarea on next frame
-}
+use mae::{
+    imui::{
+        uibox::Color, CrossAxisAlign, IMUI, MainAxisAlign, UISize, UIBoxHandle, UiSignal,
+    },
+    os::{OSEventFlag, OSKey, OSKeyCode},
+};
 
 fn main() {
-    println!("Starting Mae {}_alpha_0", env!("CARGO_PKG_VERSION"));
+    println!("Starting Mae GUI framework demo {}", env!("CARGO_PKG_VERSION"));
 
-    // App state
-    let mut current_view = AppView::Main;
-    let passphrase = Rc::new(RefCell::new(String::new()));
-    let mut login_error: Option<String> = None;
+    let mut ui = IMUI::new(920, 620);
+    let mut input = String::from("Edit me");
+    let mut text = String::from(
+        "Mae is now a GUI framework demo.\n\nThis text area exercises text input, children-sum layout, parent-percent layout, and draw command generation.\n\nClick in here and type.",
+    );
+    let mut show_panel = true;
+    let mut selected_tab = 0usize;
+    let mut counter = 0usize;
+    let mut render_60fps = true;
 
-    // Note app (initialized lazily after login)
-    let mut noteapp: Option<NoteApp> = Some(NoteApp::new());
+    ui.eventloop(|ui| {
+        ui.set_render_continuously(render_60fps);
 
-    // xarkes: draw UI
-    let mut ui = IMUI::new(480, 360);
-
-    // xarkes: define global shortcuts
-    let shortcut_save = (OSKey::Keyboard(OSKeyCode::KeyS), Some(OSEventFlag::Control));
-
-    let mut show_search = false;
-    let mut search = Rc::new(RefCell::new(String::from("")));
-    let save_interval_seconds = 30.;
-    let freq = os::timer_init();
-    let mut last_save = os::timer_value() as f64 / freq;
-
-    // Sidebar resize state
-    let mut sidebar_width: f32 = 220.0;
-    let mut resizing_sidebar = false;
-
-    ui.eventloop(|mut ui| {
-        match current_view {
-            AppView::Login => {
-                // Dark background for the whole window with centered content
-                ui.column(|ui| {
-                    // Login card
-                    let card = ui.column(|ui| {
-                        // Title
-                        let title = ui.label("Remote Vault");
-                        UIBoxHandle::new(title).text_color(Color::new("#ffffff"));
-
-                        // Subtitle
-                        let subtitle = ui.label("Enter your passphrase to unlock");
-                        UIBoxHandle::new(subtitle).text_color(Color::new("#888888"));
-
-                        // Spacer
-                        ui.row(|_| {}).height(UISize::Fixed(24.0));
-
-                        // Passphrase input
-                        let input = ui.line_edit(passphrase.clone(), "#passphrase", true);
-                        input
-                            .width(UISize::Fixed(280.0))
-                            .height(UISize::Fixed(36.0))
-                            .background(Color::new("#3a3a3a"));
-
-                        // Spacer
-                        ui.row(|_| {}).height(UISize::Fixed(8.0));
-
-                        // Error message
-                        if let Some(ref err) = login_error {
-                            let err_label = ui.label(err.as_str());
-                            UIBoxHandle::new(err_label).text_color(Color::new("#ff6b6b"));
-                            ui.row(|_| {}).height(UISize::Fixed(8.0));
-                        }
-
-                        // Connect button
-                        let connect_btn = ui.button("Unlock##login_btn", None);
-                        UIBoxHandle::new(connect_btn.clone())
-                            .width(UISize::Fixed(280.0))
-                            .height(UISize::Fixed(40.0))
-                            .background(Color::new("#1ebc93"));
-
-                        let enter_pressed = ui.input(OSKey::Keyboard(OSKeyCode::KeyEnter), None);
-
-                        if connect_btn.borrow().clicked() || enter_pressed {
-                            let pass = passphrase.borrow();
-                            if pass.is_empty() {
-                                login_error = Some("Passphrase cannot be empty".to_string());
-                            } else {
-                                // TODO: Connect to remote server with passphrase
-                                println!("Connecting with passphrase...");
-                                noteapp = Some(NoteApp::new());
-                                current_view = AppView::Main;
-                            }
-                        }
-                    });
-                    card.width(UISize::Fixed(320.0))
-                        .height(UISize::Fit)
-                        .padding_all(16.0)
-                        .gap(4.0)
-                        .background(Color::new("#2a2a2a"));
-                })
-                .width(UISize::Grow)
-                .height(UISize::Grow)
-                .align(MainAxisAlign::Center, CrossAxisAlign::Center)
-                .background(Color::new("#1a1a1a"));
-            }
-
-            AppView::Main => {
-                let mut noteapp = noteapp.as_mut().unwrap();
-                let sidebar_bg = Color::new("#1e1e2e");
-                let sidebar_header_bg = Color::new("#181825");
-                let editor_bg = Color::new("#11111b");
-                let note_hover_bg = Color::new("#313244");
-                let note_selected_bg = Color::new("#45475a");
-                let text_dim = Color::new("#6c7086");
-
-                ui.row(|ui| {
-                    // Left sidebar
-                    ui.column(|ui| {
-                        // Toolbar row
-                        ui.row(|ui| {
-                            if ui
-                                .button_icon(icon!(0xe161), Some("Save (Ctrl+S)"))
-                                .borrow()
-                                .clicked()
-                            {
-                                noteapp.save();
-                            }
-                            if ui
-                                .button_icon(icon!(0xefd3), Some("New note (Ctrl+N)"))
-                                .borrow()
-                                .clicked()
-                            {
-                                open_new_note(&mut noteapp, ui);
-                            }
-                            if ui
-                                .button_icon(icon!(0xe8b6), Some("Search (Ctrl+G)"))
-                                .borrow()
-                                .clicked()
-                            {
-                                show_search = true;
-                                search = Rc::new(RefCell::new(String::from("")));
-                            }
-                        })
-                        .height(UISize::Fit)
-                        .padding_all(8.0)
-                        .gap(4.0)
-                        .background(sidebar_header_bg);
-
-                        // Notes section header
-                        let header = ui.label("Notes");
-                        UIBoxHandle::new(header)
-                            .text_color(text_dim)
-                            .padding_all(12.0);
-
-                        // Notes list
-                        let notes = noteapp.notes();
-                        let current_id = noteapp.current_note_id();
-                        for note in &notes {
-                            let is_selected = note.id == current_id;
-                            let display_name = if note.name.len() > 24 {
-                                format!("{}...", &note.name[..24])
-                            } else {
-                                note.name.clone()
-                            };
-                            let button = ui.button(
-                                format!("{}##note_{}", display_name, note.id).as_str(),
-                                None,
-                            );
-                            let button_ref = UIBoxHandle::new(button.clone());
-                            button_ref.width(UISize::Grow).padding_all(10.0).background(
-                                if is_selected {
-                                    note_selected_bg
-                                } else {
-                                    note_hover_bg
-                                },
-                            );
-                            if button.borrow().clicked() {
-                                noteapp.open(note.id);
-                            }
-                        }
-                    })
-                    .width(UISize::Fixed(sidebar_width))
-                    .align_main(MainAxisAlign::Start)
-                    .background(sidebar_bg);
-
-                    // Resize handle (using button for built-in click handling)
-                    let resize_handle = ui.button("##resize_handle", None);
-                    let resize_ref = UIBoxHandle::new(resize_handle.clone());
-                    resize_ref
-                        .width(UISize::Fixed(6.0))
-                        .height(UISize::Grow)
-                        .background(Color::new("#313244"));
-
-                    // Check if resize handle is being dragged
-                    if resize_handle.borrow().click() {
-                        resizing_sidebar = true;
-                    }
-                    if resizing_sidebar {
-                        if let Some(mouse_pos) = ui.mouse_position() {
-                            sidebar_width = mouse_pos.x().max(100.0).min(500.0);
-                        }
-                        if !ui.mouse_down() {
-                            resizing_sidebar = false;
-                        }
-                    }
-                    // Highlight handle on hover or while dragging
-                    if resize_handle.borrow().hover() || resizing_sidebar {
-                        resize_ref.background(Color::new("#45475a"));
-                    }
-
-                    // Main editor area
-                    ui.column(|ui| {
-                        // Editor header with current note info
-                        let cur_id = noteapp.current_note_id();
-                        let current_note = noteapp.notes().into_iter().find(|n| n.id == cur_id);
-                        let note_title = current_note
-                            .map(|n| {
-                                if n.name.len() > 50 {
-                                    format!("{}...", &n.name[..50])
-                                } else {
-                                    n.name
-                                }
-                            })
-                            .unwrap_or_else(|| "Untitled".to_string());
-                        let header = ui.label(note_title.as_str());
-                        UIBoxHandle::new(header)
-                            .text_color(Color::new("#cdd6f4"))
-                            .padding_all(12.0);
-
-                        // Separator line
-                        let separator = ui.row(|_| {});
-                        separator
-                            .height(UISize::Fixed(1.0))
-                            .background(Color::new("#313244"));
-
-                        // Text editor with padding
-                        ui.textarea(noteapp.buffer.clone(), "#textarea")
-                            .padding_all(16.0)
-                            .background(Color::new("#1e1e2e"));
-                    })
-                    .background(editor_bg);
-                });
-
-                // prompts
-                ui.prompt("#search_prompt", &mut show_search, |ui, show| {
-                    ui.label("Search for notes");
-                    let search_input = ui.line_edit(search.clone(), "#search", true);
-                    search_input.width(UISize::Grow);
-                    let search_filter = search.borrow();
-                    for note in &noteapp.notes() {
-                        if search_filter.len() > 0 {
-                            if !fuzzy_search(search_filter.as_str(), note.name.as_str()) {
-                                continue;
-                            }
-                        }
-                        let button = ui.button(
-                            format!("> {}##button_label_{}", note.name, note.id).as_str(),
-                            None,
-                        );
-                        let buttonr = UIBoxHandle::new(button.clone());
-                        buttonr.background(ui.theme.color_bg_popup);
-                        if button.borrow().clicked() {
-                            *show = false;
-                            noteapp.open(note.id);
-                        }
-                    }
-                });
-
-                // common logic
-                let curtime = os::timer_value() as f64 / freq;
-                if last_save + save_interval_seconds < curtime {
-                    println!("Auto save...");
-                    noteapp.save();
-                    last_save = curtime;
-                }
-
-                // shortcuts
-                if ui.input(shortcut_save.0, shortcut_save.1) {
-                    noteapp.save();
-                }
-                if ui.input(OSKey::Keyboard(OSKeyCode::KeyN), Some(OSEventFlag::Control)) {
-                    open_new_note(&mut noteapp, &mut ui);
-                }
-                if !show_search
-                    && ui.input(OSKey::Keyboard(OSKeyCode::KeyG), Some(OSEventFlag::Control))
-                {
-                    show_search = true;
-                    search = Rc::new(RefCell::new(String::from("")));
-                }
-            }
+        if ui.input(OSKey::Keyboard(OSKeyCode::KeyT), Some(OSEventFlag::Control)) {
+            show_panel = !show_panel;
         }
+
+        let root = ui.row(|ui| {
+            let sidebar = ui.column(|ui| {
+                let title = ui.label("Mae");
+                ui.text_color(title, Color::new("#ffffff"));
+                ui.height(title, UISize::Pixels(34.0));
+
+                let subtitle = ui.label("GUI framework");
+                ui.text_color(subtitle, Color::new("#9aa4af"));
+                ui.height(subtitle, UISize::Pixels(28.0));
+
+                let nav = ui.named_column("###nav", |ui| {
+                    nav_button(ui, "Layout", 0, &mut selected_tab);
+                    nav_button(ui, "Widgets", 1, &mut selected_tab);
+                    nav_button(ui, "Render", 2, &mut selected_tab);
+                });
+                ui.gap(nav, 6.0);
+
+                let toggle = ui.button("Toggle panel", Some("Ctrl+T"));
+                ui.width(toggle, UISize::ParentPct(1.0));
+                if toggle.clicked() {
+                    show_panel = !show_panel;
+                }
+            });
+            ui.width(sidebar, UISize::Pixels(210.0));
+            ui.height(sidebar, UISize::ParentPct(1.0));
+            ui.padding_all(sidebar, 16.0);
+            ui.gap(sidebar, 8.0);
+            ui.background(sidebar, Color::new("#20242b"));
+
+            let content = ui.column(|ui| {
+                let header = ui.row(|ui| {
+                    let heading = ui.label(match selected_tab {
+                        0 => "Layout Review",
+                        1 => "Widget Signals",
+                        _ => "Render Commands",
+                    });
+                    ui.text_color(heading, Color::new("#ffffff"));
+                    ui.width(heading, UISize::Fill);
+                    ui.height(heading, UISize::Pixels(36.0));
+
+                    let fps_text = if ui.fps() > 0.0 {
+                        format!("{:.0} fps", ui.fps())
+                    } else {
+                        "fps --".to_string()
+                    };
+                    let fps = ui.label(&fps_text);
+                    ui.width(fps, UISize::Pixels(72.0));
+                    ui.height(fps, UISize::Pixels(30.0));
+                    ui.text_color(fps, Color::new("#9aa4af"));
+
+                    let switch = toggle_switch(ui, render_60fps);
+                    if switch.clicked() {
+                        render_60fps = !render_60fps;
+                        ui.set_render_continuously(render_60fps);
+                    }
+
+                    let plus = ui.button("+", Some("Increment counter"));
+                    ui.width(plus, UISize::Pixels(36.0));
+                    ui.height(plus, UISize::Pixels(32.0));
+                    if plus.clicked() {
+                        counter += 1;
+                    }
+                });
+                ui.height(header, UISize::Pixels(46.0));
+                ui.align(header, MainAxisAlign::Start, CrossAxisAlign::Center);
+
+                match selected_tab {
+                    0 => layout_page(ui, show_panel),
+                    1 => widget_page(ui, &mut input, &mut text, counter),
+                    _ => render_page(ui),
+                }
+            });
+            ui.width(content, UISize::Fill);
+            ui.height(content, UISize::ParentPct(1.0));
+            ui.padding_all(content, 18.0);
+            ui.gap(content, 12.0);
+            ui.background(content, Color::new("#15191f"));
+        });
+        ui.width(root, UISize::ParentPct(1.0));
+        ui.height(root, UISize::ParentPct(1.0));
+        ui.background(root, Color::new("#101318"));
     });
 }
 
-fn fuzzy_search(filter: &str, data: &str) -> bool {
-    // TODO(xarkes): Implement proper search
-    data.contains(filter)
+fn toggle_switch(ui: &mut IMUI, enabled: bool) -> UIBoxHandle {
+    let label = if enabled { "60 FPS" } else { "Dirty" };
+    let button = ui.button(&format!("{label}##render_mode_toggle"), Some("Toggle frame pacing"));
+    ui.width(button, UISize::Pixels(86.0));
+    ui.height(button, UISize::Pixels(32.0));
+    ui.background(
+        button,
+        if enabled {
+            Color::new("#2f8f83")
+        } else {
+            Color::new("#39414c")
+        },
+    );
+    button
+}
+
+fn nav_button(ui: &mut IMUI, label: &str, id: usize, selected_tab: &mut usize) {
+    let button = ui.button(&format!("{label}##nav_{id}"), None);
+    ui.width(button, UISize::ParentPct(1.0));
+    ui.height(button, UISize::Pixels(34.0));
+    ui.background(
+        button,
+        if *selected_tab == id {
+            Color::new("#2f8f83")
+        } else {
+            Color::new("#2a3038")
+        },
+    );
+    if button.clicked() {
+        *selected_tab = id;
+    }
+}
+
+fn layout_page(ui: &mut IMUI, show_panel: bool) {
+    let body = ui.row(|ui| {
+        let left = ui.column(|ui| {
+            section_title(ui, "Sizing");
+            metric_row(ui, "Pixels", "Fixed sizes");
+            metric_row(ui, "ParentPct", "Relative to parent");
+            metric_row(ui, "ChildrenSum", "Content driven");
+            metric_row(ui, "Fill", "Remaining space");
+        });
+        ui.width(left, UISize::Fill);
+        ui.height(left, UISize::ParentPct(1.0));
+        ui.padding_all(left, 14.0);
+        ui.gap(left, 8.0);
+        ui.background(left, Color::new("#242a32"));
+
+        if show_panel {
+            let right = ui.column(|ui| {
+                section_title(ui, "Floating-friendly");
+                ui.label("This panel is a normal container in the demo, but it uses the same fixed-position support as floating panes and tooltips.");
+            });
+            ui.width(right, UISize::Pixels(280.0));
+            ui.height(right, UISize::ParentPct(1.0));
+            ui.padding_all(right, 14.0);
+            ui.gap(right, 8.0);
+            ui.background(right, Color::new("#1d3434"));
+        }
+    });
+    ui.width(body, UISize::ParentPct(1.0));
+    ui.height(body, UISize::Fill);
+    ui.gap(body, 12.0);
+}
+
+fn widget_page(ui: &mut IMUI, input: &mut String, text: &mut String, counter: usize) {
+    let body = ui.column(|ui| {
+        section_title(ui, "Signals");
+        let signal_row = ui.row(|ui| {
+            let button = ui.button("Click target", Some("Reports press/hover/click signal state"));
+            ui.width(button, UISize::Pixels(160.0));
+            ui.height(button, UISize::Pixels(36.0));
+            let report = signal_report(button);
+            ui.label(&report);
+        });
+        ui.height(signal_row, UISize::Pixels(42.0));
+        ui.gap(signal_row, 10.0);
+        ui.align(signal_row, MainAxisAlign::Start, CrossAxisAlign::Center);
+
+        let counter_label = ui.label(&format!("Counter: {counter}"));
+        ui.height(counter_label, UISize::Pixels(28.0));
+        ui.text_color(counter_label, Color::new("#9fc8ff"));
+
+        section_title(ui, "Text Input");
+        let edit = ui.line_edit("###demo_line_edit", input, false);
+        ui.height(edit, UISize::Pixels(34.0));
+
+        let area = ui.textarea("###demo_textarea", text);
+        ui.height(area, UISize::Fill);
+    });
+    ui.width(body, UISize::ParentPct(1.0));
+    ui.height(body, UISize::Fill);
+    ui.padding_all(body, 14.0);
+    ui.gap(body, 10.0);
+    ui.background(body, Color::new("#242a32"));
+}
+
+fn render_page(ui: &mut IMUI) {
+    let body = ui.column(|ui| {
+        section_title(ui, "Draw Layer");
+        ui.label("The UI tree emits rectangles, borders, and text through the draw layer before the renderer backend consumes batches.");
+
+        let swatches = ui.row(|ui| {
+            for (idx, color) in ["#d76f6f", "#d7b56f", "#75b878", "#6fa8d7", "#b074d7"]
+                .iter()
+                .enumerate()
+            {
+                let swatch = ui.label(&format!("##swatch_{idx}"));
+                ui.width(swatch, UISize::Fill);
+                ui.height(swatch, UISize::Pixels(84.0));
+                ui.background(swatch, Color::new(color));
+            }
+        });
+        ui.height(swatches, UISize::Pixels(92.0));
+        ui.gap(swatches, 8.0);
+    });
+    ui.width(body, UISize::ParentPct(1.0));
+    ui.height(body, UISize::Fill);
+    ui.padding_all(body, 14.0);
+    ui.gap(body, 12.0);
+    ui.background(body, Color::new("#242a32"));
+}
+
+fn section_title(ui: &mut IMUI, text: &str) -> UIBoxHandle {
+    let title = ui.label(text);
+    ui.text_color(title, Color::new("#ffffff"));
+    ui.height(title, UISize::Pixels(30.0));
+    title
+}
+
+fn metric_row(ui: &mut IMUI, name: &str, value: &str) {
+    let row = ui.row(|ui| {
+        let name = ui.label(name);
+        ui.width(name, UISize::Pixels(120.0));
+        ui.text_color(name, Color::new("#9fc8ff"));
+
+        let value = ui.label(value);
+        ui.width(value, UISize::Fill);
+        ui.text_color(value, Color::new("#c8ced6"));
+    });
+    ui.height(row, UISize::Pixels(30.0));
+    ui.align(row, MainAxisAlign::Start, CrossAxisAlign::Center);
+}
+
+fn signal_report(handle: UIBoxHandle) -> String {
+    let signal: UiSignal = handle.signal();
+    format!(
+        "pressed={} clicked={} dragging={} hover={}",
+        signal.pressed(),
+        signal.clicked(),
+        signal.dragging(),
+        signal.hovering()
+    )
 }
