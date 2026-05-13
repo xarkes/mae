@@ -151,6 +151,12 @@ pub enum Axis {
     Y,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MouseButton {
+    Left,
+    Right,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum UISize {
     Pixels(f32),
@@ -545,7 +551,11 @@ pub struct IMUI {
     events: Vec<OSEvent>,
     mouse: Option<Point>,
     left_mouse_down: bool,
-    active_key: Option<UiKey>,
+    right_mouse_down: bool,
+    hot_key: Option<UiKey>,
+    active_left_key: Option<UiKey>,
+    active_right_key: Option<UiKey>,
+    drag_start_mouse: Option<Point>,
     focus_key: Option<UiKey>,
     next_focus_key: Option<UiKey>,
     cursor: OSCursor,
@@ -607,7 +617,11 @@ impl IMUI {
             events: Vec::new(),
             mouse: None,
             left_mouse_down: false,
-            active_key: None,
+            right_mouse_down: false,
+            hot_key: None,
+            active_left_key: None,
+            active_right_key: None,
+            drag_start_mouse: None,
             focus_key: None,
             next_focus_key: None,
             cursor: OSCursor::Arrow,
@@ -670,6 +684,7 @@ impl IMUI {
         self.frame_boxes.clear();
         self.parent_stack.clear();
         self.cursor = OSCursor::Arrow;
+        self.hot_key = None;
         self.focus_key = self.next_focus_key.take().or(self.focus_key);
 
         let root = self.alloc_box(Some("#root"), UIBoxFlags::NONE);
@@ -687,6 +702,7 @@ impl IMUI {
 
     fn end_frame(&mut self) {
         self.layout_root(self.root);
+        self.refresh_passive_signals();
         self.draw_ui_all();
 
         if let Some(drawer) = self.drawer.as_mut() {
@@ -725,6 +741,13 @@ impl IMUI {
                 match ev.ty {
                     OSEventType::Press => self.left_mouse_down = true,
                     OSEventType::Release => self.left_mouse_down = false,
+                    _ => {}
+                }
+            }
+            if ev.key == OSKey::RightMouseButton {
+                match ev.ty {
+                    OSEventType::Press => self.right_mouse_down = true,
+                    OSEventType::Release => self.right_mouse_down = false,
                     _ => {}
                 }
             }
@@ -1193,40 +1216,89 @@ impl IMUI {
             .map(|idx| self.boxes[idx].rect)
             .unwrap_or_else(|| RectCoords::from_size(-10000.0, -10000.0, 0.0, 0.0));
         let mouse_over = point_in_rect(&rect, self.mouse);
+        let focused = self.focus_key == Some(key);
+
+        let mut ev_idx = 0;
+        while ev_idx < self.events.len() {
+            let ev = self.events[ev_idx];
+            let in_bounds = point_in_rect(&rect, ev.pos);
+            let mut taken = false;
+
+            if flags.contains(UIBoxFlags::MOUSE_CLICKABLE) {
+                if let Some(button) = mouse_button_from_key(ev.key) {
+                    match ev.ty {
+                        OSEventType::Press if in_bounds => {
+                            self.hot_key = Some(key);
+                            self.set_active_key(button, Some(key));
+                            self.drag_start_mouse = ev.pos.or(self.mouse);
+                            if button == MouseButton::Left {
+                                signal.flags |= UiSignal::LEFT_PRESSED;
+                            }
+                            taken = true;
+                        }
+                        OSEventType::Release if self.active_key(button) == Some(key) => {
+                            self.set_active_key(button, None);
+                            if button == MouseButton::Left {
+                                signal.flags |= UiSignal::LEFT_RELEASED;
+                                if in_bounds {
+                                    signal.flags |= UiSignal::LEFT_CLICKED | UiSignal::COMMIT;
+                                }
+                            }
+                            if !in_bounds && self.hot_key == Some(key) {
+                                self.hot_key = None;
+                            }
+                            taken = true;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            if !taken
+                && flags.contains(UIBoxFlags::KEYBOARD_CLICKABLE)
+                && focused
+                && ev.ty == OSEventType::Press
+                && matches!(
+                    ev.key,
+                    OSKey::Keyboard(OSKeyCode::KeyEnter) | OSKey::Keyboard(OSKeyCode::KeySpace)
+                )
+            {
+                signal.flags |= UiSignal::COMMIT | UiSignal::LEFT_CLICKED;
+                taken = true;
+            }
+
+            if !taken && ev.ty == OSEventType::Scroll && in_bounds {
+                if flags.contains(UIBoxFlags::SCROLL_Y) {
+                    signal.scroll_y += ev.delta as i16;
+                    taken = true;
+                }
+                if flags.contains(UIBoxFlags::SCROLL_X) {
+                    signal.scroll_x += ev.delta as i16;
+                    taken = true;
+                }
+            }
+
+            if taken {
+                self.events.remove(ev_idx);
+            } else {
+                ev_idx += 1;
+            }
+        }
+
         if mouse_over {
             signal.flags |= UiSignal::MOUSE_OVER;
         }
-        if flags.contains(UIBoxFlags::MOUSE_CLICKABLE) && mouse_over {
+        if flags.contains(UIBoxFlags::MOUSE_CLICKABLE)
+            && mouse_over
+            && (self.hot_key.is_none() || self.hot_key == Some(key))
+            && (self.active_left_key.is_none() || self.active_left_key == Some(key))
+            && (self.active_right_key.is_none() || self.active_right_key == Some(key))
+        {
+            self.hot_key = Some(key);
             signal.flags |= UiSignal::HOVERING;
         }
-        for ev in &self.events {
-            let in_bounds = point_in_rect(&rect, ev.pos);
-            if ev.key == OSKey::LeftMouseButton && flags.contains(UIBoxFlags::MOUSE_CLICKABLE) {
-                match ev.ty {
-                    OSEventType::Press if in_bounds => {
-                        self.active_key = Some(key);
-                        signal.flags |= UiSignal::LEFT_PRESSED;
-                    }
-                    OSEventType::Release if self.active_key == Some(key) => {
-                        signal.flags |= UiSignal::LEFT_RELEASED;
-                        if in_bounds {
-                            signal.flags |= UiSignal::LEFT_CLICKED | UiSignal::COMMIT;
-                        }
-                        self.active_key = None;
-                    }
-                    _ => {}
-                }
-            }
-            if ev.ty == OSEventType::Scroll && in_bounds {
-                if flags.contains(UIBoxFlags::SCROLL_Y) {
-                    signal.scroll_y = ev.delta as i16;
-                }
-                if flags.contains(UIBoxFlags::SCROLL_X) {
-                    signal.scroll_x = ev.delta as i16;
-                }
-            }
-        }
-        if self.active_key == Some(key) && self.left_mouse_down {
+
+        if self.active_left_key == Some(key) && self.left_mouse_down {
             signal.flags |= UiSignal::LEFT_DRAGGING;
         }
         signal
@@ -1515,6 +1587,69 @@ impl IMUI {
         }
     }
 
+    fn active_key(&self, button: MouseButton) -> Option<UiKey> {
+        match button {
+            MouseButton::Left => self.active_left_key,
+            MouseButton::Right => self.active_right_key,
+        }
+    }
+
+    fn set_active_key(&mut self, button: MouseButton, key: Option<UiKey>) {
+        match button {
+            MouseButton::Left => self.active_left_key = key,
+            MouseButton::Right => self.active_right_key = key,
+        }
+    }
+
+    fn clipped_rect(&self, idx: usize) -> RectCoords {
+        let mut rect = self.boxes[idx].rect;
+        let mut parent = self.boxes[idx].parent;
+        while let Some(parent_idx) = parent {
+            let parent_box = &self.boxes[parent_idx];
+            if parent_box.flags.contains(UIBoxFlags::CLIP) {
+                rect = intersect_rects(rect, parent_box.rect);
+            }
+            parent = parent_box.parent;
+        }
+        rect
+    }
+
+    fn refresh_passive_signals(&mut self) {
+        self.hot_key = None;
+        self.cursor = OSCursor::Arrow;
+
+        let frame_boxes = self.frame_boxes.clone();
+        let mut hover_candidate = None;
+
+        for &idx in &frame_boxes {
+            self.boxes[idx].signal.flags &=
+                !(UiSignal::MOUSE_OVER | UiSignal::HOVERING | UiSignal::LEFT_DRAGGING);
+        }
+
+        for &idx in &frame_boxes {
+            let rect = self.clipped_rect(idx);
+            if point_in_rect(&rect, self.mouse) {
+                self.boxes[idx].signal.flags |= UiSignal::MOUSE_OVER;
+                if self.boxes[idx].flags.contains(UIBoxFlags::MOUSE_CLICKABLE) {
+                    hover_candidate = Some(idx);
+                }
+            }
+            if self.active_left_key == Some(self.boxes[idx].key) && self.left_mouse_down {
+                self.boxes[idx].signal.flags |= UiSignal::LEFT_DRAGGING;
+            }
+        }
+
+        if let Some(idx) = hover_candidate {
+            self.hot_key = Some(self.boxes[idx].key);
+            self.boxes[idx].signal.flags |= UiSignal::HOVERING;
+            self.cursor = if self.boxes[idx].flags.contains(UIBoxFlags::TEXT_INPUT) {
+                OSCursor::IBeam
+            } else {
+                OSCursor::Hand
+            };
+        }
+    }
+
     fn release_box(&mut self, idx: usize) {
         self.boxes[idx] = UIBox::new(UiKey::default(), UIBoxFlags::NONE, None, &self.theme);
         self.free_boxes.push(idx);
@@ -1545,10 +1680,22 @@ impl IMUI {
         }
 
         if self
-            .active_key
+            .active_left_key
             .is_some_and(|key| !self.box_table.contains_key(&key))
         {
-            self.active_key = None;
+            self.active_left_key = None;
+        }
+        if self
+            .active_right_key
+            .is_some_and(|key| !self.box_table.contains_key(&key))
+        {
+            self.active_right_key = None;
+        }
+        if self
+            .hot_key
+            .is_some_and(|key| !self.box_table.contains_key(&key))
+        {
+            self.hot_key = None;
         }
         if self
             .focus_key
@@ -1624,6 +1771,26 @@ fn point_in_rect(rect: &RectCoords, point: Option<Point>) -> bool {
     point.x >= rect.x0 && point.x <= rect.x1 && point.y >= rect.y0 && point.y <= rect.y1
 }
 
+fn intersect_rects(a: RectCoords, b: RectCoords) -> RectCoords {
+    let x0 = a.x0.max(b.x0);
+    let y0 = a.y0.max(b.y0);
+    let x1 = a.x1.min(b.x1);
+    let y1 = a.y1.min(b.y1);
+    if x1 <= x0 || y1 <= y0 {
+        RectCoords::from_size(x0, y0, 0.0, 0.0)
+    } else {
+        RectCoords { x0, y0, x1, y1 }
+    }
+}
+
+fn mouse_button_from_key(key: OSKey) -> Option<MouseButton> {
+    match key {
+        OSKey::LeftMouseButton => Some(MouseButton::Left),
+        OSKey::RightMouseButton => Some(MouseButton::Right),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1686,5 +1853,72 @@ mod tests {
 
         assert!(!ui.box_table.contains_key(&first.key()));
         assert!(ui.free_boxes.contains(&first.idx()));
+    }
+
+    #[test]
+    fn retained_button_consumes_press_and_release_events() {
+        let mut ui = IMUI::new_for_test(400.0, 200.0);
+
+        ui.begin_frame();
+        let first = ui.button("Click###button", None);
+        ui.width(first, UISize::Pixels(120.0));
+        ui.height(first, UISize::Pixels(40.0));
+        ui.end_frame();
+
+        ui.mouse = Some(Point::new(20.0, 20.0));
+        ui.events = vec![
+            OSEvent {
+                ty: OSEventType::Press,
+                key: OSKey::LeftMouseButton,
+                pos: Some(Point::new(20.0, 20.0)),
+                chars: None,
+                delta: 0.0,
+                flags: None,
+            },
+            OSEvent {
+                ty: OSEventType::Release,
+                key: OSKey::LeftMouseButton,
+                pos: Some(Point::new(20.0, 20.0)),
+                chars: None,
+                delta: 0.0,
+                flags: None,
+            },
+        ];
+
+        ui.begin_frame();
+        let second = ui.button("Click###button", None);
+        ui.width(second, UISize::Pixels(120.0));
+        ui.height(second, UISize::Pixels(40.0));
+
+        assert!(second.clicked());
+        assert!(ui.events.is_empty());
+    }
+
+    #[test]
+    fn topmost_box_wins_hovering_after_layout() {
+        let mut ui = IMUI::new_for_test(400.0, 200.0);
+        ui.mouse = Some(Point::new(20.0, 20.0));
+
+        ui.begin_frame();
+        let base = ui.button("Base###base", None);
+        ui.width(base, UISize::Pixels(120.0));
+        ui.height(base, UISize::Pixels(40.0));
+
+        let mut overlay_button = None;
+        let overlay = ui.floating_pane_at(Point::new(0.0, 0.0), Some("###overlay"), |ui| {
+            let button = ui.button("Overlay###overlay_button", None);
+            ui.width(button, UISize::Pixels(120.0));
+            ui.height(button, UISize::Pixels(40.0));
+            overlay_button = Some(button);
+        });
+        ui.padding_all(overlay, 0.0);
+        ui.gap(overlay, 0.0);
+
+        ui.end_frame();
+
+        let overlay_button = overlay_button.unwrap();
+        assert!(ui.boxes[base.idx()].signal.mouse_over());
+        assert!(!ui.boxes[base.idx()].signal.hovering());
+        assert!(ui.boxes[overlay_button.idx()].signal.hovering());
     }
 }
