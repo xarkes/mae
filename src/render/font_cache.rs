@@ -318,9 +318,9 @@ impl FontCache {
 // ============================================================================
 
 #[cfg(all(feature = "freetype", not(feature = "fontdue"), target_os = "linux"))]
-use freetype::face::LoadFlag;
-#[cfg(all(feature = "freetype", not(feature = "fontdue"), target_os = "linux"))]
 use freetype::Library as FtLibrary;
+#[cfg(all(feature = "freetype", not(feature = "fontdue"), target_os = "linux"))]
+use freetype::face::LoadFlag;
 
 #[cfg(all(feature = "freetype", not(feature = "fontdue"), target_os = "linux"))]
 pub struct FontCache {

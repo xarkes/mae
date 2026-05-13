@@ -1,5 +1,5 @@
 use mae::{
-    imui::{uibox::Color, CrossAxisAlign, MainAxisAlign, UIBoxHandle, UISize, UiSignal, IMUI},
+    imui::{CrossAxisAlign, IMUI, MainAxisAlign, UIBoxHandle, UISize, UiSignal, uibox::Color},
     os::{OSEventFlag, OSKey, OSKeyCode},
     render::Backend,
 };
@@ -144,7 +144,6 @@ fn main() {
                         ui.background(menu, Color::new("#1b2028"));
                         ui.border_color(menu, Color::new("#48515d"));
                     }
-
                 });
                 ui.height(header, UISize::Pixels(46.0));
                 ui.align(header, MainAxisAlign::Start, CrossAxisAlign::Center);

@@ -11,8 +11,8 @@ use crate::{
 
 pub mod uibox {
     pub use super::{
-        u64_hash_from_string, Color, Padding, UIBox, UIBoxFlags as UIBoxFlag, UIBoxHandle,
-        UIBoxParams, UIBoxStyle, UiSignal as UIBoxSignal,
+        Color, Padding, UIBox, UIBoxFlags as UIBoxFlag, UIBoxHandle, UIBoxParams, UIBoxStyle,
+        UiSignal as UIBoxSignal, u64_hash_from_string,
     };
 }
 
@@ -351,27 +351,84 @@ impl UiSignal {
 pub struct UIBoxFlags(u64);
 
 impl UIBoxFlags {
+    // Interaction capability flags. These are still box flags by design, like RAD:
+    // widget helpers compose behavior by applying capabilities to retained boxes.
     pub const NONE: Self = Self(0);
     pub const MOUSE_CLICKABLE: Self = Self(1 << 0);
     pub const KEYBOARD_CLICKABLE: Self = Self(1 << 1);
     pub const CLICK_TO_FOCUS: Self = Self(1 << 2);
     pub const SCROLL_X: Self = Self(1 << 3);
     pub const SCROLL_Y: Self = Self(1 << 4);
+
+    // Layout flags.
     pub const FLOATING_X: Self = Self(1 << 5);
     pub const FLOATING_Y: Self = Self(1 << 6);
     pub const FIXED_WIDTH: Self = Self(1 << 7);
     pub const FIXED_HEIGHT: Self = Self(1 << 8);
+
+    // Paint flags.
     pub const DRAW_BACKGROUND: Self = Self(1 << 16);
     pub const DRAW_BORDER: Self = Self(1 << 17);
     pub const DRAW_TEXT: Self = Self(1 << 18);
     pub const DRAW_HOT_EFFECTS: Self = Self(1 << 19);
     pub const CLIP: Self = Self(1 << 20);
+
+    // Text editing capability.
     pub const TEXT_INPUT: Self = Self(1 << 21);
+
     pub const CLICKABLE: Self = Self(Self::MOUSE_CLICKABLE.0 | Self::KEYBOARD_CLICKABLE.0);
     pub const SCROLL: Self = Self(Self::SCROLL_X.0 | Self::SCROLL_Y.0);
+    pub const BUTTON: Self = Self(
+        Self::CLICKABLE.0
+            | Self::DRAW_BACKGROUND.0
+            | Self::DRAW_BORDER.0
+            | Self::DRAW_TEXT.0
+            | Self::DRAW_HOT_EFFECTS.0,
+    );
+    pub const LINE_EDIT: Self = Self(
+        Self::MOUSE_CLICKABLE.0
+            | Self::CLICK_TO_FOCUS.0
+            | Self::TEXT_INPUT.0
+            | Self::DRAW_BACKGROUND.0
+            | Self::DRAW_BORDER.0
+            | Self::DRAW_TEXT.0,
+    );
+    pub const TEXTAREA: Self = Self(
+        Self::MOUSE_CLICKABLE.0
+            | Self::CLICK_TO_FOCUS.0
+            | Self::TEXT_INPUT.0
+            | Self::DRAW_BACKGROUND.0
+            | Self::DRAW_BORDER.0
+            | Self::SCROLL_Y.0
+            | Self::CLIP.0,
+    );
 
     pub fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
+    }
+
+    fn is_mouse_clickable(self) -> bool {
+        self.contains(Self::MOUSE_CLICKABLE)
+    }
+
+    fn is_keyboard_clickable(self) -> bool {
+        self.contains(Self::KEYBOARD_CLICKABLE)
+    }
+
+    fn click_to_focus(self) -> bool {
+        self.contains(Self::CLICK_TO_FOCUS)
+    }
+
+    fn accepts_text_input(self) -> bool {
+        self.contains(Self::TEXT_INPUT)
+    }
+
+    fn scrolls_x(self) -> bool {
+        self.contains(Self::SCROLL_X)
+    }
+
+    fn scrolls_y(self) -> bool {
+        self.contains(Self::SCROLL_Y)
     }
 }
 
@@ -463,6 +520,7 @@ pub struct UIBox {
     main_axis_align: MainAxisAlign,
     cross_axis_align: CrossAxisAlign,
     style: UIBoxStyle,
+    // Per-frame interaction result for the retained box.
     signal: UiSignal,
     visible: bool,
     first_touched_frame: u64,
@@ -897,38 +955,9 @@ impl IMUI {
     }
 
     pub fn button(&mut self, label: &str, tooltip_text: Option<&str>) -> UIBoxHandle {
-        let handle = self.alloc_box(
-            Some(label),
-            UIBoxFlags::MOUSE_CLICKABLE
-                | UIBoxFlags::KEYBOARD_CLICKABLE
-                | UIBoxFlags::DRAW_BACKGROUND
-                | UIBoxFlags::DRAW_BORDER
-                | UIBoxFlags::DRAW_TEXT
-                | UIBoxFlags::DRAW_HOT_EFFECTS,
-        );
-        self.boxes[handle.idx].pref_size = [UISize::TextContent(16.0), UISize::TextContent(10.0)];
-        self.boxes[handle.idx].padding = Padding {
-            top: 5.0,
-            right: 8.0,
-            bottom: 5.0,
-            left: 8.0,
-        };
-        self.boxes[handle.idx].style.bg_color = Color::new("#323842");
-        self.boxes[handle.idx].style.border_color = Color::new("#48515d");
-        if handle.hover() {
-            if let (Some(text), Some(mouse)) = (tooltip_text, self.mouse) {
-                let tooltip = self.floating_pane_at(
-                    Point::new(mouse.x + 12.0, mouse.y + 12.0),
-                    Some("#tooltip"),
-                    |ui| {
-                        let label = ui.label(text);
-                        ui.padding_all(label, 5.0);
-                    },
-                );
-                self.background(tooltip, Color::new("#111418f0"));
-                self.padding_all(tooltip, 4.0);
-            }
-        }
+        let handle = self.alloc_box(Some(label), UIBoxFlags::BUTTON);
+        self.configure_button_box(handle);
+        self.show_tooltip_for_hover(handle, tooltip_text);
         handle
     }
 
@@ -942,59 +971,30 @@ impl IMUI {
     }
 
     pub fn line_edit(&mut self, id: &str, buffer: &mut String, masked: bool) -> UIBoxHandle {
-        let handle = self.alloc_box(
-            Some(id),
-            UIBoxFlags::MOUSE_CLICKABLE
-                | UIBoxFlags::CLICK_TO_FOCUS
-                | UIBoxFlags::TEXT_INPUT
-                | UIBoxFlags::DRAW_BACKGROUND
-                | UIBoxFlags::DRAW_BORDER
-                | UIBoxFlags::DRAW_TEXT,
-        );
+        let handle = self.alloc_box(Some(id), UIBoxFlags::LINE_EDIT);
         self.boxes[handle.idx].pref_size = [UISize::ParentPct(1.0), UISize::Pixels(32.0)];
         self.boxes[handle.idx].padding = Padding::all(7.0);
         self.boxes[handle.idx].style.bg_color = Color::new("#15191f");
         self.boxes[handle.idx].style.border_color = Color::new("#3c4652");
-        if handle.clicked() {
-            self.focus_key = Some(handle.key);
-        }
-        let focused = self.focus_key == Some(handle.key);
-        if focused {
+        self.apply_click_to_focus(handle);
+        if self.box_is_focused(handle) {
             self.apply_text_input(buffer, false);
             self.boxes[handle.idx].style.border_color = self.theme.color_main;
         }
-        let display = if masked {
-            "*".repeat(buffer.chars().count())
-        } else {
-            buffer.clone()
-        };
-        self.boxes[handle.idx].string = Some(display.clone());
-        self.boxes[handle.idx].display_string = Some(display);
+        self.set_edit_display_text(handle, buffer, masked);
         handle
     }
 
     pub fn textarea(&mut self, id: &str, buffer: &mut String) -> UIBoxHandle {
-        let handle = self.alloc_box(
-            Some(id),
-            UIBoxFlags::MOUSE_CLICKABLE
-                | UIBoxFlags::CLICK_TO_FOCUS
-                | UIBoxFlags::TEXT_INPUT
-                | UIBoxFlags::DRAW_BACKGROUND
-                | UIBoxFlags::DRAW_BORDER
-                | UIBoxFlags::SCROLL_Y
-                | UIBoxFlags::CLIP,
-        );
+        let handle = self.alloc_box(Some(id), UIBoxFlags::TEXTAREA);
         self.boxes[handle.idx].child_layout_axis = Axis::Y;
         self.boxes[handle.idx].pref_size = [UISize::ParentPct(1.0), UISize::ParentPct(1.0)];
         self.boxes[handle.idx].padding = Padding::all(10.0);
         self.boxes[handle.idx].style.bg_color = Color::new("#15191f");
         self.boxes[handle.idx].style.border_color = Color::new("#303946");
         self.boxes[handle.idx].child_gap = 2.0;
-        if handle.clicked() {
-            self.focus_key = Some(handle.key);
-        }
-        let focused = self.focus_key == Some(handle.key);
-        if focused {
+        self.apply_click_to_focus(handle);
+        if self.box_is_focused(handle) {
             self.apply_text_input(buffer, true);
             self.boxes[handle.idx].style.border_color = self.theme.color_main;
         }
@@ -1104,12 +1104,67 @@ impl IMUI {
         self
     }
 
+    fn configure_button_box(&mut self, handle: UIBoxHandle) {
+        self.boxes[handle.idx].pref_size = [UISize::TextContent(16.0), UISize::TextContent(10.0)];
+        self.boxes[handle.idx].padding = Padding {
+            top: 5.0,
+            right: 8.0,
+            bottom: 5.0,
+            left: 8.0,
+        };
+        self.boxes[handle.idx].style.bg_color = Color::new("#323842");
+        self.boxes[handle.idx].style.border_color = Color::new("#48515d");
+    }
+
+    fn show_tooltip_for_hover(&mut self, handle: UIBoxHandle, tooltip_text: Option<&str>) {
+        let (Some(text), Some(mouse)) = (tooltip_text, self.mouse) else {
+            return;
+        };
+        if !handle.hover() {
+            return;
+        }
+
+        let tooltip = self.floating_pane_at(
+            Point::new(mouse.x + 12.0, mouse.y + 12.0),
+            Some("#tooltip"),
+            |ui| {
+                let label = ui.label(text);
+                ui.padding_all(label, 5.0);
+            },
+        );
+        self.background(tooltip, Color::new("#111418f0"));
+        self.padding_all(tooltip, 4.0);
+    }
+
+    fn apply_click_to_focus(&mut self, handle: UIBoxHandle) {
+        if self.boxes[handle.idx].flags.click_to_focus() && handle.clicked() {
+            self.focus_key = Some(handle.key);
+        }
+    }
+
+    fn box_is_focused(&self, handle: UIBoxHandle) -> bool {
+        self.focus_key == Some(handle.key)
+    }
+
+    fn set_edit_display_text(&mut self, handle: UIBoxHandle, buffer: &str, masked: bool) {
+        let display = if masked {
+            "*".repeat(buffer.chars().count())
+        } else {
+            buffer.to_string()
+        };
+        self.boxes[handle.idx].string = Some(display.clone());
+        self.boxes[handle.idx].display_string = Some(display);
+    }
+
     fn apply_text_input(&mut self, buffer: &mut String, multiline: bool) {
-        let events = self.events.clone();
-        for ev in events {
+        let mut ev_idx = 0;
+        while ev_idx < self.events.len() {
+            let ev = self.events[ev_idx];
             if ev.ty != OSEventType::Press {
+                ev_idx += 1;
                 continue;
             }
+            let mut taken = true;
             match ev.key {
                 OSKey::Keyboard(OSKeyCode::KeyBackspace) => {
                     buffer.pop();
@@ -1124,9 +1179,18 @@ impl IMUI {
                     if let Some(c) = ev.chars {
                         if !c.is_ascii_control() {
                             buffer.push(c);
+                        } else {
+                            taken = false;
                         }
+                    } else {
+                        taken = false;
                     }
                 }
+            }
+            if taken {
+                self.events.remove(ev_idx);
+            } else {
+                ev_idx += 1;
             }
         }
     }
@@ -1192,11 +1256,6 @@ impl IMUI {
         self.boxes[idx].parent = parent_idx;
         self.boxes[idx].signal = signal;
         self.boxes[idx].last_touched_frame = self.build_index;
-        if flags.contains(UIBoxFlags::TEXT_INPUT) && signal.hovering() {
-            self.cursor = OSCursor::IBeam;
-        } else if flags.contains(UIBoxFlags::MOUSE_CLICKABLE) && signal.hovering() {
-            self.cursor = OSCursor::Hand;
-        }
 
         if let Some(parent_idx) = parent_idx {
             self.boxes[parent_idx].children.push(idx);
@@ -1224,7 +1283,7 @@ impl IMUI {
             let in_bounds = point_in_rect(&rect, ev.pos);
             let mut taken = false;
 
-            if flags.contains(UIBoxFlags::MOUSE_CLICKABLE) {
+            if flags.is_mouse_clickable() {
                 if let Some(button) = mouse_button_from_key(ev.key) {
                     match ev.ty {
                         OSEventType::Press if in_bounds => {
@@ -1255,7 +1314,7 @@ impl IMUI {
             }
 
             if !taken
-                && flags.contains(UIBoxFlags::KEYBOARD_CLICKABLE)
+                && flags.is_keyboard_clickable()
                 && focused
                 && ev.ty == OSEventType::Press
                 && matches!(
@@ -1268,11 +1327,11 @@ impl IMUI {
             }
 
             if !taken && ev.ty == OSEventType::Scroll && in_bounds {
-                if flags.contains(UIBoxFlags::SCROLL_Y) {
+                if flags.scrolls_y() {
                     signal.scroll_y += ev.delta as i16;
                     taken = true;
                 }
-                if flags.contains(UIBoxFlags::SCROLL_X) {
+                if flags.scrolls_x() {
                     signal.scroll_x += ev.delta as i16;
                     taken = true;
                 }
@@ -1288,7 +1347,7 @@ impl IMUI {
         if mouse_over {
             signal.flags |= UiSignal::MOUSE_OVER;
         }
-        if flags.contains(UIBoxFlags::MOUSE_CLICKABLE)
+        if flags.is_mouse_clickable()
             && mouse_over
             && (self.hot_key.is_none() || self.hot_key == Some(key))
             && (self.active_left_key.is_none() || self.active_left_key == Some(key))
@@ -1630,7 +1689,7 @@ impl IMUI {
             let rect = self.clipped_rect(idx);
             if point_in_rect(&rect, self.mouse) {
                 self.boxes[idx].signal.flags |= UiSignal::MOUSE_OVER;
-                if self.boxes[idx].flags.contains(UIBoxFlags::MOUSE_CLICKABLE) {
+                if self.boxes[idx].flags.is_mouse_clickable() {
                     hover_candidate = Some(idx);
                 }
             }
@@ -1642,7 +1701,7 @@ impl IMUI {
         if let Some(idx) = hover_candidate {
             self.hot_key = Some(self.boxes[idx].key);
             self.boxes[idx].signal.flags |= UiSignal::HOVERING;
-            self.cursor = if self.boxes[idx].flags.contains(UIBoxFlags::TEXT_INPUT) {
+            self.cursor = if self.boxes[idx].flags.accepts_text_input() {
                 OSCursor::IBeam
             } else {
                 OSCursor::Hand
@@ -1891,6 +1950,34 @@ mod tests {
         ui.height(second, UISize::Pixels(40.0));
 
         assert!(second.clicked());
+        assert!(ui.events.is_empty());
+    }
+
+    #[test]
+    fn focused_line_edit_consumes_text_events() {
+        let mut ui = IMUI::new_for_test(400.0, 200.0);
+        let mut buffer = String::new();
+
+        ui.begin_frame();
+        let edit = ui.line_edit("Edit###edit", &mut buffer, false);
+        ui.width(edit, UISize::Pixels(120.0));
+        ui.height(edit, UISize::Pixels(32.0));
+        ui.end_frame();
+
+        ui.focus_key = Some(edit.key());
+        ui.events = vec![OSEvent {
+            ty: OSEventType::Press,
+            key: OSKey::Keyboard(OSKeyCode::KeyA),
+            pos: None,
+            chars: Some('a'),
+            delta: 0.0,
+            flags: None,
+        }];
+
+        ui.begin_frame();
+        ui.line_edit("Edit###edit", &mut buffer, false);
+
+        assert_eq!(buffer, "a");
         assert!(ui.events.is_empty());
     }
 
