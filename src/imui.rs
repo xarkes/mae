@@ -1734,6 +1734,112 @@ impl IMUI {
         for child in children {
             self.draw_ui_root_skipping(child, skip_idx);
         }
+        self.draw_text_caret_if_focused(idx);
+    }
+
+    fn draw_text_caret_if_focused(&mut self, idx: usize) {
+        if self.drawer.is_none() || self.focus_key != Some(self.boxes[idx].key) {
+            return;
+        }
+        if !self.boxes[idx].flags.accepts_text_input() {
+            return;
+        }
+        // TODO: Caret blinking currently depends on frame updates, so it does
+        // not animate correctly in lazy-rendering mode.
+        // TODO: Replace hard blink with a smooth fade animation.
+        // TODO: Invalidate/repaint only the caret rectangle instead of the
+        // entire frame.
+        // Blink at 2 Hz.
+        if ((self.now_seconds() * 2.0) as i64) % 2 != 0 {
+            return;
+        }
+
+        if self.boxes[idx].flags.contains(UIBoxFlags::LINE_EDIT) {
+            self.draw_line_edit_caret(idx);
+        } else if self.boxes[idx].flags.contains(UIBoxFlags::TEXTAREA) {
+            self.draw_textarea_caret(idx);
+        }
+    }
+
+    fn draw_line_edit_caret(&mut self, idx: usize) {
+        let rect = self.boxes[idx].rect;
+        let padding = self.boxes[idx].padding;
+        let style = self.boxes[idx].style;
+        let text = self.boxes[idx].display_string.clone().unwrap_or_default();
+        let text_width = self
+            .drawer
+            .as_ref()
+            .unwrap()
+            .get_text_size(style.font_size, &text, text.len())
+            .0;
+        let text_height = self
+            .drawer
+            .as_ref()
+            .unwrap()
+            .get_text_size(style.font_size, "M", 1)
+            .1;
+
+        let content_x0 = rect.x0 + padding.left + style.margin;
+        let content_y0 = rect.y0 + padding.top + style.margin;
+        let content_x1 = rect.x1 - padding.right - style.margin;
+        let content_y1 = rect.y1 - padding.bottom - style.margin;
+
+        let caret_x = (content_x0 + text_width).min(content_x1 - 1.0);
+        let caret_h = text_height.min((content_y1 - content_y0).max(1.0));
+        let caret_rect = RectCoords::from_size(caret_x, content_y0, 1.5, caret_h);
+        self.drawer
+            .as_mut()
+            .unwrap()
+            .draw_rect(&caret_rect, self.theme.color_text);
+    }
+
+    fn draw_textarea_caret(&mut self, idx: usize) {
+        let style = self.boxes[idx].style;
+        let children = self.boxes[idx].children.clone();
+        let target = children.last().copied();
+        let (content_x0, content_y0, content_x1, content_y1, line_text) = if let Some(line_idx) = target
+        {
+            let line = &self.boxes[line_idx];
+            let text = line.display_string.clone().unwrap_or_default();
+            (
+                line.rect.x0 + line.padding.left + line.style.margin,
+                line.rect.y0 + line.padding.top + line.style.margin,
+                line.rect.x1 - line.padding.right - line.style.margin,
+                line.rect.y1 - line.padding.bottom - line.style.margin,
+                text,
+            )
+        } else {
+            let rect = self.boxes[idx].rect;
+            let padding = self.boxes[idx].padding;
+            (
+                rect.x0 + padding.left + style.margin,
+                rect.y0 + padding.top + style.margin,
+                rect.x1 - padding.right - style.margin,
+                rect.y1 - padding.bottom - style.margin,
+                String::new(),
+            )
+        };
+
+        let text_width = self
+            .drawer
+            .as_ref()
+            .unwrap()
+            .get_text_size(style.font_size, &line_text, line_text.len())
+            .0;
+        let text_height = self
+            .drawer
+            .as_ref()
+            .unwrap()
+            .get_text_size(style.font_size, "M", 1)
+            .1;
+
+        let caret_x = (content_x0 + text_width).min(content_x1 - 1.0);
+        let caret_h = text_height.min((content_y1 - content_y0).max(1.0));
+        let caret_rect = RectCoords::from_size(caret_x, content_y0, 1.5, caret_h);
+        self.drawer
+            .as_mut()
+            .unwrap()
+            .draw_rect(&caret_rect, self.theme.color_text);
     }
 
     fn text_size(&mut self, font_size: f32, text: &str) -> (f32, f32) {
