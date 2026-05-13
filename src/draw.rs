@@ -112,6 +112,11 @@ impl Drawer {
 
         let mut x = xstart;
         let y = y * scale_factor + size;
+        let vertical_clip_pad = match font_icon {
+            true => self.renderer.icon_font_cache.borrow().line_height(size) - size,
+            false => self.renderer.font_cache.borrow().line_height(size) - size,
+        }
+        .max(0.0);
         for (i, c) in text.char_indices() {
             if i >= length {
                 break;
@@ -144,7 +149,7 @@ impl Drawer {
             {
                 let avail_width = xmax - xpos;
                 let width_trunc = f32::min(w, avail_width);
-                let avail_height = ymax - ypos;
+                let avail_height = (ymax + vertical_clip_pad) - ypos;
                 let height_trunc = f32::min(h, avail_height);
                 // xarkes: handle aligned truncation
                 let src = match underflow {

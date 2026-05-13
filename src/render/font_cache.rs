@@ -290,7 +290,6 @@ impl FontCache {
 
     pub fn get_text_size(&mut self, size: f32, text: &str, length: usize) -> (f32, f32) {
         let mut width = 0.;
-        let mut height = 0;
         for (i, c) in text.char_indices() {
             if i >= length {
                 break;
@@ -300,9 +299,8 @@ impl FontCache {
             }
             let glyph = self.get(c, size);
             width += glyph.advance;
-            height = std::cmp::max(height, glyph.height);
         }
-        (width, height as f32)
+        (width, self.line_height(size))
     }
 
     pub fn line_height(&self, font_size: f32) -> f32 {
@@ -311,6 +309,7 @@ impl FontCache {
             .expect("font size error")
             .new_line_size
     }
+
 }
 
 // ============================================================================
@@ -532,7 +531,6 @@ impl FontCache {
 
     pub fn get_text_size(&mut self, size: f32, text: &str, length: usize) -> (f32, f32) {
         let mut width = 0.;
-        let mut height = 0;
         for (i, c) in text.char_indices() {
             if i >= length {
                 break;
@@ -542,9 +540,8 @@ impl FontCache {
             }
             let glyph = self.get(c, size);
             width += glyph.advance;
-            height = std::cmp::max(height, glyph.height);
         }
-        (width, height as f32)
+        (width, self.line_height(size))
     }
 
     pub fn line_height(&self, font_size: f32) -> f32 {
@@ -557,6 +554,7 @@ impl FontCache {
         let height = self.face.size_metrics().map(|m| m.height >> 6).unwrap_or(0);
         height as f32
     }
+
 }
 
 // ============================================================================
@@ -620,6 +618,7 @@ impl FontCache {
     pub fn line_height(&self, font_size: f32) -> f32 {
         font_size * 1.2
     }
+
 }
 
 // On Linux: both shouldn't be enabled simultaneously
