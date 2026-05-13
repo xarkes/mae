@@ -1,13 +1,13 @@
 use crate::os::Window;
 use std::ffi::CString;
+use windows::core::PCSTR;
 use windows::Win32::Graphics::Gdi::GetDC;
 use windows::Win32::Graphics::OpenGL::{
-    ChoosePixelFormat, PFD_DRAW_TO_WINDOW, PFD_SUPPORT_OPENGL, PFD_TYPE_RGBA,
-    PIXELFORMATDESCRIPTOR, SetPixelFormat, glFlush, wglCreateContext, wglGetCurrentContext,
-    wglGetProcAddress, wglMakeCurrent,
+    glFlush, wglCreateContext, wglGetCurrentContext, wglGetProcAddress, wglMakeCurrent,
+    ChoosePixelFormat, SetPixelFormat, PFD_DRAW_TO_WINDOW, PFD_SUPPORT_OPENGL, PFD_TYPE_RGBA,
+    PIXELFORMATDESCRIPTOR,
 };
 use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA};
-use windows::core::PCSTR;
 
 pub type GLStringPtr = *const i8;
 pub struct GLContextHandle {}

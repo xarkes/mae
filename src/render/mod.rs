@@ -137,12 +137,30 @@ pub enum Backend {
 }
 
 impl Backend {
+    pub fn label(self) -> &'static str {
+        match self {
+            #[cfg(feature = "opengl")]
+            Backend::OpenGL => "OpenGL",
+            #[cfg(feature = "cpu")]
+            Backend::CPU => "CPU",
+        }
+    }
+
+    pub fn available() -> Vec<Self> {
+        vec![
+            #[cfg(feature = "opengl")]
+            Backend::OpenGL,
+            #[cfg(feature = "cpu")]
+            Backend::CPU,
+        ]
+    }
+
     /// Returns the default backend (prefers OpenGL if available)
     pub fn default_backend() -> Self {
-        #[cfg(feature = "opengl")]
-        return Backend::OpenGL;
-        #[cfg(all(feature = "cpu", not(feature = "opengl")))]
-        return Backend::CPU;
+        Self::available()
+            .into_iter()
+            .next()
+            .expect("at least one renderer backend must be available")
     }
 
     /// Returns backend from MAE_RENDERER environment variable, or default
@@ -159,13 +177,13 @@ impl Backend {
 
 pub struct Renderer {
     pub win: Window,
+    backend: Backend,
     ctx: Box<dyn RenderBackend>,
     pub font_cache: Rc<RefCell<FontCache>>,
     pub icon_font_cache: Rc<RefCell<FontCache>>,
     batches: Vec<RenderBatch>,
 }
 
-use log;
 impl Renderer {
     pub fn new(win: Window) -> Self {
         Self::with_backend(win, Backend::from_env())
@@ -193,10 +211,10 @@ impl Renderer {
             t2.elapsed()
         );
 
-        let mut batches = Vec::new();
-        batches.push(RenderBatch::new(100));
+        let batches = vec![RenderBatch::new(100)];
         let mut renderer = Renderer {
             win,
+            backend,
             ctx,
             font_cache,
             icon_font_cache,
@@ -242,6 +260,30 @@ impl Renderer {
 
     pub fn resize(&mut self, w: f32, h: f32) {
         self.ctx.resize(w, h);
+    }
+
+    pub fn backend(&self) -> Backend {
+        self.backend
+    }
+
+    pub fn set_backend(&mut self, backend: Backend) {
+        if self.backend == backend {
+            return;
+        }
+
+        self.ctx = Self::create_backend(&self.win, backend);
+        self.backend = backend;
+
+        let render_size = self.win.get_render_size();
+        self.resize(render_size.0, render_size.1);
+
+        self.font_cache.borrow_mut().dirty = true;
+        self.icon_font_cache.borrow_mut().dirty = true;
+        self.update_font_texture(false);
+        self.update_font_texture(true);
+
+        self.batches.clear();
+        self.batches.push(RenderBatch::new(100));
     }
 
     pub fn render_frame(&mut self) {

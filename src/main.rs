@@ -1,6 +1,7 @@
 use mae::{
-    imui::{CrossAxisAlign, IMUI, MainAxisAlign, UIBoxHandle, UISize, UiSignal, uibox::Color},
+    imui::{uibox::Color, CrossAxisAlign, MainAxisAlign, UIBoxHandle, UISize, UiSignal, IMUI},
     os::{OSEventFlag, OSKey, OSKeyCode},
+    render::Backend,
 };
 
 fn main() {
@@ -19,6 +20,7 @@ fn main() {
     let mut counter = 0usize;
     let mut lazy_rendering = !ui.render_continuously();
     let mut vsync_enabled = ui.vsync_enabled();
+    let mut renderer_menu_open = false;
 
     ui.eventloop(|ui| {
         if ui.input(OSKey::Keyboard(OSKeyCode::KeyT), Some(OSEventFlag::Control)) {
@@ -93,19 +95,63 @@ fn main() {
                         ui.set_vsync_enabled(vsync_enabled);
                     }
 
-                    let plus = ui.button("+", Some("Increment counter"));
-                    ui.width(plus, UISize::Pixels(36.0));
-                    ui.height(plus, UISize::Pixels(32.0));
-                    if plus.clicked() {
-                        counter += 1;
+                    let current_backend = ui.renderer_backend();
+                    let renderer_button = ui.button(
+                        &format!("Renderer: {}##renderer_dropdown", current_backend.label()),
+                        Some("Select the active renderer"),
+                    );
+                    ui.height(renderer_button, UISize::Pixels(32.0));
+                    if renderer_button.clicked() {
+                        renderer_menu_open = !renderer_menu_open;
                     }
+
+                    if renderer_menu_open {
+                        let trigger_bounds = ui.bounds(renderer_button);
+                        let menu = ui.floating_pane_at(
+                            mae::imui::Point::new(trigger_bounds.x0, trigger_bounds.y1 + 6.0),
+                            Some("###renderer_menu"),
+                            |ui| {
+                                for backend in Backend::available() {
+                                    let option = ui.button(
+                                        &format!(
+                                            "{}{}##renderer_option_{:?}",
+                                            if backend == current_backend { "* " } else { "" },
+                                            backend.label(),
+                                            backend
+                                        ),
+                                        None,
+                                    );
+                                    ui.width(option, UISize::Pixels(180.0));
+                                    ui.height(option, UISize::Pixels(30.0));
+                                    ui.background(
+                                        option,
+                                        if backend == current_backend {
+                                            Color::new("#2f8f83")
+                                        } else {
+                                            Color::new("#2a3038")
+                                        },
+                                    );
+                                    if option.clicked() {
+                                        ui.set_renderer_backend(backend);
+                                        vsync_enabled = ui.vsync_enabled();
+                                        renderer_menu_open = false;
+                                    }
+                                }
+                            },
+                        );
+                        ui.padding_all(menu, 6.0);
+                        ui.gap(menu, 4.0);
+                        ui.background(menu, Color::new("#1b2028"));
+                        ui.border_color(menu, Color::new("#48515d"));
+                    }
+
                 });
                 ui.height(header, UISize::Pixels(46.0));
                 ui.align(header, MainAxisAlign::Start, CrossAxisAlign::Center);
 
                 match selected_tab {
                     0 => layout_page(ui, show_panel),
-                    1 => widget_page(ui, &mut input, &mut text, counter),
+                    1 => widget_page(ui, &mut input, &mut text, &mut counter),
                     _ => render_page(ui),
                 }
             });
@@ -184,7 +230,7 @@ fn layout_page(ui: &mut IMUI, show_panel: bool) {
     ui.gap(body, 12.0);
 }
 
-fn widget_page(ui: &mut IMUI, input: &mut String, text: &mut String, counter: usize) {
+fn widget_page(ui: &mut IMUI, input: &mut String, text: &mut String, counter: &mut usize) {
     let body = ui.column(|ui| {
         section_title(ui, "Signals");
         let signal_row = ui.row(|ui| {
@@ -201,9 +247,21 @@ fn widget_page(ui: &mut IMUI, input: &mut String, text: &mut String, counter: us
         ui.gap(signal_row, 10.0);
         ui.align(signal_row, MainAxisAlign::Start, CrossAxisAlign::Center);
 
-        let counter_label = ui.label(&format!("Counter: {counter}"));
-        ui.height(counter_label, UISize::Pixels(28.0));
-        ui.text_color(counter_label, Color::new("#9fc8ff"));
+        let counter_row = ui.row(|ui| {
+            let counter_label = ui.label(&format!("Counter: {}", *counter));
+            ui.height(counter_label, UISize::Pixels(28.0));
+            ui.text_color(counter_label, Color::new("#9fc8ff"));
+
+            let plus = ui.button("+", Some("Increment counter"));
+            ui.width(plus, UISize::Pixels(36.0));
+            ui.height(plus, UISize::Pixels(32.0));
+            if plus.clicked() {
+                *counter += 1;
+            }
+        });
+        ui.height(counter_row, UISize::Pixels(36.0));
+        ui.gap(counter_row, 8.0);
+        ui.align(counter_row, MainAxisAlign::Start, CrossAxisAlign::Center);
 
         section_title(ui, "Text Input");
         let edit = ui.line_edit("###demo_line_edit", input, false);

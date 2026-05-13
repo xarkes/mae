@@ -11,8 +11,8 @@ use crate::{
 
 pub mod uibox {
     pub use super::{
-        Color, Padding, UIBox, UIBoxFlags as UIBoxFlag, UIBoxHandle, UIBoxParams, UIBoxStyle,
-        UiSignal as UIBoxSignal, u64_hash_from_string,
+        u64_hash_from_string, Color, Padding, UIBox, UIBoxFlags as UIBoxFlag, UIBoxHandle,
+        UIBoxParams, UIBoxStyle, UiSignal as UIBoxSignal,
     };
 }
 
@@ -774,6 +774,21 @@ impl IMUI {
         }
     }
 
+    pub fn renderer_backend(&self) -> render::Backend {
+        self.drawer
+            .as_ref()
+            .map(|drawer| drawer.renderer.backend())
+            .unwrap_or_else(render::Backend::default_backend)
+    }
+
+    pub fn set_renderer_backend(&mut self, backend: render::Backend) {
+        if let Some(drawer) = self.drawer.as_mut() {
+            drawer.renderer.set_backend(backend);
+            drawer.renderer.vsync(self.vsync_enabled);
+        }
+        self.request_repaint();
+    }
+
     pub fn vsync_enabled(&self) -> bool {
         self.vsync_enabled
     }
@@ -800,6 +815,15 @@ impl IMUI {
     pub fn set_focus_active(&mut self, id: &str) {
         let seed = self.boxes.get(self.root).map(|b| b.key).unwrap_or_default();
         self.next_focus_key = Some(UiKey(u64_hash_from_string(seed.0, id)));
+    }
+
+    pub fn bounds(&self, handle: UIBoxHandle) -> RectCoords {
+        self.boxes
+            .get(handle.idx)
+            .map(|b| b.rect)
+            .filter(|rect| rect.width() > 0.0 || rect.height() > 0.0)
+            .or_else(|| self.states.get(&handle.key).map(|state| state.last_rect))
+            .unwrap_or_else(|| RectCoords::from_size(0.0, 0.0, 0.0, 0.0))
     }
 
     pub fn row(&mut self, children: impl FnOnce(&mut IMUI)) -> UIBoxHandle {
