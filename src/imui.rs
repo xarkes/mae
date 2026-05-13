@@ -459,6 +459,8 @@ pub struct UIBox {
     style: UIBoxStyle,
     signal: UiSignal,
     visible: bool,
+    first_touched_frame: u64,
+    last_touched_frame: u64,
 }
 
 impl UIBox {
@@ -488,26 +490,32 @@ impl UIBox {
             },
             signal: UiSignal::default(),
             visible: true,
+            first_touched_frame: 0,
+            last_touched_frame: 0,
         }
     }
 
     pub fn bounds(&self) -> RectCoords {
         self.rect
     }
-}
 
-#[derive(Clone, Debug)]
-struct PersistentBoxState {
-    last_rect: RectCoords,
-    last_touched_frame: u64,
-}
+    fn reset_for_frame(
+        &mut self,
+        key: UiKey,
+        flags: UIBoxFlags,
+        string: Option<String>,
+        theme: &UITheme,
+    ) {
+        let rect = self.rect;
+        let computed_size = self.computed_size;
+        let first_touched_frame = self.first_touched_frame;
+        let last_touched_frame = self.last_touched_frame;
 
-impl Default for PersistentBoxState {
-    fn default() -> Self {
-        Self {
-            last_rect: RectCoords::from_size(-10000.0, -10000.0, 0.0, 0.0),
-            last_touched_frame: 0,
-        }
+        *self = Self::new(key, flags, string, theme);
+        self.rect = rect;
+        self.computed_size = computed_size;
+        self.first_touched_frame = first_touched_frame;
+        self.last_touched_frame = last_touched_frame;
     }
 }
 
@@ -543,9 +551,11 @@ pub struct IMUI {
     cursor: OSCursor,
 
     boxes: Vec<UIBox>,
+    box_table: HashMap<UiKey, usize>,
+    free_boxes: Vec<usize>,
+    frame_boxes: Vec<usize>,
     root: usize,
     parent_stack: Vec<usize>,
-    states: HashMap<UiKey, PersistentBoxState>,
     build_index: u64,
     render_continuously: bool,
     vsync_enabled: bool,
@@ -602,9 +612,11 @@ impl IMUI {
             next_focus_key: None,
             cursor: OSCursor::Arrow,
             boxes: Vec::new(),
+            box_table: HashMap::new(),
+            free_boxes: Vec::new(),
+            frame_boxes: Vec::new(),
             root: 0,
             parent_stack: Vec::new(),
-            states: HashMap::new(),
             build_index: 0,
             render_continuously: true,
             vsync_enabled: true,
@@ -655,7 +667,7 @@ impl IMUI {
 
     fn begin_frame(&mut self) {
         self.build_index += 1;
-        self.boxes.clear();
+        self.frame_boxes.clear();
         self.parent_stack.clear();
         self.cursor = OSCursor::Arrow;
         self.focus_key = self.next_focus_key.take().or(self.focus_key);
@@ -682,7 +694,7 @@ impl IMUI {
             drawer.renderer.win.set_cursor(self.cursor);
         }
 
-        self.prune_states();
+        self.prune_boxes();
     }
 
     fn now_seconds(&self) -> f64 {
@@ -698,12 +710,6 @@ impl IMUI {
             self.fps_frame_count = 0;
             self.fps_window_start = now;
         }
-    }
-
-    fn prune_states(&mut self) {
-        let frame = self.build_index;
-        self.states
-            .retain(|key, state| key.is_zero() || state.last_touched_frame + 120 >= frame);
     }
 
     pub fn pull_consume_events(&mut self) {
@@ -821,8 +827,6 @@ impl IMUI {
         self.boxes
             .get(handle.idx)
             .map(|b| b.rect)
-            .filter(|rect| rect.width() > 0.0 || rect.height() > 0.0)
-            .or_else(|| self.states.get(&handle.key).map(|state| state.last_rect))
             .unwrap_or_else(|| RectCoords::from_size(0.0, 0.0, 0.0, 0.0))
     }
 
@@ -979,9 +983,12 @@ impl IMUI {
         } else {
             let lines: Vec<String> = buffer.lines().map(str::to_string).collect();
             for (idx, line) in lines.iter().enumerate() {
-                let row = self.label(line);
-                self.boxes[row.idx].key =
-                    UiKey(u64_hash_from_string(handle.key.0, &idx.to_string()));
+                let line_id = format!("{line}###textarea_line_{idx}");
+                let row = self.alloc_box(Some(&line_id), UIBoxFlags::DRAW_TEXT);
+                self.boxes[row.idx].string = Some(line.clone());
+                self.boxes[row.idx].display_string = Some(line.clone());
+                self.boxes[row.idx].pref_size =
+                    [UISize::TextContent(0.0), UISize::TextContent(0.0)];
                 self.height(row, UISize::Pixels(self.theme.size_text + 4.0));
             }
         }
@@ -1101,11 +1108,36 @@ impl IMUI {
         }
     }
 
+    fn box_from_key(&self, key: UiKey) -> Option<usize> {
+        if key.is_zero() {
+            None
+        } else {
+            self.box_table.get(&key).copied()
+        }
+    }
+
+    fn allocate_box_storage(
+        &mut self,
+        key: UiKey,
+        flags: UIBoxFlags,
+        display_string: Option<String>,
+    ) -> usize {
+        if let Some(idx) = self.free_boxes.pop() {
+            self.boxes[idx] = UIBox::new(key, flags, display_string, &self.theme);
+            idx
+        } else {
+            let idx = self.boxes.len();
+            self.boxes
+                .push(UIBox::new(key, flags, display_string, &self.theme));
+            idx
+        }
+    }
+
     fn alloc_box(&mut self, label: Option<&str>, flags: UIBoxFlags) -> UIBoxHandle {
         let parent_idx = self.parent_stack.last().copied();
         let seed = parent_idx.map(|idx| self.boxes[idx].key.0).unwrap_or(0);
         let key_string = label.map(hash_part_from_key_string);
-        let key = key_string
+        let mut key = key_string
             .as_ref()
             .filter(|s| !s.is_empty())
             .map(|s| UiKey(u64_hash_from_string(seed, s)))
@@ -1113,33 +1145,52 @@ impl IMUI {
         let display_string = label
             .map(display_part_from_key_string)
             .filter(|s| !s.is_empty());
-        let mut box_ = UIBox::new(key, flags, display_string, &self.theme);
-        box_.parent = parent_idx;
-        let signal = self.signal_from_key_and_flags(key, flags);
-        box_.signal = signal;
+        let mut existing_idx = self.box_from_key(key);
+        if let Some(idx) = existing_idx {
+            if self.boxes[idx].last_touched_frame == self.build_index {
+                key = UiKey::default();
+                existing_idx = None;
+            }
+        }
+
+        let signal = self.signal_from_key_and_flags(key, flags, existing_idx);
+        let idx = if let Some(idx) = existing_idx {
+            self.boxes[idx].reset_for_frame(key, flags, display_string.clone(), &self.theme);
+            idx
+        } else {
+            self.allocate_box_storage(key, flags, display_string.clone())
+        };
+
+        if !key.is_zero() && existing_idx.is_none() {
+            self.box_table.insert(key, idx);
+            self.boxes[idx].first_touched_frame = self.build_index;
+        }
+
+        self.boxes[idx].parent = parent_idx;
+        self.boxes[idx].signal = signal;
+        self.boxes[idx].last_touched_frame = self.build_index;
         if flags.contains(UIBoxFlags::TEXT_INPUT) && signal.hovering() {
             self.cursor = OSCursor::IBeam;
         } else if flags.contains(UIBoxFlags::MOUSE_CLICKABLE) && signal.hovering() {
             self.cursor = OSCursor::Hand;
         }
 
-        let idx = self.boxes.len();
-        self.boxes.push(box_);
         if let Some(parent_idx) = parent_idx {
             self.boxes[parent_idx].children.push(idx);
         }
-        if !key.is_zero() {
-            self.states.entry(key).or_default().last_touched_frame = self.build_index;
-        }
+        self.frame_boxes.push(idx);
         UIBoxHandle { idx, key, signal }
     }
 
-    fn signal_from_key_and_flags(&mut self, key: UiKey, flags: UIBoxFlags) -> UiSignal {
+    fn signal_from_key_and_flags(
+        &mut self,
+        key: UiKey,
+        flags: UIBoxFlags,
+        existing_idx: Option<usize>,
+    ) -> UiSignal {
         let mut signal = UiSignal::default();
-        let rect = self
-            .states
-            .get(&key)
-            .map(|state| state.last_rect)
+        let rect = existing_idx
+            .map(|idx| self.boxes[idx].rect)
             .unwrap_or_else(|| RectCoords::from_size(-10000.0, -10000.0, 0.0, 0.0));
         let mouse_over = point_in_rect(&rect, self.mouse);
         if mouse_over {
@@ -1189,7 +1240,6 @@ impl IMUI {
             self.enforce_constraints(root, axis);
             self.position(root, axis);
         }
-        self.update_last_rects(root);
     }
 
     fn calc_standalone(&mut self, idx: usize, axis: Axis) {
@@ -1403,19 +1453,6 @@ impl IMUI {
         }
     }
 
-    fn update_last_rects(&mut self, idx: usize) {
-        let key = self.boxes[idx].key;
-        if !key.is_zero() {
-            let state = self.states.entry(key).or_default();
-            state.last_rect = self.boxes[idx].rect;
-            state.last_touched_frame = self.build_index;
-        }
-        let children = self.boxes[idx].children.clone();
-        for child in children {
-            self.update_last_rects(child);
-        }
-    }
-
     fn draw_ui_all(&mut self) {
         if self.drawer.is_none() {
             return;
@@ -1475,6 +1512,55 @@ impl IMUI {
             drawer.get_text_size(font_size, text, text.len())
         } else {
             (text.chars().count() as f32 * font_size * 0.6, font_size)
+        }
+    }
+
+    fn release_box(&mut self, idx: usize) {
+        self.boxes[idx] = UIBox::new(UiKey::default(), UIBoxFlags::NONE, None, &self.theme);
+        self.free_boxes.push(idx);
+    }
+
+    fn prune_boxes(&mut self) {
+        let frame = self.build_index;
+        let stale_keys: Vec<UiKey> = self
+            .box_table
+            .iter()
+            .filter_map(|(key, &idx)| (self.boxes[idx].last_touched_frame < frame).then_some(*key))
+            .collect();
+
+        for key in stale_keys {
+            if let Some(idx) = self.box_table.remove(&key) {
+                self.release_box(idx);
+            }
+        }
+
+        let transient_boxes: Vec<usize> = self
+            .frame_boxes
+            .iter()
+            .copied()
+            .filter(|&idx| self.boxes[idx].key.is_zero())
+            .collect();
+        for idx in transient_boxes {
+            self.release_box(idx);
+        }
+
+        if self
+            .active_key
+            .is_some_and(|key| !self.box_table.contains_key(&key))
+        {
+            self.active_key = None;
+        }
+        if self
+            .focus_key
+            .is_some_and(|key| !self.box_table.contains_key(&key))
+        {
+            self.focus_key = None;
+        }
+        if self
+            .next_focus_key
+            .is_some_and(|key| !self.box_table.contains_key(&key))
+        {
+            self.next_focus_key = None;
         }
     }
 }
@@ -1568,5 +1654,37 @@ mod tests {
         let children = ui.boxes[root_child.idx].children.clone();
         assert_eq!(ui.boxes[children[0]].computed_size.width, 100.0);
         assert_eq!(ui.boxes[children[1]].computed_size.width, 200.0);
+    }
+
+    #[test]
+    fn keyed_boxes_are_reused_across_consecutive_frames() {
+        let mut ui = IMUI::new_for_test(400.0, 200.0);
+
+        ui.begin_frame();
+        let first = ui.named_column("###stable", |_| {});
+        ui.end_frame();
+
+        ui.begin_frame();
+        let second = ui.named_column("###stable", |_| {});
+        ui.end_frame();
+
+        assert_eq!(first.idx(), second.idx());
+        assert_eq!(ui.box_table.get(&first.key()), Some(&first.idx()));
+    }
+
+    #[test]
+    fn keyed_boxes_are_pruned_when_missing_for_a_frame() {
+        let mut ui = IMUI::new_for_test(400.0, 200.0);
+
+        ui.begin_frame();
+        let first = ui.named_column("###stable", |_| {});
+        ui.end_frame();
+        assert!(ui.box_table.contains_key(&first.key()));
+
+        ui.begin_frame();
+        ui.end_frame();
+
+        assert!(!ui.box_table.contains_key(&first.key()));
+        assert!(ui.free_boxes.contains(&first.idx()));
     }
 }
