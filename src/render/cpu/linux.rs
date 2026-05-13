@@ -26,7 +26,12 @@ pub fn cpu_create_context(win: &Window) -> CPUContextHandle {
     }
 }
 
-pub fn cpu_swapbuffers(ctx: &mut CPUContextHandle, framebuffer: &[u32], width: usize, height: usize) {
+pub fn cpu_swapbuffers(
+    ctx: &mut CPUContextHandle,
+    framebuffer: &[u32],
+    width: usize,
+    height: usize,
+) {
     if width == 0 || height == 0 {
         return;
     }

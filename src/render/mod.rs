@@ -1,8 +1,8 @@
+#[cfg(feature = "cpu")]
+mod cpu;
 pub mod font_cache;
 #[cfg(feature = "opengl")]
 mod opengl;
-#[cfg(feature = "cpu")]
-mod cpu;
 
 use std::{cell::RefCell, rc::Rc};
 
@@ -15,7 +15,6 @@ pub trait RenderBackend {
     fn begin_frame(&mut self);
     fn end_frame(&mut self);
     fn render(&mut self, batches: &Vec<RenderBatch>);
-    #[cfg(debug_assertions)]
     fn vsync(&mut self, enable: bool);
 }
 
@@ -189,7 +188,10 @@ impl Renderer {
         let icon_font_cache = Rc::new(RefCell::new(FontCache::new(include_bytes!(
             "../../assets/MaterialIcons-Regular.ttf"
         ))));
-        println!("[profile] icon_font_cache (MaterialIcons): {:?}", t2.elapsed());
+        println!(
+            "[profile] icon_font_cache (MaterialIcons): {:?}",
+            t2.elapsed()
+        );
 
         let mut batches = Vec::new();
         batches.push(RenderBatch::new(100));
@@ -264,7 +266,6 @@ impl Renderer {
         self.current_batch().add_rect(inst);
     }
 
-    #[cfg(debug_assertions)]
     pub fn vsync(&mut self, enable: bool) {
         self.ctx.vsync(enable);
     }

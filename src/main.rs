@@ -17,11 +17,10 @@ fn main() {
     let mut show_panel = true;
     let mut selected_tab = 0usize;
     let mut counter = 0usize;
-    let mut render_60fps = true;
+    let mut lazy_rendering = !ui.render_continuously();
+    let mut vsync_enabled = ui.vsync_enabled();
 
     ui.eventloop(|ui| {
-        ui.set_render_continuously(render_60fps);
-
         if ui.input(OSKey::Keyboard(OSKeyCode::KeyT), Some(OSEventFlag::Control)) {
             show_panel = !show_panel;
         }
@@ -76,10 +75,22 @@ fn main() {
                     ui.height(fps, UISize::Pixels(30.0));
                     ui.text_color(fps, Color::new("#9aa4af"));
 
-                    let switch = toggle_switch(ui, render_60fps);
-                    if switch.clicked() {
-                        render_60fps = !render_60fps;
-                        ui.set_render_continuously(render_60fps);
+                    let lazy_switch = toggle_switch(
+                        ui,
+                        "Lazy rendering##render_mode_toggle",
+                        lazy_rendering,
+                        "Toggle frame pacing",
+                    );
+                    if lazy_switch.clicked() {
+                        lazy_rendering = !lazy_rendering;
+                        ui.set_render_continuously(!lazy_rendering);
+                    }
+
+                    let vsync_switch =
+                        toggle_switch(ui, "Vsync##vsync_toggle", vsync_enabled, "Toggle vsync");
+                    if vsync_switch.clicked() {
+                        vsync_enabled = !vsync_enabled;
+                        ui.set_vsync_enabled(vsync_enabled);
                     }
 
                     let plus = ui.button("+", Some("Increment counter"));
@@ -110,11 +121,8 @@ fn main() {
     });
 }
 
-fn toggle_switch(ui: &mut IMUI, enabled: bool) -> UIBoxHandle {
-    let button = ui.button(
-        &format!("Lazy rendering##render_mode_toggle"),
-        Some("Toggle frame pacing"),
-    );
+fn toggle_switch(ui: &mut IMUI, label: &str, enabled: bool, tooltip: &str) -> UIBoxHandle {
+    let button = ui.button(label, Some(tooltip));
     ui.background(
         button,
         if enabled {
@@ -123,6 +131,7 @@ fn toggle_switch(ui: &mut IMUI, enabled: bool) -> UIBoxHandle {
             Color::new("#39414c")
         },
     );
+    ui.height(button, UISize::Pixels(32.0));
     button
 }
 

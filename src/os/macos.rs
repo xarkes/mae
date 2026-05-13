@@ -1,6 +1,6 @@
 extern crate objc2;
 
-use crate::imui::Point;
+use crate::{imui::Point, os::OSCursor};
 
 use super::{OSEvent, OSEventFlag, OSEventType, OSKey, OSKeyCode};
 use std::cell::OnceCell;
@@ -130,11 +130,6 @@ define_class!(
             app.stop(None);
         }
 
-        #[unsafe(method(windowDidResize:))]
-        fn did_resize(&self, _notification: &NSNotification) {
-            // TODO(xarkes): we may have to implement our own resize handling due to the way MacOS handles it :') - TL;DR the sendEvent() when a mouse click is in a resize area will run its own eventloop to wait until we release the mouse button. More details here:https://github.com/rust-windowing/winit/issues/219
-        }
-
         #[unsafe(method(applicationDidChangeScreenParameters:))]
         fn did_change_screen_parameters(&self, _notification: &NSNotification) {
             // TODO(xarkes): you may want to update things when display settings are updated
@@ -148,6 +143,11 @@ define_class!(
 
     // SAFETY: `NSWindowDelegate` has no safety requirements.
     unsafe impl NSWindowDelegate for Delegate {
+        #[unsafe(method(windowDidResize:))]
+        fn did_resize(&self, _notification: &NSNotification) {
+            // TODO(xarkes): we may have to implement our own resize handling due to the way MacOS handles it :') - TL;DR the sendEvent() when a mouse click is in a resize area will run its own eventloop to wait until we release the mouse button. More details here:https://github.com/rust-windowing/winit/issues/219
+        }
+
         #[unsafe(method(windowWillClose:))]
         fn window_will_close(&self, _notification: &NSNotification) {
             // Quit the application when the window is closed.
@@ -201,6 +201,11 @@ impl Window {
         // TODO(xarkes): compute dpi only on screen change
         self.dpi = self.window.get().unwrap().backingScaleFactor() as f32;
         (w * self.dpi, h * self.dpi)
+    }
+
+    /// Set the mouse cursor shape
+    pub fn set_cursor(&mut self, cursor: OSCursor) {
+        // TODO
     }
 
     pub fn get_events(&self) -> Vec<OSEvent> {

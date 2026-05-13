@@ -258,9 +258,9 @@ pub fn timer_value() -> u64 {
 /// Convert X11 key state (modifier mask) to OSEventFlag
 fn x11_state_to_flags(state: u32) -> Option<OSEventFlag> {
     // X11 modifier masks
-    const SHIFT_MASK: u32 = 1 << 0;   // ShiftMask
+    const SHIFT_MASK: u32 = 1 << 0; // ShiftMask
     const CONTROL_MASK: u32 = 1 << 2; // ControlMask
-    const MOD1_MASK: u32 = 1 << 3;    // Mod1Mask (Alt)
+    const MOD1_MASK: u32 = 1 << 3; // Mod1Mask (Alt)
 
     let ctrl = (state & CONTROL_MASK) != 0;
     let alt = (state & MOD1_MASK) != 0;

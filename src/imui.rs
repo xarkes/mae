@@ -114,7 +114,6 @@ impl Point {
             Axis::Y => self.y,
         }
     }
-
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -549,6 +548,7 @@ pub struct IMUI {
     states: HashMap<UiKey, PersistentBoxState>,
     build_index: u64,
     render_continuously: bool,
+    vsync_enabled: bool,
     repaint_requested: bool,
     timer_frequency: f64,
     fps_window_start: f64,
@@ -580,7 +580,13 @@ impl IMUI {
 
     #[cfg(test)]
     fn new_for_test(w: f32, h: f32) -> Self {
-        Self::with_drawer(None, Size { width: w, height: h })
+        Self::with_drawer(
+            None,
+            Size {
+                width: w,
+                height: h,
+            },
+        )
     }
 
     fn with_drawer(drawer: Option<Drawer>, size: Size) -> Self {
@@ -601,6 +607,7 @@ impl IMUI {
             states: HashMap::new(),
             build_index: 0,
             render_continuously: true,
+            vsync_enabled: true,
             repaint_requested: true,
             timer_frequency: os::timer_init(),
             fps_window_start: 0.0,
@@ -608,6 +615,9 @@ impl IMUI {
             fps: 0.0,
             theme,
         };
+        if let Some(drawer) = ui.drawer.as_mut() {
+            drawer.renderer.vsync(ui.vsync_enabled);
+        }
         ui.fps_window_start = ui.now_seconds();
         ui.begin_frame();
         ui
@@ -658,7 +668,8 @@ impl IMUI {
             UISize::Pixels(self.size.height),
         ];
         self.boxes[root.idx].computed_size = self.size;
-        self.boxes[root.idx].rect = RectCoords::from_size(0.0, 0.0, self.size.width, self.size.height);
+        self.boxes[root.idx].rect =
+            RectCoords::from_size(0.0, 0.0, self.size.width, self.size.height);
         self.boxes[root.idx].child_layout_axis = Axis::X;
     }
 
@@ -759,6 +770,20 @@ impl IMUI {
     pub fn set_render_continuously(&mut self, enabled: bool) {
         if self.render_continuously != enabled {
             self.render_continuously = enabled;
+            self.request_repaint();
+        }
+    }
+
+    pub fn vsync_enabled(&self) -> bool {
+        self.vsync_enabled
+    }
+
+    pub fn set_vsync_enabled(&mut self, enabled: bool) {
+        if self.vsync_enabled != enabled {
+            self.vsync_enabled = enabled;
+            if let Some(drawer) = self.drawer.as_mut() {
+                drawer.renderer.vsync(enabled);
+            }
             self.request_repaint();
         }
     }
@@ -931,7 +956,8 @@ impl IMUI {
             let lines: Vec<String> = buffer.lines().map(str::to_string).collect();
             for (idx, line) in lines.iter().enumerate() {
                 let row = self.label(line);
-                self.boxes[row.idx].key = UiKey(u64_hash_from_string(handle.key.0, &idx.to_string()));
+                self.boxes[row.idx].key =
+                    UiKey(u64_hash_from_string(handle.key.0, &idx.to_string()));
                 self.height(row, UISize::Pixels(self.theme.size_text + 4.0));
             }
         }
@@ -1060,7 +1086,9 @@ impl IMUI {
             .filter(|s| !s.is_empty())
             .map(|s| UiKey(u64_hash_from_string(seed, s)))
             .unwrap_or_default();
-        let display_string = label.map(display_part_from_key_string).filter(|s| !s.is_empty());
+        let display_string = label
+            .map(display_part_from_key_string)
+            .filter(|s| !s.is_empty());
         let mut box_ = UIBox::new(key, flags, display_string, &self.theme);
         box_.parent = parent_idx;
         let signal = self.signal_from_key_and_flags(key, flags);
@@ -1077,10 +1105,7 @@ impl IMUI {
             self.boxes[parent_idx].children.push(idx);
         }
         if !key.is_zero() {
-            self.states
-                .entry(key)
-                .or_default()
-                .last_touched_frame = self.build_index;
+            self.states.entry(key).or_default().last_touched_frame = self.build_index;
         }
         UIBoxHandle { idx, key, signal }
     }
@@ -1255,8 +1280,8 @@ impl IMUI {
         let padding_start = self.boxes[parent].padding.min_axis(axis);
         let padding_end = self.boxes[parent].padding.max_axis(axis);
         let content_start = self.boxes[parent].rect_axis_min(axis) + padding_start;
-        let content_size = (self.boxes[parent].computed_size.axis(axis) - padding_start - padding_end)
-            .max(0.0);
+        let content_size =
+            (self.boxes[parent].computed_size.axis(axis) - padding_start - padding_end).max(0.0);
         let total_children_size = self.total_children_size(parent, axis);
         let extra = (content_size - total_children_size).max(0.0);
         let mut start = content_start;
@@ -1313,8 +1338,7 @@ impl IMUI {
             return;
         }
         let padding = self.boxes[parent].padding.axis(axis);
-        let gaps = self.boxes[parent]
-            .child_gap
+        let gaps = self.boxes[parent].child_gap
             * self.boxes[parent].children.len().saturating_sub(1) as f32;
         let fixed: f32 = self.boxes[parent]
             .children
@@ -1322,8 +1346,8 @@ impl IMUI {
             .filter(|idx| self.boxes[**idx].pref_size[axis_idx(axis)] != UISize::Fill)
             .map(|idx| self.boxes[*idx].computed_size.axis(axis))
             .sum();
-        let available = (self.boxes[parent].computed_size.axis(axis) - padding - gaps - fixed)
-            .max(0.0);
+        let available =
+            (self.boxes[parent].computed_size.axis(axis) - padding - gaps - fixed).max(0.0);
         let each = available / fill_children.len() as f32;
         for child in fill_children {
             self.boxes[child].computed_size.set_axis(axis, each);
@@ -1393,10 +1417,11 @@ impl IMUI {
             self.drawer.as_mut().unwrap().draw_rect(&rect, color);
         }
         if flags.contains(UIBoxFlags::DRAW_BORDER) {
-            self.drawer
-                .as_mut()
-                .unwrap()
-                .draw_empty_rect(&rect, style.border_color, style.border_size);
+            self.drawer.as_mut().unwrap().draw_empty_rect(
+                &rect,
+                style.border_color,
+                style.border_size,
+            );
         }
         if flags.contains(UIBoxFlags::DRAW_TEXT) {
             if let Some(text) = self.boxes[idx].display_string.clone() {

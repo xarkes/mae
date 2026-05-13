@@ -191,7 +191,6 @@ impl GLContext {
         os_impl::ogl_swapbuffers(&self.ctx);
     }
 
-    #[cfg(debug_assertions)]
     pub fn vsync(&mut self, enable: bool) {
         os_impl::ogl_toggle_vsync(&self.ctx, enable);
     }
@@ -288,7 +287,6 @@ impl super::RenderBackend for GLContext {
         GLContext::render(self, batches)
     }
 
-    #[cfg(debug_assertions)]
     fn vsync(&mut self, enable: bool) {
         GLContext::vsync(self, enable)
     }

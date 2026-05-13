@@ -81,7 +81,6 @@ impl CPUContext {
         os_impl::cpu_swapbuffers(&mut self.ctx, &self.framebuffer, self.width, self.height);
     }
 
-    #[cfg(debug_assertions)]
     pub fn vsync(&mut self, _enable: bool) {
         // vsync not applicable for CPU renderer
     }
@@ -124,7 +123,6 @@ impl super::RenderBackend for CPUContext {
         CPUContext::render(self, batches)
     }
 
-    #[cfg(debug_assertions)]
     fn vsync(&mut self, enable: bool) {
         CPUContext::vsync(self, enable)
     }
