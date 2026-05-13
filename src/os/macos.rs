@@ -11,8 +11,8 @@ use objc2::{
 };
 use objc2_app_kit::{
     NSAnyEventMask, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
-    NSAutoresizingMaskOptions, NSBackingStoreType, NSEventModifierFlags, NSEventType, NSMenu,
-    NSMenuItem, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
+    NSAutoresizingMaskOptions, NSBackingStoreType, NSCursor, NSEventModifierFlags, NSEventType,
+    NSMenu, NSMenuItem, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
 };
 use objc2_foundation::{
     MainThreadMarker, NSDate, NSDefaultRunLoopMode, NSNotification, NSObject, NSObjectProtocol,
@@ -205,7 +205,14 @@ impl Window {
 
     /// Set the mouse cursor shape
     pub fn set_cursor(&mut self, cursor: OSCursor) {
-        // TODO
+        let cursor = match cursor {
+            OSCursor::Arrow => NSCursor::arrowCursor(),
+            OSCursor::IBeam => NSCursor::IBeamCursor(),
+            OSCursor::Hand => NSCursor::pointingHandCursor(),
+            OSCursor::ResizeH => NSCursor::resizeLeftRightCursor(),
+            OSCursor::ResizeV => NSCursor::resizeUpDownCursor(),
+        };
+        cursor.set();
     }
 
     pub fn get_events(&self) -> Vec<OSEvent> {
