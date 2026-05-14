@@ -1386,8 +1386,113 @@ impl IMUI {
             self.calc_upwards(root, axis);
             self.calc_downwards(root, axis);
             self.enforce_constraints(root, axis);
+            self.reconcile_overflow(root, axis);
             self.position(root, axis);
         }
+    }
+
+    fn reconcile_overflow(&mut self, idx: usize, axis: Axis) {
+        self.reconcile_container_overflow(idx, axis);
+        let children = self.boxes[idx].children.clone();
+        for child in children {
+            self.reconcile_overflow(child, axis);
+        }
+    }
+
+    fn reconcile_container_overflow(&mut self, parent: usize, axis: Axis) {
+        if self.boxes[parent].child_layout_axis != axis {
+            return;
+        }
+        let children: Vec<usize> = self.boxes[parent]
+            .children
+            .iter()
+            .copied()
+            .filter(|child| !self.box_is_out_of_flow(*child))
+            .collect();
+        if children.is_empty() {
+            return;
+        }
+
+        let content_size =
+            (self.boxes[parent].computed_size.axis(axis) - self.boxes[parent].padding.axis(axis))
+                .max(0.0);
+        let gaps = self.boxes[parent].child_gap * children.len().saturating_sub(1) as f32;
+        let sum_children: f32 = children
+            .iter()
+            .map(|child| self.boxes[*child].computed_size.axis(axis))
+            .sum();
+        let mut overflow = (sum_children + gaps - content_size).max(0.0);
+        if overflow <= 0.0 {
+            return;
+        }
+
+        overflow = self.shrink_group_to_fit(&children, axis, overflow, true);
+        if overflow > 0.0 {
+            overflow = self.shrink_group_to_fit(&children, axis, overflow, false);
+        }
+        if overflow > 0.0 {
+            // Hard fallback guarantee: shrink from tail down to zero.
+            for child in children.iter().rev() {
+                if overflow <= 0.0 {
+                    break;
+                }
+                let cur = self.boxes[*child].computed_size.axis(axis);
+                let take = cur.min(overflow);
+                self.boxes[*child].computed_size.set_axis(axis, cur - take);
+                overflow -= take;
+            }
+        }
+    }
+
+    fn shrink_group_to_fit(
+        &mut self,
+        children: &[usize],
+        axis: Axis,
+        mut overflow: f32,
+        fill_only: bool,
+    ) -> f32 {
+        if overflow <= 0.0 {
+            return 0.0;
+        }
+        let eligible: Vec<usize> = children
+            .iter()
+            .copied()
+            .filter(|idx| {
+                let is_fill = self.boxes[*idx].pref_size[axis_idx(axis)] == UISize::Fill;
+                if fill_only { is_fill } else { !is_fill }
+            })
+            .collect();
+        if eligible.is_empty() {
+            return overflow;
+        }
+
+        let capacities: Vec<(usize, f32)> = eligible
+            .iter()
+            .map(|idx| {
+                let cur = self.boxes[*idx].computed_size.axis(axis);
+                let min = self.boxes[*idx].min_size.axis(axis);
+                (*idx, (cur - min).max(0.0))
+            })
+            .collect();
+        let total_capacity: f32 = capacities.iter().map(|(_, c)| *c).sum();
+        if total_capacity <= 0.0 {
+            return overflow;
+        }
+
+        let target = overflow.min(total_capacity);
+        let mut taken_total = 0.0;
+        for (idx, cap) in &capacities {
+            if *cap <= 0.0 {
+                continue;
+            }
+            let take = (target * (*cap / total_capacity)).min(*cap);
+            let cur = self.boxes[*idx].computed_size.axis(axis);
+            self.boxes[*idx].computed_size.set_axis(axis, cur - take);
+            taken_total += take;
+        }
+
+        overflow -= taken_total;
+        overflow.max(0.0)
     }
 
     fn calc_standalone(&mut self, idx: usize, axis: Axis) {
