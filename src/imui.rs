@@ -480,6 +480,44 @@ pub struct UIBoxParams {
     pub bg_color: Option<Color>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct TextAreaOptions {
+    pub wrap_x: bool,
+    pub scroll_x: bool,
+    pub scroll_y: bool,
+}
+
+impl Default for TextAreaOptions {
+    fn default() -> Self {
+        Self {
+            wrap_x: true,
+            scroll_x: false,
+            scroll_y: true,
+        }
+    }
+}
+
+impl TextAreaOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn wrap_x(mut self, wrap_x: bool) -> Self {
+        self.wrap_x = wrap_x;
+        self
+    }
+
+    pub fn scroll_x(mut self, scroll_x: bool) -> Self {
+        self.scroll_x = scroll_x;
+        self
+    }
+
+    pub fn scroll_y(mut self, scroll_y: bool) -> Self {
+        self.scroll_y = scroll_y;
+        self
+    }
+}
+
 impl UIBoxParams {
     pub fn new() -> Self {
         Self::default()
@@ -511,6 +549,7 @@ pub struct UIBox {
     flags: UIBoxFlags,
     pref_size: [UISize; 2],
     min_size: Size,
+    scroll: Point,
     fixed_position: Point,
     computed_size: Size,
     rect: RectCoords,
@@ -538,6 +577,7 @@ impl UIBox {
             flags,
             pref_size: [UISize::ChildrenSum, UISize::ChildrenSum],
             min_size: Size::default(),
+            scroll: Point::default(),
             fixed_position: Point::default(),
             computed_size: Size::default(),
             rect: RectCoords::from_size(0.0, 0.0, 0.0, 0.0),
@@ -572,12 +612,14 @@ impl UIBox {
     ) {
         let rect = self.rect;
         let computed_size = self.computed_size;
+        let scroll = self.scroll;
         let first_touched_frame = self.first_touched_frame;
         let last_touched_frame = self.last_touched_frame;
 
         *self = Self::new(key, flags, string, theme);
         self.rect = rect;
         self.computed_size = computed_size;
+        self.scroll = scroll;
         self.first_touched_frame = first_touched_frame;
         self.last_touched_frame = last_touched_frame;
     }
@@ -1001,7 +1043,28 @@ impl IMUI {
     }
 
     pub fn textarea(&mut self, id: &str, buffer: &mut String) -> UIBoxHandle {
-        let handle = self.alloc_box(Some(id), UIBoxFlags::TEXTAREA);
+        self.textarea_with_options(id, buffer, TextAreaOptions::default())
+    }
+
+    pub fn textarea_with_options(
+        &mut self,
+        id: &str,
+        buffer: &mut String,
+        options: TextAreaOptions,
+    ) -> UIBoxHandle {
+        let mut flags = UIBoxFlags::MOUSE_CLICKABLE
+            | UIBoxFlags::CLICK_TO_FOCUS
+            | UIBoxFlags::TEXT_INPUT
+            | UIBoxFlags::DRAW_BACKGROUND
+            | UIBoxFlags::DRAW_BORDER
+            | UIBoxFlags::CLIP;
+        if options.scroll_x {
+            flags |= UIBoxFlags::SCROLL_X;
+        }
+        if options.scroll_y {
+            flags |= UIBoxFlags::SCROLL_Y;
+        }
+        let handle = self.alloc_box(Some(id), flags);
         self.boxes[handle.idx].child_layout_axis = Axis::Y;
         self.boxes[handle.idx].pref_size = [UISize::ParentPct(1.0), UISize::ParentPct(1.0)];
         self.boxes[handle.idx].padding = Padding::all(10.0);
@@ -1014,13 +1077,22 @@ impl IMUI {
             self.boxes[handle.idx].style.border_color = self.theme.color_main;
         }
 
+        let content_width = (self.boxes[handle.idx].rect.x1 - self.boxes[handle.idx].rect.x0
+            - self.boxes[handle.idx].padding.horizontal()
+            - self.boxes[handle.idx].style.margin * 2.0)
+            .max(0.0);
+
         self.parent_stack.push(handle.idx);
-        if buffer.is_empty() {
+        let wrapped_lines = if options.wrap_x {
+            self.wrap_text_lines(buffer, content_width, self.boxes[handle.idx].style.font_size)
+        } else {
+            buffer.lines().map(str::to_string).collect()
+        };
+        if wrapped_lines.is_empty() {
             let empty = self.label("");
             self.height(empty, UISize::Pixels(self.theme.size_text + 4.0));
         } else {
-            let lines: Vec<String> = buffer.lines().map(str::to_string).collect();
-            for (idx, line) in lines.iter().enumerate() {
+            for (idx, line) in wrapped_lines.iter().enumerate() {
                 let line_id = format!("{line}###textarea_line_{idx}");
                 let row = self.alloc_box(Some(&line_id), UIBoxFlags::DRAW_TEXT);
                 self.boxes[row.idx].string = Some(line.clone());
@@ -1032,6 +1104,33 @@ impl IMUI {
         }
         self.parent_stack.pop();
         handle
+    }
+
+    fn wrap_text_lines(&mut self, text: &str, max_width: f32, font_size: f32) -> Vec<String> {
+        if max_width <= 0.0 {
+            return text.lines().map(str::to_string).collect();
+        }
+        let mut out = Vec::new();
+        for raw_line in text.lines() {
+            if raw_line.is_empty() {
+                out.push(String::new());
+                continue;
+            }
+            let mut current = String::new();
+            for ch in raw_line.chars() {
+                let mut next = current.clone();
+                next.push(ch);
+                let w = self.text_size(font_size, &next).0;
+                if !current.is_empty() && w > max_width {
+                    out.push(current);
+                    current = ch.to_string();
+                } else {
+                    current = next;
+                }
+            }
+            out.push(current);
+        }
+        out
     }
 
     pub fn floating_pane_at(
@@ -1273,12 +1372,23 @@ impl IMUI {
         self.boxes[idx].parent = parent_idx;
         self.boxes[idx].signal = signal;
         self.boxes[idx].last_touched_frame = self.build_index;
+        self.apply_scroll_signal(idx);
 
         if let Some(parent_idx) = parent_idx {
             self.boxes[parent_idx].children.push(idx);
         }
         self.frame_boxes.push(idx);
         UIBoxHandle { idx, key, signal }
+    }
+
+    fn apply_scroll_signal(&mut self, idx: usize) {
+        let signal = self.boxes[idx].signal;
+        if self.boxes[idx].flags.scrolls_x() && signal.scroll_x != 0 {
+            self.boxes[idx].scroll.x -= signal.scroll_x as f32 * 16.0;
+        }
+        if self.boxes[idx].flags.scrolls_y() && signal.scroll_y != 0 {
+            self.boxes[idx].scroll.y -= signal.scroll_y as f32 * 16.0;
+        }
     }
 
     fn signal_from_key_and_flags(
@@ -1387,7 +1497,30 @@ impl IMUI {
             self.calc_downwards(root, axis);
             self.enforce_constraints(root, axis);
             self.reconcile_overflow(root, axis);
+            self.clamp_scroll_offsets(root, axis);
             self.position(root, axis);
+        }
+    }
+
+    fn clamp_scroll_offsets(&mut self, idx: usize, axis: Axis) {
+        let children = self.boxes[idx].children.clone();
+        if self.boxes[idx].child_layout_axis == axis {
+            let content_size =
+                (self.boxes[idx].computed_size.axis(axis) - self.boxes[idx].padding.axis(axis))
+                    .max(0.0);
+            let used_size = self.total_children_size(idx, axis);
+            let max_scroll = (used_size - content_size).max(0.0);
+            match axis {
+                Axis::X => {
+                    self.boxes[idx].scroll.x = self.boxes[idx].scroll.x.clamp(0.0, max_scroll)
+                }
+                Axis::Y => {
+                    self.boxes[idx].scroll.y = self.boxes[idx].scroll.y.clamp(0.0, max_scroll)
+                }
+            }
+        }
+        for child in children {
+            self.clamp_scroll_offsets(child, axis);
         }
     }
 
@@ -1683,6 +1816,12 @@ impl IMUI {
         for child in children.iter().take(child_pos) {
             pos += self.boxes[*child].computed_size.axis(axis) + gap;
         }
+        if self.boxes[parent].flags.scrolls_x() && axis == Axis::X {
+            pos -= self.boxes[parent].scroll.x;
+        }
+        if self.boxes[parent].flags.scrolls_y() && axis == Axis::Y {
+            pos -= self.boxes[parent].scroll.y;
+        }
         pos
     }
 
@@ -1693,11 +1832,19 @@ impl IMUI {
         let available =
             (self.boxes[parent].computed_size.axis(axis) - padding_start - padding_end).max(0.0);
         let child_size = self.boxes[idx].computed_size.axis(axis);
-        match self.boxes[parent].cross_axis_align {
+        let pos = match self.boxes[parent].cross_axis_align {
             CrossAxisAlign::Start | CrossAxisAlign::Stretch => base,
             CrossAxisAlign::Center => base + (available - child_size).max(0.0) / 2.0,
             CrossAxisAlign::End => base + (available - child_size).max(0.0),
-        }
+        };
+        let scroll = if axis == Axis::X && self.boxes[parent].flags.scrolls_x() {
+            self.boxes[parent].scroll.x
+        } else if axis == Axis::Y && self.boxes[parent].flags.scrolls_y() {
+            self.boxes[parent].scroll.y
+        } else {
+            0.0
+        };
+        pos - scroll
     }
 
     fn distribute_fill_children(&mut self, parent: usize, axis: Axis) {
