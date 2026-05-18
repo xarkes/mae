@@ -1,4 +1,6 @@
-use mae::imui::{CrossAxisAlign, IMUI, MainAxisAlign, TextAreaOptions, UIBoxHandle, UISize, uibox::Color};
+use mae::imui::{
+    CrossAxisAlign, IMUI, MainAxisAlign, TextAreaOptions, UIBoxHandle, UISize, uibox::Color,
+};
 
 #[derive(Clone, Debug)]
 struct TreeEntry {
@@ -88,64 +90,70 @@ pub fn render(ui: &mut IMUI, state: &mut IdeViewState) -> bool {
     let mut back_to_demo = false;
     let root = ui.column(|ui| {
         let topbar = ui.row(|ui| {
-            let title = ui.label("Explorer");
-            ui.text_color(title, Color::new("#d6deeb"));
-            ui.height(title, UISize::Pixels(28.0));
+            ui.label("Explorer")
+                .text_color(ui, Color::new("#d6deeb"))
+                .height(ui, UISize::Pixels(28.0));
 
-            let refresh = ui.button("Refresh tree", Some("Reload local files"));
-            ui.height(refresh, UISize::Pixels(28.0));
-            ui.corner_radius(refresh, 6.0);
+            let refresh = ui
+                .button("Refresh tree", Some("Reload local files"))
+                .height(ui, UISize::Pixels(28.0))
+                .corner_radius(ui, 6.0);
             if refresh.clicked() {
                 state.refresh_tree();
             }
 
-            let back = ui.button("Back to demo", Some("Return to the main demo view"));
-            ui.height(back, UISize::Pixels(28.0));
-            ui.corner_radius(back, 6.0);
+            let back = ui
+                .button("Back to demo", Some("Return to the main demo view"))
+                .height(ui, UISize::Pixels(28.0))
+                .corner_radius(ui, 6.0);
             if back.clicked() {
                 back_to_demo = true;
             }
         });
-        ui.height(topbar, UISize::Pixels(34.0));
-        ui.gap(topbar, 10.0);
-        ui.align(topbar, MainAxisAlign::Start, CrossAxisAlign::Center);
+        topbar.height(ui, UISize::Pixels(34.0)).gap(ui, 10.0).align(
+            ui,
+            MainAxisAlign::Start,
+            CrossAxisAlign::Center,
+        );
 
         let mut splitter_handle: Option<UIBoxHandle> = None;
         let body = ui.row(|ui| {
             let sidebar = ui.named_column("###ide_sidebar", |ui| {
                 for entry in &state.tree_entries {
-                    let row = ui.label(&format!("{}{}", "  ".repeat(entry.depth), entry.name));
-                    ui.height(row, UISize::Pixels(22.0));
-                    ui.text_color(row, Color::new("#b7c5d3"));
+                    ui.label(&format!("{}{}", "  ".repeat(entry.depth), entry.name))
+                        .height(ui, UISize::Pixels(22.0))
+                        .text_color(ui, Color::new("#b7c5d3"));
                 }
             });
-            ui.width(sidebar, UISize::Pixels(state.side_width));
-            ui.height(sidebar, UISize::ParentPct(1.0));
-            ui.padding_all(sidebar, 10.0);
-            ui.gap(sidebar, 2.0);
-            ui.scroll_y(sidebar, true);
-            ui.clip(sidebar, true);
-            ui.background(sidebar, Color::new("#1f2933"));
-            ui.border_color(sidebar, Color::new("#31404f"));
+            sidebar
+                .width(ui, UISize::Pixels(state.side_width))
+                .height(ui, UISize::ParentPct(1.0))
+                .padding_all(ui, 10.0)
+                .gap(ui, 2.0)
+                .scroll_y(ui, true)
+                .clip(ui, true)
+                .background(ui, Color::new("#1f2933"))
+                .border_color(ui, Color::new("#31404f"));
 
             let splitter = ui.button("##ide_splitter", Some("Drag to resize"));
             splitter_handle = Some(splitter);
-            ui.width(splitter, UISize::Pixels(6.0));
-            ui.height(splitter, UISize::ParentPct(1.0));
-            ui.background(
-                splitter,
-                if splitter.dragging() || splitter.hover() {
-                    Color::new("#4f6a84")
-                } else {
-                    Color::new("#2d3a47")
-                },
-            );
-            ui.corner_radius(splitter, 3.0);
+            splitter
+                .width(ui, UISize::Pixels(6.0))
+                .height(ui, UISize::ParentPct(1.0))
+                .background(
+                    ui,
+                    if splitter.dragging() || splitter.hover() {
+                        Color::new("#4f6a84")
+                    } else {
+                        Color::new("#2d3a47")
+                    },
+                )
+                .corner_radius(ui, 3.0);
 
             let editor_panel = ui.column(|ui| {
-                let path = ui.label("src/main.rs");
-                ui.height(path, UISize::Pixels(26.0));
-                ui.text_color(path, Color::new("#8fb5ff"));
+                ui.label("src/main.rs")
+                    .height(ui, UISize::Pixels(26.0))
+                    .text_color(ui, Color::new("#8fb5ff"));
 
                 let editor = ui.textarea_with_options(
                     "###ide_editor",
@@ -155,18 +163,19 @@ pub fn render(ui: &mut IMUI, state: &mut IdeViewState) -> bool {
                         .scroll_x(true)
                         .scroll_y(true),
                 );
-                ui.height(editor, UISize::Fill);
+                editor.height(ui, UISize::Fill);
             });
-            ui.width(editor_panel, UISize::Fill);
-            ui.height(editor_panel, UISize::ParentPct(1.0));
-            ui.padding_all(editor_panel, 10.0);
-            ui.gap(editor_panel, 8.0);
-            ui.background(editor_panel, Color::new("#111821"));
-            ui.border_color(editor_panel, Color::new("#2a3542"));
+            editor_panel
+                .width(ui, UISize::Fill)
+                .height(ui, UISize::ParentPct(1.0))
+                .padding_all(ui, 10.0)
+                .gap(ui, 8.0)
+                .background(ui, Color::new("#111821"))
+                .border_color(ui, Color::new("#2a3542"));
         });
-        ui.width(body, UISize::ParentPct(1.0));
-        ui.height(body, UISize::Fill);
-        ui.gap(body, 8.0);
+        body.width(ui, UISize::ParentPct(1.0))
+            .height(ui, UISize::Fill)
+            .gap(ui, 8.0);
 
         if let Some(splitter) = splitter_handle {
             if splitter.dragging() && ui.mouse_down() {
@@ -178,11 +187,11 @@ pub fn render(ui: &mut IMUI, state: &mut IdeViewState) -> bool {
         }
     });
 
-    ui.width(root, UISize::ParentPct(1.0));
-    ui.height(root, UISize::Fill);
-    ui.padding_all(root, 12.0);
-    ui.gap(root, 10.0);
-    ui.background(root, Color::new("#0f141a"));
+    root.width(ui, UISize::ParentPct(1.0))
+        .height(ui, UISize::Fill)
+        .padding_all(ui, 12.0)
+        .gap(ui, 10.0)
+        .background(ui, Color::new("#0f141a"));
 
     back_to_demo
 }

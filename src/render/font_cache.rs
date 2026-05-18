@@ -309,7 +309,6 @@ impl FontCache {
             .expect("font size error")
             .new_line_size
     }
-
 }
 
 // ============================================================================
@@ -554,7 +553,6 @@ impl FontCache {
         let height = self.face.size_metrics().map(|m| m.height >> 6).unwrap_or(0);
         height as f32
     }
-
 }
 
 // ============================================================================
@@ -618,7 +616,6 @@ impl FontCache {
     pub fn line_height(&self, font_size: f32) -> f32 {
         font_size * 1.2
     }
-
 }
 
 // On Linux: both shouldn't be enabled simultaneously

@@ -39,13 +39,13 @@ fn main() {
 
         let root = ui.row(|ui| {
             let sidebar = ui.column(|ui| {
-                let title = ui.label("Mae");
-                ui.text_color(title, Color::new("#ffffff"));
-                ui.height(title, UISize::Pixels(34.0));
+                ui.label("Mae")
+                    .text_color(ui, Color::new("#ffffff"))
+                    .height(ui, UISize::Pixels(34.0));
 
-                let subtitle = ui.label("GUI framework");
-                ui.text_color(subtitle, Color::new("#9aa4af"));
-                ui.height(subtitle, UISize::Pixels(28.0));
+                ui.label("GUI framework")
+                    .text_color(ui, Color::new("#9aa4af"))
+                    .height(ui, UISize::Pixels(28.0));
 
                 let nav = ui.named_column("###nav", |ui| {
                     nav_button(ui, "Layout", 0, &mut selected_tab);
@@ -53,35 +53,36 @@ fn main() {
                     nav_button(ui, "Render", 2, &mut selected_tab);
                     nav_button(ui, "IDE", 3, &mut selected_tab);
                 });
-                ui.gap(nav, 6.0);
+                nav.gap(ui, 6.0);
             });
-            ui.width(sidebar, UISize::Pixels(210.0));
-            ui.height(sidebar, UISize::ParentPct(1.0));
-            ui.padding_all(sidebar, 16.0);
-            ui.gap(sidebar, 8.0);
-            ui.background(sidebar, Color::new("#20242b"));
+            sidebar
+                .width(ui, UISize::Pixels(210.0))
+                .height(ui, UISize::ParentPct(1.0))
+                .padding_all(ui, 16.0)
+                .gap(ui, 8.0)
+                .background(ui, Color::new("#20242b"));
 
             let content = ui.column(|ui| {
                 let header = ui.row(|ui| {
-                    let heading = ui.label(match selected_tab {
+                    ui.label(match selected_tab {
                         0 => "Layout Review",
                         1 => "Widget Signals",
                         2 => "Render Commands",
                         _ => "IDE Mock",
-                    });
-                    ui.text_color(heading, Color::new("#ffffff"));
-                    ui.width(heading, UISize::Fill);
-                    ui.height(heading, UISize::Pixels(36.0));
+                    })
+                    .text_color(ui, Color::new("#ffffff"))
+                    .width(ui, UISize::Fill)
+                    .height(ui, UISize::Pixels(36.0));
 
                     let fps_text = if ui.fps() > 0.0 {
                         format!("{:.0} fps", ui.fps())
                     } else {
                         "fps --".to_string()
                     };
-                    let fps = ui.label(&fps_text);
-                    ui.width(fps, UISize::Pixels(64.0));
-                    ui.height(fps, UISize::Pixels(30.0));
-                    ui.text_color(fps, Color::new("#9aa4af"));
+                    ui.label(&fps_text)
+                        .width(ui, UISize::Pixels(64.0))
+                        .height(ui, UISize::Pixels(30.0))
+                        .text_color(ui, Color::new("#9aa4af"));
 
                     let lazy_switch = toggle_switch(
                         ui,
@@ -102,12 +103,13 @@ fn main() {
                     }
 
                     let current_backend = ui.renderer_backend();
-                    let renderer_button = ui.button(
-                        &format!("Renderer: {}##renderer_dropdown", current_backend.label()),
-                        Some("Select the active renderer"),
-                    );
-                    ui.width(renderer_button, UISize::Pixels(150.0));
-                    ui.height(renderer_button, UISize::Pixels(32.0));
+                    let renderer_button = ui
+                        .button(
+                            &format!("Renderer: {}##renderer_dropdown", current_backend.label()),
+                            Some("Select the active renderer"),
+                        )
+                        .width(ui, UISize::Pixels(150.0))
+                        .height(ui, UISize::Pixels(32.0));
                     if renderer_button.clicked() {
                         renderer_menu_open = !renderer_menu_open;
                     }
@@ -123,25 +125,26 @@ fn main() {
                             Some("###renderer_menu"),
                             |ui| {
                                 for backend in Backend::available() {
-                                    let option = ui.button(
-                                        &format!(
-                                            "{}{}##renderer_option_{:?}",
-                                            if backend == current_backend { "* " } else { "" },
-                                            backend.label(),
-                                            backend
-                                        ),
-                                        None,
-                                    );
-                                    ui.width(option, UISize::Pixels(menu_width));
-                                    ui.height(option, UISize::Pixels(30.0));
-                                    ui.background(
-                                        option,
-                                        if backend == current_backend {
-                                            Color::new("#2f8f83")
-                                        } else {
-                                            Color::new("#2a3038")
-                                        },
-                                    );
+                                    let option = ui
+                                        .button(
+                                            &format!(
+                                                "{}{}##renderer_option_{:?}",
+                                                if backend == current_backend { "* " } else { "" },
+                                                backend.label(),
+                                                backend
+                                            ),
+                                            None,
+                                        )
+                                        .width(ui, UISize::Pixels(menu_width))
+                                        .height(ui, UISize::Pixels(30.0))
+                                        .background(
+                                            ui,
+                                            if backend == current_backend {
+                                                Color::new("#2f8f83")
+                                            } else {
+                                                Color::new("#2a3038")
+                                            },
+                                        );
                                     if option.clicked() {
                                         ui.set_renderer_backend(backend);
                                         vsync_enabled = ui.vsync_enabled();
@@ -150,14 +153,17 @@ fn main() {
                                 }
                             },
                         );
-                        ui.padding_all(menu, 6.0);
-                        ui.gap(menu, 4.0);
-                        ui.background(menu, Color::new("#1b2028"));
-                        ui.border_color(menu, Color::new("#48515d"));
+                        menu.padding_all(ui, 6.0)
+                            .gap(ui, 4.0)
+                            .background(ui, Color::new("#1b2028"))
+                            .border_color(ui, Color::new("#48515d"));
                     }
                 });
-                ui.height(header, UISize::Pixels(46.0));
-                ui.align(header, MainAxisAlign::Start, CrossAxisAlign::Center);
+                header.height(ui, UISize::Pixels(46.0)).align(
+                    ui,
+                    MainAxisAlign::Start,
+                    CrossAxisAlign::Center,
+                );
 
                 match selected_tab {
                     0 => layout_page(ui, &mut show_panel),
@@ -166,48 +172,49 @@ fn main() {
                     _ => {}
                 }
             });
-            ui.width(content, UISize::Fill);
-            ui.height(content, UISize::ParentPct(1.0));
-            ui.padding_all(content, 14.0);
-            ui.gap(content, 12.0);
-            ui.background(content, Color::new("#15191f"));
+            content
+                .width(ui, UISize::Fill)
+                .height(ui, UISize::ParentPct(1.0))
+                .padding_all(ui, 14.0)
+                .gap(ui, 12.0)
+                .background(ui, Color::new("#15191f"));
         });
-        ui.width(root, UISize::ParentPct(1.0));
-        ui.height(root, UISize::ParentPct(1.0));
-        ui.padding_all(root, 10.0);
-        ui.gap(root, 10.0);
-        ui.background(root, Color::new("#101318"));
+        root.width(ui, UISize::ParentPct(1.0))
+            .height(ui, UISize::ParentPct(1.0))
+            .padding_all(ui, 10.0)
+            .gap(ui, 10.0)
+            .background(ui, Color::new("#101318"));
     });
 }
 
 fn toggle_switch(ui: &mut IMUI, label: &str, enabled: bool, tooltip: &str) -> UIBoxHandle {
-    let button = ui.button(label, Some(tooltip));
-    ui.corner_radius(button, 7.0);
-    ui.background(
-        button,
-        if enabled {
-            Color::new("#2f8f83")
-        } else {
-            Color::new("#39414c")
-        },
-    );
-    ui.height(button, UISize::Pixels(32.0));
-    button
+    ui.button(label, Some(tooltip))
+        .corner_radius(ui, 7.0)
+        .height(ui, UISize::Pixels(32.0))
+        .background(
+            ui,
+            if enabled {
+                Color::new("#2f8f83")
+            } else {
+                Color::new("#39414c")
+            },
+        )
 }
 
 fn nav_button(ui: &mut IMUI, label: &str, id: usize, selected_tab: &mut usize) {
-    let button = ui.button(&format!("{label}##nav_{id}"), None);
-    ui.corner_radius(button, 7.0);
-    ui.width(button, UISize::ParentPct(1.0));
-    ui.height(button, UISize::Pixels(34.0));
-    ui.background(
-        button,
-        if *selected_tab == id {
-            Color::new("#2f8f83")
-        } else {
-            Color::new("#2a3038")
-        },
-    );
+    let button = ui
+        .button(&format!("{label}##nav_{id}"), None)
+        .corner_radius(ui, 7.0)
+        .width(ui, UISize::ParentPct(1.0))
+        .height(ui, UISize::Pixels(34.0))
+        .background(
+            ui,
+            if *selected_tab == id {
+                Color::new("#2f8f83")
+            } else {
+                Color::new("#2a3038")
+            },
+        );
     if button.clicked() {
         *selected_tab = id;
     }
@@ -216,25 +223,27 @@ fn nav_button(ui: &mut IMUI, label: &str, id: usize, selected_tab: &mut usize) {
 fn layout_page(ui: &mut IMUI, show_panel: &mut bool) {
     let page = ui.column(|ui| {
         let controls = ui.row(|ui| {
-            let toggle = ui.button("Toggle panel", Some("Ctrl+T"));
-            ui.corner_radius(toggle, 7.0);
-            ui.width(toggle, UISize::Pixels(140.0));
-            ui.height(toggle, UISize::Pixels(32.0));
+            let toggle = ui
+                .button("Toggle panel", Some("Ctrl+T"))
+                .corner_radius(ui, 7.0)
+                .width(ui, UISize::Pixels(140.0))
+                .height(ui, UISize::Pixels(32.0));
             if toggle.clicked() {
                 *show_panel = !*show_panel;
             }
 
-            let state = ui.label(if *show_panel {
+            ui.label(if *show_panel {
                 "Panel visible"
             } else {
                 "Panel hidden"
-            });
-            ui.height(state, UISize::Pixels(28.0));
-            ui.text_color(state, Color::new("#9aa4af"));
+            })
+            .height(ui, UISize::Pixels(28.0))
+            .text_color(ui, Color::new("#9aa4af"));
         });
-        ui.height(controls, UISize::Pixels(36.0));
-        ui.gap(controls, 10.0);
-        ui.align(controls, MainAxisAlign::Start, CrossAxisAlign::Center);
+        controls
+            .height(ui, UISize::Pixels(36.0))
+            .gap(ui, 10.0)
+            .align(ui, MainAxisAlign::Start, CrossAxisAlign::Center);
 
         let body = ui.row(|ui| {
             let left = ui.column(|ui| {
@@ -244,82 +253,87 @@ fn layout_page(ui: &mut IMUI, show_panel: &mut bool) {
                 metric_row(ui, "ChildrenSum", "Content driven");
                 metric_row(ui, "Fill", "Remaining space");
             });
-            ui.height(left, UISize::ParentPct(1.0));
-            ui.padding_all(left, 14.0);
-            ui.gap(left, 8.0);
-            ui.background(left, Color::new("#242a32"));
+            left.height(ui, UISize::ParentPct(1.0))
+                .padding_all(ui, 14.0)
+                .gap(ui, 8.0)
+                .background(ui, Color::new("#242a32"));
 
             if *show_panel {
-                ui.width(left, UISize::ParentPct(0.62));
+                left.width(ui, UISize::ParentPct(0.62));
                 let right = ui.column(|ui| {
                     section_title(ui, "Floating-friendly");
                     ui.label("This panel is a normal container in the demo, but it uses the same fixed-position support as floating panes and tooltips.");
                 });
-                ui.width(right, UISize::Fill);
-                ui.height(right, UISize::ParentPct(1.0));
-                ui.padding_all(right, 14.0);
-                ui.gap(right, 8.0);
-                ui.background(right, Color::new("#1d3434"));
+                right
+                    .width(ui, UISize::Fill)
+                    .height(ui, UISize::ParentPct(1.0))
+                    .padding_all(ui, 14.0)
+                    .gap(ui, 8.0)
+                    .background(ui, Color::new("#1d3434"));
             } else {
-                ui.width(left, UISize::Fill);
+                left.width(ui, UISize::Fill);
             }
         });
-        ui.width(body, UISize::ParentPct(1.0));
-        ui.height(body, UISize::Fill);
-        ui.gap(body, 12.0);
+        body.width(ui, UISize::ParentPct(1.0))
+            .height(ui, UISize::Fill)
+            .gap(ui, 12.0);
     });
-    ui.width(page, UISize::ParentPct(1.0));
-    ui.height(page, UISize::Fill);
-    ui.gap(page, 12.0);
+    page.width(ui, UISize::ParentPct(1.0))
+        .height(ui, UISize::Fill)
+        .gap(ui, 12.0);
 }
 
 fn widget_page(ui: &mut IMUI, input: &mut String, text: &mut String, counter: &mut usize) {
     let body = ui.column(|ui| {
         section_title(ui, "Signals");
         let signal_row = ui.row(|ui| {
-            let button = ui.button(
-                "Click target",
-                Some("Reports press/hover/click signal state"),
-            );
-            ui.corner_radius(button, 7.0);
-            ui.width(button, UISize::Pixels(160.0));
-            ui.height(button, UISize::Pixels(36.0));
+            let button = ui
+                .button(
+                    "Click target",
+                    Some("Reports press/hover/click signal state"),
+                )
+                .corner_radius(ui, 7.0)
+                .width(ui, UISize::Pixels(160.0))
+                .height(ui, UISize::Pixels(36.0));
             let report = signal_report(button);
             ui.label(&report);
         });
-        ui.height(signal_row, UISize::Pixels(42.0));
-        ui.gap(signal_row, 10.0);
-        ui.align(signal_row, MainAxisAlign::Start, CrossAxisAlign::Center);
+        signal_row
+            .height(ui, UISize::Pixels(42.0))
+            .gap(ui, 10.0)
+            .align(ui, MainAxisAlign::Start, CrossAxisAlign::Center);
 
         let counter_row = ui.row(|ui| {
-            let counter_label = ui.label(&format!("Counter: {}", *counter));
-            ui.height(counter_label, UISize::Pixels(28.0));
-            ui.text_color(counter_label, Color::new("#9fc8ff"));
+            ui.label(&format!("Counter: {}", *counter))
+                .height(ui, UISize::Pixels(28.0))
+                .text_color(ui, Color::new("#9fc8ff"));
 
-            let plus = ui.button("+", Some("Increment counter"));
-            ui.corner_radius(plus, 7.0);
-            ui.width(plus, UISize::Pixels(36.0));
-            ui.height(plus, UISize::Pixels(32.0));
+            let plus = ui
+                .button("+", Some("Increment counter"))
+                .corner_radius(ui, 7.0)
+                .width(ui, UISize::Pixels(36.0))
+                .height(ui, UISize::Pixels(32.0));
             if plus.clicked() {
                 *counter += 1;
             }
         });
-        ui.height(counter_row, UISize::Pixels(36.0));
-        ui.gap(counter_row, 8.0);
-        ui.align(counter_row, MainAxisAlign::Start, CrossAxisAlign::Center);
+        counter_row
+            .height(ui, UISize::Pixels(36.0))
+            .gap(ui, 8.0)
+            .align(ui, MainAxisAlign::Start, CrossAxisAlign::Center);
 
         section_title(ui, "Text Input");
-        let edit = ui.line_edit("###demo_line_edit", input, false);
-        ui.height(edit, UISize::Pixels(34.0));
+        ui.line_edit("###demo_line_edit", input, false)
+            .height(ui, UISize::Pixels(34.0));
 
-        let area = ui.textarea("###demo_textarea", text);
-        ui.height(area, UISize::Fill);
+        ui.textarea("###demo_textarea", text)
+            .height(ui, UISize::Fill);
     });
-    ui.width(body, UISize::ParentPct(1.0));
-    ui.height(body, UISize::Fill);
-    ui.padding_all(body, 14.0);
-    ui.gap(body, 10.0);
-    ui.background(body, Color::new("#242a32"));
+    body.width(ui, UISize::ParentPct(1.0))
+        .height(ui, UISize::Fill)
+        .padding_all(ui, 14.0)
+        .gap(ui, 10.0)
+        .background(ui, Color::new("#242a32"));
 }
 
 fn render_page(ui: &mut IMUI) {
@@ -332,41 +346,41 @@ fn render_page(ui: &mut IMUI) {
                 .iter()
                 .enumerate()
             {
-                let swatch = ui.label(&format!("##swatch_{idx}"));
-                ui.width(swatch, UISize::Fill);
-                ui.height(swatch, UISize::Pixels(84.0));
-                ui.background(swatch, Color::new(color));
+                ui.label(&format!("##swatch_{idx}"))
+                    .width(ui, UISize::Fill)
+                    .height(ui, UISize::Pixels(84.0))
+                    .background(ui, Color::new(color));
             }
         });
-        ui.height(swatches, UISize::Pixels(92.0));
-        ui.gap(swatches, 8.0);
+        swatches
+            .height(ui, UISize::Pixels(92.0))
+            .gap(ui, 8.0);
     });
-    ui.width(body, UISize::ParentPct(1.0));
-    ui.height(body, UISize::Fill);
-    ui.padding_all(body, 14.0);
-    ui.gap(body, 12.0);
-    ui.background(body, Color::new("#242a32"));
+    body.width(ui, UISize::ParentPct(1.0))
+        .height(ui, UISize::Fill)
+        .padding_all(ui, 14.0)
+        .gap(ui, 12.0)
+        .background(ui, Color::new("#242a32"));
 }
 
 fn section_title(ui: &mut IMUI, text: &str) -> UIBoxHandle {
-    let title = ui.label(text);
-    ui.text_color(title, Color::new("#ffffff"));
-    ui.height(title, UISize::Pixels(30.0));
-    title
+    ui.label(text)
+        .text_color(ui, Color::new("#ffffff"))
+        .height(ui, UISize::Pixels(30.0))
 }
 
 fn metric_row(ui: &mut IMUI, name: &str, value: &str) {
     let row = ui.row(|ui| {
-        let name = ui.label(name);
-        ui.width(name, UISize::Pixels(120.0));
-        ui.text_color(name, Color::new("#9fc8ff"));
+        ui.label(name)
+            .width(ui, UISize::Pixels(120.0))
+            .text_color(ui, Color::new("#9fc8ff"));
 
-        let value = ui.label(value);
-        ui.width(value, UISize::Fill);
-        ui.text_color(value, Color::new("#c8ced6"));
+        ui.label(value)
+            .width(ui, UISize::Fill)
+            .text_color(ui, Color::new("#c8ced6"));
     });
-    ui.height(row, UISize::Pixels(30.0));
-    ui.align(row, MainAxisAlign::Start, CrossAxisAlign::Center);
+    row.height(ui, UISize::Pixels(30.0))
+        .align(ui, MainAxisAlign::Start, CrossAxisAlign::Center);
 }
 
 fn signal_report(handle: UIBoxHandle) -> String {

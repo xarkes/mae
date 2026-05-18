@@ -182,6 +182,10 @@ impl UISize {
     pub fn children_sum() -> Self {
         Self::ChildrenSum
     }
+
+    pub fn fill() -> Self {
+        Self::Fill
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -299,6 +303,76 @@ impl UIBoxHandle {
 
     pub fn idx(&self) -> usize {
         self.idx
+    }
+
+    pub fn width(self, ui: &mut IMUI, width: UISize) -> Self {
+        ui.width(self, width);
+        self
+    }
+
+    pub fn height(self, ui: &mut IMUI, height: UISize) -> Self {
+        ui.height(self, height);
+        self
+    }
+
+    pub fn min_width(self, ui: &mut IMUI, width: f32) -> Self {
+        ui.min_width(self, width);
+        self
+    }
+
+    pub fn min_height(self, ui: &mut IMUI, height: f32) -> Self {
+        ui.min_height(self, height);
+        self
+    }
+
+    pub fn background(self, ui: &mut IMUI, color: Color) -> Self {
+        ui.background(self, color);
+        self
+    }
+
+    pub fn text_color(self, ui: &mut IMUI, color: Color) -> Self {
+        ui.text_color(self, color);
+        self
+    }
+
+    pub fn border_color(self, ui: &mut IMUI, color: Color) -> Self {
+        ui.border_color(self, color);
+        self
+    }
+
+    pub fn padding_all(self, ui: &mut IMUI, value: f32) -> Self {
+        ui.padding_all(self, value);
+        self
+    }
+
+    pub fn gap(self, ui: &mut IMUI, value: f32) -> Self {
+        ui.gap(self, value);
+        self
+    }
+
+    pub fn corner_radius(self, ui: &mut IMUI, radius: f32) -> Self {
+        ui.corner_radius(self, radius);
+        self
+    }
+
+    pub fn scroll_y(self, ui: &mut IMUI, enabled: bool) -> Self {
+        ui.scroll_y(self, enabled);
+        self
+    }
+
+    pub fn scroll_x(self, ui: &mut IMUI, enabled: bool) -> Self {
+        ui.scroll_x(self, enabled);
+        self
+    }
+
+    pub fn clip(self, ui: &mut IMUI, enabled: bool) -> Self {
+        ui.clip(self, enabled);
+        self
+    }
+
+    pub fn align(self, ui: &mut IMUI, main: MainAxisAlign, cross: CrossAxisAlign) -> Self {
+        ui.align(self, main, cross);
+        self
     }
 }
 
@@ -1077,14 +1151,19 @@ impl IMUI {
             self.boxes[handle.idx].style.border_color = self.theme.color_main;
         }
 
-        let content_width = (self.boxes[handle.idx].rect.x1 - self.boxes[handle.idx].rect.x0
+        let content_width = (self.boxes[handle.idx].rect.x1
+            - self.boxes[handle.idx].rect.x0
             - self.boxes[handle.idx].padding.horizontal()
             - self.boxes[handle.idx].style.margin * 2.0)
             .max(0.0);
 
         self.parent_stack.push(handle.idx);
         let wrapped_lines = if options.wrap_x {
-            self.wrap_text_lines(buffer, content_width, self.boxes[handle.idx].style.font_size)
+            self.wrap_text_lines(
+                buffer,
+                content_width,
+                self.boxes[handle.idx].style.font_size,
+            )
         } else {
             buffer.lines().map(str::to_string).collect()
         };
@@ -1152,59 +1231,59 @@ impl IMUI {
         handle
     }
 
-    pub fn width(&mut self, handle: UIBoxHandle, width: UISize) -> &mut Self {
+    fn width(&mut self, handle: UIBoxHandle, width: UISize) -> &mut Self {
         self.boxes[handle.idx].pref_size[axis_idx(Axis::X)] = width;
         self
     }
 
-    pub fn height(&mut self, handle: UIBoxHandle, height: UISize) -> &mut Self {
+    fn height(&mut self, handle: UIBoxHandle, height: UISize) -> &mut Self {
         self.boxes[handle.idx].pref_size[axis_idx(Axis::Y)] = height;
         self
     }
 
-    pub fn min_width(&mut self, handle: UIBoxHandle, width: f32) -> &mut Self {
+    fn min_width(&mut self, handle: UIBoxHandle, width: f32) -> &mut Self {
         self.boxes[handle.idx].min_size.width = width;
         self
     }
 
-    pub fn min_height(&mut self, handle: UIBoxHandle, height: f32) -> &mut Self {
+    fn min_height(&mut self, handle: UIBoxHandle, height: f32) -> &mut Self {
         self.boxes[handle.idx].min_size.height = height;
         self
     }
 
-    pub fn background(&mut self, handle: UIBoxHandle, color: Color) -> &mut Self {
+    fn background(&mut self, handle: UIBoxHandle, color: Color) -> &mut Self {
         self.boxes[handle.idx].flags |= UIBoxFlags::DRAW_BACKGROUND;
         self.boxes[handle.idx].style.bg_color = color;
         self
     }
 
-    pub fn text_color(&mut self, handle: UIBoxHandle, color: Color) -> &mut Self {
+    fn text_color(&mut self, handle: UIBoxHandle, color: Color) -> &mut Self {
         self.boxes[handle.idx].style.text_color = color;
         self
     }
 
-    pub fn border_color(&mut self, handle: UIBoxHandle, color: Color) -> &mut Self {
+    fn border_color(&mut self, handle: UIBoxHandle, color: Color) -> &mut Self {
         self.boxes[handle.idx].flags |= UIBoxFlags::DRAW_BORDER;
         self.boxes[handle.idx].style.border_color = color;
         self
     }
 
-    pub fn corner_radius(&mut self, handle: UIBoxHandle, radius: f32) -> &mut Self {
+    fn corner_radius(&mut self, handle: UIBoxHandle, radius: f32) -> &mut Self {
         self.boxes[handle.idx].style.corner_radius = radius.max(0.0);
         self
     }
 
-    pub fn padding_all(&mut self, handle: UIBoxHandle, value: f32) -> &mut Self {
+    fn padding_all(&mut self, handle: UIBoxHandle, value: f32) -> &mut Self {
         self.boxes[handle.idx].padding = Padding::all(value);
         self
     }
 
-    pub fn gap(&mut self, handle: UIBoxHandle, value: f32) -> &mut Self {
+    fn gap(&mut self, handle: UIBoxHandle, value: f32) -> &mut Self {
         self.boxes[handle.idx].child_gap = value;
         self
     }
 
-    pub fn scroll_x(&mut self, handle: UIBoxHandle, enabled: bool) -> &mut Self {
+    fn scroll_x(&mut self, handle: UIBoxHandle, enabled: bool) -> &mut Self {
         if enabled {
             self.boxes[handle.idx].flags |= UIBoxFlags::SCROLL_X;
         } else {
@@ -1213,7 +1292,7 @@ impl IMUI {
         self
     }
 
-    pub fn scroll_y(&mut self, handle: UIBoxHandle, enabled: bool) -> &mut Self {
+    fn scroll_y(&mut self, handle: UIBoxHandle, enabled: bool) -> &mut Self {
         if enabled {
             self.boxes[handle.idx].flags |= UIBoxFlags::SCROLL_Y;
         } else {
@@ -1222,7 +1301,7 @@ impl IMUI {
         self
     }
 
-    pub fn clip(&mut self, handle: UIBoxHandle, enabled: bool) -> &mut Self {
+    fn clip(&mut self, handle: UIBoxHandle, enabled: bool) -> &mut Self {
         if enabled {
             self.boxes[handle.idx].flags |= UIBoxFlags::CLIP;
         } else {
@@ -1231,23 +1310,13 @@ impl IMUI {
         self
     }
 
-    pub fn align(
+    fn align(
         &mut self,
         handle: UIBoxHandle,
         main: MainAxisAlign,
         cross: CrossAxisAlign,
     ) -> &mut Self {
         self.boxes[handle.idx].main_axis_align = main;
-        self.boxes[handle.idx].cross_axis_align = cross;
-        self
-    }
-
-    pub fn align_main(&mut self, handle: UIBoxHandle, main: MainAxisAlign) -> &mut Self {
-        self.boxes[handle.idx].main_axis_align = main;
-        self
-    }
-
-    pub fn align_cross(&mut self, handle: UIBoxHandle, cross: CrossAxisAlign) -> &mut Self {
         self.boxes[handle.idx].cross_axis_align = cross;
         self
     }
@@ -1538,9 +1607,9 @@ impl IMUI {
     fn clamp_scroll_offsets(&mut self, idx: usize, axis: Axis) {
         let children = self.boxes[idx].children.clone();
         if self.boxes[idx].child_layout_axis == axis {
-            let content_size =
-                (self.boxes[idx].computed_size.axis(axis) - self.boxes[idx].padding.axis(axis))
-                    .max(0.0);
+            let content_size = (self.boxes[idx].computed_size.axis(axis)
+                - self.boxes[idx].padding.axis(axis))
+            .max(0.0);
             let used_size = self.total_children_size(idx, axis);
             let max_scroll = (used_size - content_size).max(0.0);
             match axis {
@@ -1585,9 +1654,9 @@ impl IMUI {
             return;
         }
 
-        let content_size =
-            (self.boxes[parent].computed_size.axis(axis) - self.boxes[parent].padding.axis(axis))
-                .max(0.0);
+        let content_size = (self.boxes[parent].computed_size.axis(axis)
+            - self.boxes[parent].padding.axis(axis))
+        .max(0.0);
         let gaps = self.boxes[parent].child_gap * children.len().saturating_sub(1) as f32;
         let sum_children: f32 = children
             .iter()
@@ -1746,8 +1815,9 @@ impl IMUI {
             if self.box_is_out_of_flow(*child) {
                 continue;
             }
-            let content = (self.boxes[idx].computed_size.axis(axis) - self.boxes[idx].padding.axis(axis))
-                .max(0.0);
+            let content = (self.boxes[idx].computed_size.axis(axis)
+                - self.boxes[idx].padding.axis(axis))
+            .max(0.0);
             self.apply_downward_size(*child, axis, content);
         }
         if self.boxes[idx].child_layout_axis == axis {
@@ -1774,7 +1844,9 @@ impl IMUI {
                     }
                 }
                 // On cross-axis, Fill behaves like ParentPct(1.0).
-                self.boxes[idx].computed_size.set_axis(axis, parent_content.max(0.0));
+                self.boxes[idx]
+                    .computed_size
+                    .set_axis(axis, parent_content.max(0.0));
             }
             _ => {}
         }
@@ -2009,7 +2081,8 @@ impl IMUI {
                     color.g = (color.g + 0.08).min(1.0);
                     color.b = (color.b + 0.08).min(1.0);
                 }
-                let inner = RectCoords::from_size(rect.x0 + inset, rect.y0 + inset, inner_w, inner_h);
+                let inner =
+                    RectCoords::from_size(rect.x0 + inset, rect.y0 + inset, inner_w, inner_h);
                 let inner_radius = (style.corner_radius - inset).max(0.0);
                 self.drawer
                     .as_mut()
@@ -2119,28 +2192,28 @@ impl IMUI {
         let style = self.boxes[idx].style;
         let children = self.boxes[idx].children.clone();
         let target = children.last().copied();
-        let (content_x0, content_y0, content_x1, content_y1, line_text) = if let Some(line_idx) = target
-        {
-            let line = &self.boxes[line_idx];
-            let text = line.display_string.clone().unwrap_or_default();
-            (
-                line.rect.x0 + line.padding.left + line.style.margin,
-                line.rect.y0 + line.padding.top + line.style.margin,
-                line.rect.x1 - line.padding.right - line.style.margin,
-                line.rect.y1 - line.padding.bottom - line.style.margin,
-                text,
-            )
-        } else {
-            let rect = self.boxes[idx].rect;
-            let padding = self.boxes[idx].padding;
-            (
-                rect.x0 + padding.left + style.margin,
-                rect.y0 + padding.top + style.margin,
-                rect.x1 - padding.right - style.margin,
-                rect.y1 - padding.bottom - style.margin,
-                String::new(),
-            )
-        };
+        let (content_x0, content_y0, content_x1, content_y1, line_text) =
+            if let Some(line_idx) = target {
+                let line = &self.boxes[line_idx];
+                let text = line.display_string.clone().unwrap_or_default();
+                (
+                    line.rect.x0 + line.padding.left + line.style.margin,
+                    line.rect.y0 + line.padding.top + line.style.margin,
+                    line.rect.x1 - line.padding.right - line.style.margin,
+                    line.rect.y1 - line.padding.bottom - line.style.margin,
+                    text,
+                )
+            } else {
+                let rect = self.boxes[idx].rect;
+                let padding = self.boxes[idx].padding;
+                (
+                    rect.x0 + padding.left + style.margin,
+                    rect.y0 + padding.top + style.margin,
+                    rect.x1 - padding.right - style.margin,
+                    rect.y1 - padding.bottom - style.margin,
+                    String::new(),
+                )
+            };
 
         let text_width = self
             .drawer
@@ -2501,10 +2574,14 @@ mod tests {
         let children = ui.boxes[row.idx()].children.clone();
         let left_w = ui.boxes[children[0]].computed_size.width;
         let right_w = ui.boxes[children[1]].computed_size.width;
-        let available = ui.boxes[row.idx()].computed_size.width - ui.boxes[row.idx()].padding.horizontal();
+        let available =
+            ui.boxes[row.idx()].computed_size.width - ui.boxes[row.idx()].padding.horizontal();
         let used = left_w + right_w + ui.boxes[row.idx()].child_gap;
 
-        assert!(used <= available + 0.01, "used={used} available={available}");
+        assert!(
+            used <= available + 0.01,
+            "used={used} available={available}"
+        );
         assert!(left_w > 0.0);
     }
 
