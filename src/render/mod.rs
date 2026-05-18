@@ -3,6 +3,7 @@ mod cpu;
 pub mod font_cache;
 #[cfg(feature = "opengl")]
 mod opengl;
+pub mod software;
 
 use std::{cell::RefCell, rc::Rc};
 
@@ -127,6 +128,18 @@ impl RenderBatch {
     pub fn add_rect(&mut self, inst: Rect2DInst) {
         self.data.push(inst);
         self.bytes_count += std::mem::size_of::<Rect2DInst>() as isize;
+    }
+
+    pub fn rects(&self) -> &[Rect2DInst] {
+        &self.data
+    }
+
+    pub fn texture(&self) -> Option<u32> {
+        self.texture
+    }
+
+    pub fn set_texture(&mut self, texture: Option<u32>) {
+        self.texture = texture;
     }
 }
 

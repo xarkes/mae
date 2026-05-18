@@ -9,6 +9,7 @@ opengl = ["dep:gl"]
 fontdue = ["dep:fontdue", "dep:lru"]
 freetype = ["dep:freetype-rs"]
 cpu = []
+testkit = []
 
 [dependencies]
 fontdue = { version = "0.9.3", optional = true }

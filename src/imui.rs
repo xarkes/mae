@@ -618,6 +618,7 @@ pub struct UIBox {
     pub key: UiKey,
     parent: Option<usize>,
     children: Vec<usize>,
+    debug_label: Option<String>,
     string: Option<String>,
     display_string: Option<String>,
     flags: UIBoxFlags,
@@ -646,6 +647,7 @@ impl UIBox {
             key,
             parent: None,
             children: Vec::new(),
+            debug_label: string.clone(),
             string: string.clone(),
             display_string: string,
             flags,
@@ -691,6 +693,7 @@ impl UIBox {
         let last_touched_frame = self.last_touched_frame;
 
         *self = Self::new(key, flags, string, theme);
+        self.debug_label = self.display_string.clone();
         self.rect = rect;
         self.computed_size = computed_size;
         self.scroll = scroll;
@@ -773,8 +776,8 @@ impl IMUI {
         Self::with_drawer(Some(drawer), Size::default())
     }
 
-    #[cfg(test)]
-    fn new_for_test(w: f32, h: f32) -> Self {
+    #[cfg(any(test, feature = "testkit"))]
+    pub(crate) fn new_for_test(w: f32, h: f32) -> Self {
         Self::with_drawer(
             None,
             Size {
@@ -855,7 +858,7 @@ impl IMUI {
         }
     }
 
-    fn begin_frame(&mut self) {
+    pub(crate) fn begin_frame(&mut self) {
         self.build_index += 1;
         self.frame_boxes.clear();
         self.parent_stack.clear();
@@ -889,7 +892,7 @@ impl IMUI {
         self.boxes[overlay_root.idx].child_layout_axis = Axis::Y;
     }
 
-    fn end_frame(&mut self) {
+    pub(crate) fn end_frame(&mut self) {
         self.layout_root(self.root);
         self.refresh_passive_signals();
         self.draw_ui_all();
@@ -900,6 +903,16 @@ impl IMUI {
         }
 
         self.prune_boxes();
+    }
+
+    #[cfg(feature = "testkit")]
+    pub(crate) fn end_test_frame(&mut self) -> crate::testkit::UiSnapshot {
+        self.layout_root(self.root);
+        self.refresh_passive_signals();
+        self.draw_ui_all();
+        let snapshot = self.snapshot();
+        self.prune_boxes();
+        snapshot
     }
 
     fn now_seconds(&self) -> f64 {
@@ -922,29 +935,39 @@ impl IMUI {
             self.events = drawer.renderer.win.get_events();
         }
 
-        for ev in &self.events {
-            if let Some(pos) = ev.pos {
-                self.mouse = Some(pos);
-            }
-            if ev.key == OSKey::LeftMouseButton {
-                match ev.ty {
-                    OSEventType::Press => self.left_mouse_down = true,
-                    OSEventType::Release => self.left_mouse_down = false,
-                    _ => {}
-                }
-            }
-            if ev.key == OSKey::RightMouseButton {
-                match ev.ty {
-                    OSEventType::Press => self.right_mouse_down = true,
-                    OSEventType::Release => self.right_mouse_down = false,
-                    _ => {}
-                }
-            }
-            if ev.ty == OSEventType::Press && ev.key == OSKey::Keyboard(OSKeyCode::KeyEscape) {
-                self.focus_key = None;
-                self.next_focus_key = None;
+        for ev in self.events.clone() {
+            self.apply_event_side_effects(&ev);
+        }
+    }
+
+    fn apply_event_side_effects(&mut self, ev: &OSEvent) {
+        if let Some(pos) = ev.pos {
+            self.mouse = Some(pos);
+        }
+        if ev.key == OSKey::LeftMouseButton {
+            match ev.ty {
+                OSEventType::Press => self.left_mouse_down = true,
+                OSEventType::Release => self.left_mouse_down = false,
+                _ => {}
             }
         }
+        if ev.key == OSKey::RightMouseButton {
+            match ev.ty {
+                OSEventType::Press => self.right_mouse_down = true,
+                OSEventType::Release => self.right_mouse_down = false,
+                _ => {}
+            }
+        }
+        if ev.ty == OSEventType::Press && ev.key == OSKey::Keyboard(OSKeyCode::KeyEscape) {
+            self.focus_key = None;
+            self.next_focus_key = None;
+        }
+    }
+
+    #[cfg(feature = "testkit")]
+    pub(crate) fn push_test_event(&mut self, ev: OSEvent) {
+        self.apply_event_side_effects(&ev);
+        self.events.push(ev);
     }
 
     pub(crate) fn resize(&mut self) -> Size {
@@ -1040,6 +1063,31 @@ impl IMUI {
             .get(handle.idx)
             .map(|b| b.rect)
             .unwrap_or_else(|| RectCoords::from_size(0.0, 0.0, 0.0, 0.0))
+    }
+
+    #[cfg(feature = "testkit")]
+    pub fn snapshot(&self) -> crate::testkit::UiSnapshot {
+        let nodes = self
+            .frame_boxes
+            .iter()
+            .filter_map(|idx| self.boxes.get(*idx))
+            .map(|node| crate::testkit::UiNodeSnapshot {
+                key: node.key,
+                label: node.debug_label.clone(),
+                text: node.string.clone(),
+                bounds: node.rect,
+                computed_size: node.computed_size,
+                scroll: node.scroll,
+                signal: node.signal,
+                visible: node.visible,
+                focused: self.focus_key == Some(node.key),
+                mouse_clickable: node.flags.is_mouse_clickable(),
+                text_input: node.flags.accepts_text_input(),
+                scroll_x: node.flags.scrolls_x(),
+                scroll_y: node.flags.scrolls_y(),
+            })
+            .collect();
+        crate::testkit::UiSnapshot { nodes }
     }
 
     pub fn row(&mut self, children: impl FnOnce(&mut IMUI)) -> UIBoxHandle {
@@ -1286,6 +1334,7 @@ impl IMUI {
     fn scroll_x(&mut self, handle: UIBoxHandle, enabled: bool) -> &mut Self {
         if enabled {
             self.boxes[handle.idx].flags |= UIBoxFlags::SCROLL_X;
+            self.absorb_pending_scroll_for_box(handle.idx);
         } else {
             self.boxes[handle.idx].flags.0 &= !UIBoxFlags::SCROLL_X.0;
         }
@@ -1295,10 +1344,51 @@ impl IMUI {
     fn scroll_y(&mut self, handle: UIBoxHandle, enabled: bool) -> &mut Self {
         if enabled {
             self.boxes[handle.idx].flags |= UIBoxFlags::SCROLL_Y;
+            self.absorb_pending_scroll_for_box(handle.idx);
         } else {
             self.boxes[handle.idx].flags.0 &= !UIBoxFlags::SCROLL_Y.0;
         }
         self
+    }
+
+    fn absorb_pending_scroll_for_box(&mut self, idx: usize) {
+        let flags = self.boxes[idx].flags;
+        if !flags.scrolls_x() && !flags.scrolls_y() {
+            return;
+        }
+
+        let rect = self.boxes[idx].rect;
+        let mut signal = UiSignal::default();
+        let mut ev_idx = 0;
+        while ev_idx < self.events.len() {
+            let ev = self.events[ev_idx];
+            if ev.ty != OSEventType::Scroll || !point_in_rect(&rect, ev.pos.or(self.mouse)) {
+                ev_idx += 1;
+                continue;
+            }
+
+            let mut taken = false;
+            if flags.scrolls_y() {
+                signal.scroll_y += ev.delta;
+                taken = true;
+            }
+            if flags.scrolls_x() {
+                signal.scroll_x += ev.delta;
+                taken = true;
+            }
+
+            if taken {
+                self.events.remove(ev_idx);
+            } else {
+                ev_idx += 1;
+            }
+        }
+
+        if signal.scroll_x != 0.0 || signal.scroll_y != 0.0 {
+            self.boxes[idx].signal.scroll_x += signal.scroll_x;
+            self.boxes[idx].signal.scroll_y += signal.scroll_y;
+            self.apply_scroll_signal(idx);
+        }
     }
 
     fn clip(&mut self, handle: UIBoxHandle, enabled: bool) -> &mut Self {

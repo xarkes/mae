@@ -179,6 +179,63 @@ pub struct OSEvent {
     pub flags: Option<OSEventFlag>,
 }
 
+impl OSEvent {
+    pub fn mouse_move(pos: Point) -> Self {
+        Self {
+            ty: OSEventType::MouseMove,
+            key: OSKey::LeftMouseButton,
+            pos: Some(pos),
+            chars: None,
+            delta: 0.0,
+            flags: None,
+        }
+    }
+
+    pub fn press(key: OSKey, pos: Option<Point>) -> Self {
+        Self {
+            ty: OSEventType::Press,
+            key,
+            pos,
+            chars: None,
+            delta: 0.0,
+            flags: None,
+        }
+    }
+
+    pub fn release(key: OSKey, pos: Option<Point>) -> Self {
+        Self {
+            ty: OSEventType::Release,
+            key,
+            pos,
+            chars: None,
+            delta: 0.0,
+            flags: None,
+        }
+    }
+
+    pub fn scroll(pos: Point, delta: f32) -> Self {
+        Self {
+            ty: OSEventType::Scroll,
+            key: OSKey::LeftMouseButton,
+            pos: Some(pos),
+            chars: None,
+            delta,
+            flags: None,
+        }
+    }
+
+    pub fn text(ch: char) -> Self {
+        Self {
+            ty: OSEventType::Press,
+            key: OSKey::Keyboard(OSKeyCode::KeySpace),
+            pos: None,
+            chars: Some(ch),
+            delta: 0.0,
+            flags: None,
+        }
+    }
+}
+
 /// Cursor types for the mouse pointer
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum OSCursor {
