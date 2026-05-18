@@ -271,6 +271,12 @@ impl super::RenderBackend for GLContext {
         GLContext::update_font_texture(self, atlas)
     }
 
+    fn remove_texture(&mut self, id: u32) {
+        unsafe {
+            gl::DeleteTextures(1, &id);
+        }
+    }
+
     fn resize(&mut self, w: f32, h: f32) {
         GLContext::resize(self, w, h)
     }

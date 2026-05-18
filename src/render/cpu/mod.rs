@@ -86,6 +86,10 @@ impl super::RenderBackend for CPUContext {
         CPUContext::update_font_texture(self, atlas)
     }
 
+    fn remove_texture(&mut self, id: u32) {
+        self.textures.remove(&id);
+    }
+
     fn resize(&mut self, w: f32, h: f32) {
         CPUContext::resize(self, w, h)
     }

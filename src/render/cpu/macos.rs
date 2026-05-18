@@ -7,7 +7,7 @@ use objc2_app_kit::{
     NSAlphaNonpremultipliedBitmapFormat, NSAutoresizingMaskOptions, NSBitmapImageRep,
     NSDeviceRGBColorSpace, NSImage, NSImageScaling, NSImageView, NSView, NSWindow,
 };
-use objc2_foundation::{MainThreadMarker, NSInteger, NSPoint, NSRect, NSSize};
+use objc2_foundation::{MainThreadMarker, NSAutoreleasePool, NSInteger, NSPoint, NSRect, NSSize};
 
 pub struct CPUContextHandle {
     window: Retained<NSWindow>,
@@ -24,6 +24,8 @@ impl Drop for CPUContextHandle {
         if let Some(image_view) = self.image_view.take() {
             image_view.removeFromSuperview();
         }
+        self.bitmap = None;
+        self.image = None;
     }
 }
 
@@ -49,6 +51,8 @@ pub fn cpu_swapbuffers(
         return;
     }
 
+    let _pool = unsafe { NSAutoreleasePool::new() };
+
     ensure_bitmap(ctx, width, height);
     let Some(bitmap) = ctx.bitmap.as_ref() else {
         return;
@@ -58,8 +62,7 @@ pub fn cpu_swapbuffers(
         copy_argb_to_rgba_ptr(framebuffer, bitmap.bitmapData(), width * height);
     }
 
-    if let (Some(image), Some(image_view)) = (ctx.image.as_ref(), ctx.image_view.as_ref()) {
-        image.recache();
+    if let (Some(_image), Some(image_view)) = (ctx.image.as_ref(), ctx.image_view.as_ref()) {
         image_view.setFrame(ctx.view.bounds());
         unsafe {
             let _: () = msg_send![Retained::as_ptr(image_view), setNeedsDisplay: true];
@@ -75,6 +78,10 @@ fn ensure_bitmap(ctx: &mut CPUContextHandle, width: usize, height: usize) {
     if ctx.bitmap.is_some() && ctx.width == width && ctx.height == height {
         return;
     }
+
+    // Release old resources to prevent memory leak
+    ctx.bitmap = None;
+    ctx.image = None;
 
     let mut planes: [*mut u8; 5] = [std::ptr::null_mut(); 5];
     let bitmap = unsafe {

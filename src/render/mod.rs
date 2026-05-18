@@ -12,6 +12,7 @@ use font_cache::FontCache;
 
 pub trait RenderBackend {
     fn update_font_texture(&mut self, atlas: &font_cache::Atlas) -> u32;
+    fn remove_texture(&mut self, id: u32);
     fn resize(&mut self, w: f32, h: f32);
     fn begin_frame(&mut self);
     fn end_frame(&mut self);
@@ -263,6 +264,9 @@ impl Renderer {
             false => self.font_cache.borrow_mut(),
         };
         if fc.dirty {
+            if fc.texture_id != 0 {
+                self.ctx.remove_texture(fc.texture_id);
+            }
             let texture_id = self.ctx.update_font_texture(fc.atlas());
             fc.texture_id = texture_id;
             fc.dirty = false;
