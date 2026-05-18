@@ -97,8 +97,8 @@ pub fn ogl_create_context(win: &Window) -> *mut AnyObject {
         println!("Context: {:?}", context);
 
         // xarkes: Attach OpenGL to the window's NSView, and make it current context
-        let view = win.view.get().unwrap().clone();
-        let _: () = msg_send![context, setView: Retained::into_raw(view)];
+        let view = win.view.get().unwrap();
+        let _: () = msg_send![context, setView: Retained::as_ptr(view)];
         let _: () = msg_send![context, makeCurrentContext];
         ctx = context;
     }
@@ -154,5 +154,21 @@ pub fn ogl_toggle_vsync(ctx: &GLContextHandle, enable: bool) {
         #[allow(deprecated)]
         let _: () =
             msg_send![*ctx, setValues: &val, forParameter:NSOpenGLContextParameter::SwapInterval];
+    }
+}
+
+pub fn ogl_destroy_context(ctx: &mut GLContextHandle) {
+    if ctx.is_null() {
+        return;
+    }
+
+    unsafe {
+        let class_name_ctx = CStr::from_bytes_with_nul(b"NSOpenGLContext\0").unwrap();
+        let context_class = AnyClass::get(&class_name_ctx).unwrap();
+        let _: () = msg_send![*ctx, clearDrawable];
+        let _: () = msg_send![*ctx, setView: std::ptr::null_mut::<AnyObject>()];
+        let _: () = msg_send![context_class, clearCurrentContext];
+        drop(Retained::from_raw(*ctx));
+        *ctx = std::ptr::null_mut();
     }
 }

@@ -292,6 +292,12 @@ impl super::RenderBackend for GLContext {
     }
 }
 
+impl Drop for GLContext {
+    fn drop(&mut self) {
+        os_impl::ogl_destroy_context(&mut self.ctx);
+    }
+}
+
 fn compile_shader(src: &str, ty: GLenum) -> GLuint {
     let shader;
     unsafe {

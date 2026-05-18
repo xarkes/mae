@@ -83,6 +83,13 @@ fn draw_rect(surface: &mut SoftwareSurface, inst: &Rect2DInst, texture: Option<&
         return;
     }
 
+    if omit_texture {
+        if let Some(color) = solid_color(colors) {
+            draw_solid_rect(surface, inst, color, x0, y0, x1, y1, radius);
+            return;
+        }
+    }
+
     let dst_w = dst.x1 - dst.x0;
     let dst_h = dst.y1 - dst.y0;
 
@@ -130,6 +137,68 @@ fn draw_rect(surface: &mut SoftwareSurface, inst: &Rect2DInst, texture: Option<&
             }
         }
     }
+}
+
+fn draw_solid_rect(
+    surface: &mut SoftwareSurface,
+    inst: &Rect2DInst,
+    color: V4f32,
+    x0: usize,
+    y0: usize,
+    x1: usize,
+    y1: usize,
+    radius: f32,
+) {
+    if color.a >= 1.0 {
+        let packed = pack_color(
+            (color.r * 255.0) as u8,
+            (color.g * 255.0) as u8,
+            (color.b * 255.0) as u8,
+            255,
+        );
+        if radius <= 0.0 {
+            for py in y0..y1 {
+                let row = py * surface.width;
+                surface.pixels[row + x0..row + x1].fill(packed);
+            }
+            return;
+        }
+
+        for py in y0..y1 {
+            let row = py * surface.width;
+            for px in x0..x1 {
+                let sample_x = px as f32 + 0.5;
+                let sample_y = py as f32 + 0.5;
+                if rounded_rect_contains(sample_x, sample_y, inst) {
+                    surface.pixels[row + px] = packed;
+                }
+            }
+        }
+        return;
+    }
+
+    for py in y0..y1 {
+        let row = py * surface.width;
+        for px in x0..x1 {
+            let sample_x = px as f32 + 0.5;
+            let sample_y = py as f32 + 0.5;
+            if radius <= 0.0 || rounded_rect_contains(sample_x, sample_y, inst) {
+                surface.pixels[row + px] = blend_pixel(surface.pixels[row + px], &color);
+            }
+        }
+    }
+}
+
+fn solid_color(colors: &[V4f32; 4]) -> Option<V4f32> {
+    let color = colors[0];
+    colors[1..]
+        .iter()
+        .all(|other| same_color(color, *other))
+        .then_some(color)
+}
+
+fn same_color(a: V4f32, b: V4f32) -> bool {
+    a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a
 }
 
 fn rounded_rect_contains(x: f32, y: f32, inst: &Rect2DInst) -> bool {

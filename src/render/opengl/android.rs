@@ -142,3 +142,7 @@ pub fn ogl_resize(ctx: &GLContextHandle) -> (f32, f32) {
 pub fn ogl_swapbuffers(ctx: &GLContextHandle) {
     ctx.egl.swap_buffers(ctx.display, ctx.surface);
 }
+
+pub fn ogl_destroy_context(_ctx: &mut GLContextHandle) {
+    // TODO(xarkes): Destroy EGL context/surface when Android backend switching is supported.
+}

@@ -134,3 +134,14 @@ pub fn ogl_toggle_vsync(ctx: &GLContextHandle, enable: bool) {
     }
     // unsafe { xlib::XSync(ctx.display, val) };
 }
+
+pub fn ogl_destroy_context(ctx: &mut GLContextHandle) {
+    if ctx.ctx.is_null() {
+        return;
+    }
+    unsafe {
+        glx::glXMakeCurrent(ctx.display, 0, std::ptr::null_mut());
+        glx::glXDestroyContext(ctx.display, ctx.ctx);
+        ctx.ctx = std::ptr::null_mut();
+    }
+}

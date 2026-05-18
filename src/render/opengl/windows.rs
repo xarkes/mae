@@ -63,3 +63,7 @@ pub fn ogl_swapbuffers(ctx: &GLContextHandle) {
 pub fn ogl_toggle_vsync(ctx: &GLContextHandle, enable: bool) {
     // TODO(xarkes)
 }
+
+pub fn ogl_destroy_context(_ctx: &mut GLContextHandle) {
+    // TODO(xarkes): Store HDC/HGLRC in GLContextHandle and call wglDeleteContext.
+}
