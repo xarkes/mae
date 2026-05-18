@@ -1257,7 +1257,6 @@ impl IMUI {
         self.boxes[handle.idx].style.bg_color = Color::new("#15191f");
         self.boxes[handle.idx].style.border_color = Color::new("#303946");
         self.boxes[handle.idx].child_gap = 2.0;
-        self.boxes[handle.idx].string = Some(buffer.clone());
         self.apply_click_to_focus(handle);
         if handle.clicked() {
             let cursor = self.cursor_from_textarea_click(handle, buffer);
@@ -1268,6 +1267,7 @@ impl IMUI {
             self.apply_text_input(handle, buffer, true);
             self.boxes[handle.idx].style.border_color = self.theme.color_main;
         }
+        self.boxes[handle.idx].string = Some(buffer.clone());
 
         let content_width = (self.boxes[handle.idx].rect.x1
             - self.boxes[handle.idx].rect.x0
@@ -1328,6 +1328,92 @@ impl IMUI {
             out.push(current);
         }
         out
+    }
+
+    fn compute_visual_line_ranges(
+        &mut self,
+        text: &str,
+        max_width: f32,
+        font_size: f32,
+    ) -> Vec<(usize, usize)> {
+        if text.is_empty() {
+            return vec![(0, 0)];
+        }
+        let mut ranges = Vec::new();
+        let mut line_char_start = 0;
+
+        for raw_line in text.lines() {
+            let raw_line_len = raw_line.chars().count();
+            if raw_line_len == 0 {
+                ranges.push((line_char_start, line_char_start));
+                line_char_start += 1;
+                continue;
+            }
+            if max_width <= 0.0 {
+                ranges.push((line_char_start, line_char_start + raw_line_len));
+                line_char_start += raw_line_len + 1;
+                continue;
+            }
+            let mut current_start = line_char_start;
+            let mut current = String::new();
+            for ch in raw_line.chars() {
+                let mut next = current.clone();
+                next.push(ch);
+                let w = self.text_size(font_size, &next).0;
+                if !current.is_empty() && w > max_width {
+                    ranges.push((current_start, current_start + current.chars().count()));
+                    current_start = line_char_start + current.chars().count();
+                    current = ch.to_string();
+                } else {
+                    current = next;
+                }
+            }
+            ranges.push((current_start, current_start + current.chars().count()));
+            line_char_start += raw_line_len + 1;
+        }
+        ranges
+    }
+
+    fn visual_line_col_from_cursor_with_ranges(
+        &self,
+        ranges: &[(usize, usize)],
+        cursor: usize,
+    ) -> (usize, usize) {
+        for (line_idx, &(start, end)) in ranges.iter().enumerate() {
+            if start == end && cursor == start {
+                return (line_idx, 0);
+            }
+            if cursor >= start && cursor < end {
+                return (line_idx, cursor - start);
+            }
+            if cursor == end {
+                return (line_idx, end - start);
+            }
+        }
+        if let Some(&(start, end)) = ranges.last() {
+            let col = cursor.saturating_sub(start);
+            if end > start {
+                (ranges.len() - 1, col.min(end - start))
+            } else {
+                (ranges.len() - 1, 0)
+            }
+        } else {
+            (0, 0)
+        }
+    }
+
+    fn cursor_from_visual_line_col_with_ranges(
+        &self,
+        ranges: &[(usize, usize)],
+        visual_line: usize,
+        col: usize,
+    ) -> usize {
+        if visual_line >= ranges.len() {
+            ranges.last().map(|&(_, end)| end).unwrap_or(0)
+        } else {
+            let (start, end) = ranges[visual_line];
+            (start + col).min(end)
+        }
     }
 
     pub fn floating_pane_at(
@@ -1764,14 +1850,21 @@ impl IMUI {
 
     fn move_vertical(&mut self, key: UiKey, buffer: &str, delta: isize, extend_selection: bool) {
         let cursor = self.text_cursor(key);
-        let (line, col) = line_col_from_cursor(buffer, cursor);
+        let Some(idx) = self.box_from_key(key) else {
+            return;
+        };
+        let rect = self.boxes[idx].rect;
+        let padding = self.boxes[idx].padding;
+        let style = self.boxes[idx].style;
+        let content_width = (rect.x1 - rect.x0 - padding.horizontal() - style.margin * 2.0).max(0.0);
+        let ranges = self.compute_visual_line_ranges(buffer, content_width, style.font_size);
+        let (visual_line, col) = self.visual_line_col_from_cursor_with_ranges(&ranges, cursor);
         let state = self.text_edit_states.entry(key).or_default();
         let desired_col = state.desired_column.unwrap_or(col);
         state.desired_column = Some(desired_col);
-        let line_count = buffer.split('\n').count().max(1);
-        let next_line = (line as isize + delta).clamp(0, line_count as isize - 1) as usize;
-        let next_cursor = cursor_from_line_col(buffer, next_line, desired_col);
-        let _ = state;
+        let line_count = ranges.len().max(1);
+        let next_line = (visual_line as isize + delta).clamp(0, line_count as isize - 1) as usize;
+        let next_cursor = self.cursor_from_visual_line_col_with_ranges(&ranges, next_line, desired_col);
         self.move_text_cursor(key, buffer, next_cursor, extend_selection);
         if let Some(state) = self.text_edit_states.get_mut(&key) {
             state.desired_column = Some(desired_col);
@@ -1824,11 +1917,16 @@ impl IMUI {
         let padding = self.boxes[handle.idx].padding;
         let style = self.boxes[handle.idx].style;
         let line_h = self.theme.size_text + 6.0;
-        let line = ((mouse.y - rect.y0 - padding.top + self.boxes[handle.idx].scroll.y) / line_h)
+        let visual_line = ((mouse.y - rect.y0 - padding.top + self.boxes[handle.idx].scroll.y) / line_h)
             .floor()
             .max(0.0) as usize;
-        let line_start = cursor_from_line_col(buffer, line, 0);
-        let line_end = line_end(buffer, line_start);
+        let content_width = (rect.x1 - rect.x0 - padding.horizontal() - style.margin * 2.0).max(0.0);
+        let ranges = self.compute_visual_line_ranges(buffer, content_width, style.font_size);
+        let (line_start, line_end) = if visual_line < ranges.len() {
+            ranges[visual_line]
+        } else {
+            ranges.last().copied().unwrap_or((0, char_count(buffer)))
+        };
         let line_text = substring_chars(buffer, (line_start, line_end));
         let local_x = (mouse.x - rect.x0 - padding.left - style.margin).max(0.0);
         line_start + self.cursor_from_x(&line_text, style.font_size, local_x)
@@ -2706,11 +2804,12 @@ impl IMUI {
         let style = self.boxes[idx].style;
         let text = self.boxes[idx].string.clone().unwrap_or_default();
         let line_h = self.theme.size_text + 6.0;
-        let (start_line, _) = line_col_from_cursor(&text, range.0);
-        let (end_line, _) = line_col_from_cursor(&text, range.1);
+        let content_width = (rect.x1 - rect.x0 - padding.horizontal() - style.margin * 2.0).max(0.0);
+        let ranges = self.compute_visual_line_ranges(&text, content_width, style.font_size);
+        let (start_line, _) = self.visual_line_col_from_cursor_with_ranges(&ranges, range.0);
+        let (end_line, _) = self.visual_line_col_from_cursor_with_ranges(&ranges, range.1);
         for line in start_line..=end_line {
-            let line_start = cursor_from_line_col(&text, line, 0);
-            let line_end_idx = line_end(&text, line_start);
+            let (line_start, line_end_idx) = ranges[line];
             let start = if line == start_line {
                 range.0.max(line_start)
             } else {
@@ -2799,12 +2898,14 @@ impl IMUI {
             .map(|state| state.cursor)
             .unwrap_or_else(|| char_count(&text))
             .min(char_count(&text));
-        let (line_idx, col) = line_col_from_cursor(&text, cursor);
-        let line_start = cursor_from_line_col(&text, line_idx, 0);
+        let content_width = (rect.x1 - rect.x0 - padding.horizontal() - style.margin * 2.0).max(0.0);
+        let ranges = self.compute_visual_line_ranges(&text, content_width, style.font_size);
+        let (visual_line, col) = self.visual_line_col_from_cursor_with_ranges(&ranges, cursor);
+        let (line_start, _) = ranges[visual_line.min(ranges.len() - 1)];
         let line_prefix = substring_chars(&text, (line_start, line_start + col));
         let content_x0 = rect.x0 + padding.left + style.margin;
         let line_h = self.theme.size_text + 6.0;
-        let content_y0 = rect.y0 + padding.top + style.margin + line_idx as f32 * line_h
+        let content_y0 = rect.y0 + padding.top + style.margin + visual_line as f32 * line_h
             - self.boxes[idx].scroll.y;
         let content_x1 = rect.x1 - padding.right - style.margin;
         let content_y1 = (content_y0 + line_h).min(rect.y1 - padding.bottom - style.margin);
