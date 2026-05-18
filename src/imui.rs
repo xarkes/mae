@@ -451,6 +451,7 @@ pub struct TextEditState {
     pub cursor: usize,
     pub selection: Option<TextSelection>,
     pub desired_column: Option<usize>,
+    pub last_interaction_time: f64,
 }
 
 impl TextEditState {
@@ -1217,6 +1218,7 @@ impl IMUI {
         if handle.clicked() {
             let cursor = self.cursor_from_line_edit_click(handle, buffer);
             self.set_text_cursor(handle.key, cursor, false);
+            self.reset_caret_blink(handle.key);
         }
         if self.box_is_focused(handle) {
             self.apply_text_input(handle, buffer, false);
@@ -1260,6 +1262,7 @@ impl IMUI {
         if handle.clicked() {
             let cursor = self.cursor_from_textarea_click(handle, buffer);
             self.set_text_cursor(handle.key, cursor, false);
+            self.reset_caret_blink(handle.key);
         }
         if self.box_is_focused(handle) {
             self.apply_text_input(handle, buffer, true);
@@ -1586,6 +1589,7 @@ impl IMUI {
                         anchor: 0,
                         cursor: len,
                     });
+                    self.reset_caret_blink(key);
                     return true;
                 }
                 OSKeyCode::KeyC => {
@@ -1611,11 +1615,13 @@ impl IMUI {
                         state.cursor = range.unwrap().0;
                         state.clear_selection();
                     }
+                    self.reset_caret_blink(key);
                     return true;
                 }
                 OSKeyCode::KeyV => {
                     let text = self.clipboard.clone();
                     self.replace_selection_or_insert(key, buffer, &text);
+                    self.reset_caret_blink(key);
                     return true;
                 }
                 _ => {}
@@ -1632,6 +1638,7 @@ impl IMUI {
                         state.cursor -= 1;
                     }
                 }
+                self.reset_caret_blink(key);
                 true
             }
             OSKeyCode::KeyDelete => {
@@ -1643,10 +1650,12 @@ impl IMUI {
                         delete_char_range(buffer, (pos, pos + 1));
                     }
                 }
+                self.reset_caret_blink(key);
                 true
             }
             OSKeyCode::KeyEnter if multiline => {
                 self.replace_selection_or_insert(key, buffer, "\n");
+                self.reset_caret_blink(key);
                 true
             }
             OSKeyCode::KeyEscape => {
@@ -1660,6 +1669,7 @@ impl IMUI {
                     cursor_left(buffer, self.text_cursor(key)),
                     shift,
                 );
+                self.reset_caret_blink(key);
                 true
             }
             OSKeyCode::KeyRightArrow => {
@@ -1669,30 +1679,37 @@ impl IMUI {
                     cursor_right(buffer, self.text_cursor(key)),
                     shift,
                 );
+                self.reset_caret_blink(key);
                 true
             }
             OSKeyCode::KeyHome => {
                 self.move_text_cursor(key, buffer, line_home(buffer, self.text_cursor(key)), shift);
+                self.reset_caret_blink(key);
                 true
             }
             OSKeyCode::KeyEnd => {
                 self.move_text_cursor(key, buffer, line_end(buffer, self.text_cursor(key)), shift);
+                self.reset_caret_blink(key);
                 true
             }
             OSKeyCode::KeyUpArrow if multiline => {
                 self.move_vertical(key, buffer, -1, shift);
+                self.reset_caret_blink(key);
                 true
             }
             OSKeyCode::KeyDownArrow if multiline => {
                 self.move_vertical(key, buffer, 1, shift);
+                self.reset_caret_blink(key);
                 true
             }
             OSKeyCode::KeyPageUp => {
                 self.move_text_cursor(key, buffer, 0, shift);
+                self.reset_caret_blink(key);
                 true
             }
             OSKeyCode::KeyPageDown => {
                 self.move_text_cursor(key, buffer, char_count(buffer), shift);
+                self.reset_caret_blink(key);
                 true
             }
             _ => {
@@ -1701,6 +1718,7 @@ impl IMUI {
                         let mut s = String::new();
                         s.push(c);
                         self.replace_selection_or_insert(key, buffer, &s);
+                        self.reset_caret_blink(key);
                         return true;
                     }
                 }
@@ -1714,6 +1732,12 @@ impl IMUI {
             .get(&key)
             .map(|state| state.cursor)
             .unwrap_or(0)
+    }
+
+    fn reset_caret_blink(&mut self, key: UiKey) {
+        let now = self.now_seconds();
+        let state = self.text_edit_states.entry(key).or_default();
+        state.last_interaction_time = now;
     }
 
     fn set_text_cursor(&mut self, key: UiKey, cursor: usize, extend_selection: bool) {
@@ -2608,13 +2632,12 @@ impl IMUI {
         if !self.boxes[idx].flags.accepts_text_input() {
             return;
         }
-        // TODO: Caret blinking currently depends on frame updates, so it does
-        // not animate correctly in lazy-rendering mode.
-        // TODO: Replace hard blink with a smooth fade animation.
-        // TODO: Invalidate/repaint only the caret rectangle instead of the
-        // entire frame.
-        // Blink at 2 Hz.
-        if ((self.now_seconds() * 2.0) as i64) % 2 != 0 {
+        let now = self.now_seconds();
+        let state = self.text_edit_states.get(&self.boxes[idx].key);
+        let last_interaction = state.map(|s| s.last_interaction_time).unwrap_or(now);
+        let elapsed = now - last_interaction;
+        // Show caret for 0.5s after interaction, then blink at 2 Hz.
+        if elapsed > 0.5 && ((elapsed - 0.5) * 2.0) as i64 % 2 != 0 {
             return;
         }
 
