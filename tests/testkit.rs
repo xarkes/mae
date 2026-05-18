@@ -2,9 +2,21 @@
 
 use mae::{
     imui::{Color, TextAreaOptions, UISize},
+    os::{OSEventFlag, OSKeyCode},
     render::{Extra, Rect2DInst, RectCoords, RenderBatch, V4f32},
     testkit::{self, UiHarness},
 };
+
+fn primary_flag() -> OSEventFlag {
+    #[cfg(target_os = "macos")]
+    {
+        OSEventFlag::Super
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        OSEventFlag::Control
+    }
+}
 
 #[test]
 fn fill_child_uses_remaining_width() {
@@ -89,6 +101,39 @@ fn scroll_event_updates_scroll_container_offset() {
     });
 
     assert!(frame.node("pane").scroll.y() > 0.0);
+    assert!(frame.node("pane").scroll_max.y() > 0.0);
+    assert!(frame.node("pane").content_size.height > frame.node("pane").bounds.height());
+}
+
+#[test]
+fn scroll_offset_is_clamped_to_content_range() {
+    let mut harness = UiHarness::new(240.0, 80.0);
+
+    harness.frame(|ui| {
+        let pane = ui.named_column("pane", |ui| {
+            for idx in 0..8 {
+                ui.label(&format!("row {idx}")).height(ui, UISize::px(20.0));
+            }
+        });
+        pane.height(ui, UISize::px(50.0))
+            .scroll_y(ui, true)
+            .clip(ui, true);
+    });
+    harness.scroll("pane", -1000.0);
+    let frame = harness.frame(|ui| {
+        let pane = ui.named_column("pane", |ui| {
+            for idx in 0..8 {
+                ui.label(&format!("row {idx}")).height(ui, UISize::px(20.0));
+            }
+        });
+        pane.height(ui, UISize::px(50.0))
+            .scroll_y(ui, true)
+            .clip(ui, true);
+    });
+
+    let pane = frame.node("pane");
+    assert_eq!(pane.scroll.y(), pane.scroll_max.y());
+    assert!(pane.clip_rect.height() <= pane.bounds.height());
 }
 
 #[test]
@@ -111,6 +156,107 @@ fn textarea_wrap_and_scroll_options_are_reflected_in_snapshot() {
     assert!(editor.text_input);
     assert!(editor.scroll_x);
     assert!(editor.scroll_y);
+}
+
+#[test]
+fn line_edit_inserts_at_caret_after_navigation() {
+    let mut harness = UiHarness::new(300.0, 120.0);
+    let mut text = "abcd".to_string();
+
+    harness.frame(|ui| {
+        ui.line_edit("name", &mut text, false);
+    });
+    harness.click("name");
+    harness.frame(|ui| {
+        ui.line_edit("name", &mut text, false);
+    });
+    harness.key_press(OSKeyCode::KeyHome);
+    harness.type_text("X");
+    let frame = harness.frame(|ui| {
+        ui.line_edit("name", &mut text, false);
+    });
+
+    assert_eq!(text, "Xabcd");
+    assert_eq!(frame.node("name").text_edit.as_ref().unwrap().cursor, 1);
+}
+
+#[test]
+fn line_edit_selection_can_be_deleted() {
+    let mut harness = UiHarness::new(300.0, 120.0);
+    let mut text = "abcd".to_string();
+
+    harness.frame(|ui| {
+        ui.line_edit("name", &mut text, false);
+    });
+    harness.click("name");
+    harness.frame(|ui| {
+        ui.line_edit("name", &mut text, false);
+    });
+    harness.key_press(OSKeyCode::KeyHome);
+    harness.key_press_with_flags(OSKeyCode::KeyRightArrow, OSEventFlag::Shift);
+    harness.key_press_with_flags(OSKeyCode::KeyRightArrow, OSEventFlag::Shift);
+    harness.key_press(OSKeyCode::KeyDelete);
+    let frame = harness.frame(|ui| {
+        ui.line_edit("name", &mut text, false);
+    });
+
+    assert_eq!(text, "cd");
+    assert_eq!(frame.node("name").text_edit.as_ref().unwrap().cursor, 0);
+    assert!(
+        frame
+            .node("name")
+            .text_edit
+            .as_ref()
+            .unwrap()
+            .selection_range()
+            .is_none()
+    );
+}
+
+#[test]
+fn line_edit_clipboard_copy_cut_paste_uses_primary_shortcut() {
+    let mut harness = UiHarness::new(300.0, 120.0);
+    let mut text = "abcd".to_string();
+
+    harness.frame(|ui| {
+        ui.line_edit("name", &mut text, false);
+    });
+    harness.click("name");
+    harness.frame(|ui| {
+        ui.line_edit("name", &mut text, false);
+    });
+    harness.key_press_with_flags(OSKeyCode::KeyA, primary_flag());
+    harness.key_press_with_flags(OSKeyCode::KeyX, primary_flag());
+    harness.key_press_with_flags(OSKeyCode::KeyV, primary_flag());
+    harness.key_press_with_flags(OSKeyCode::KeyV, primary_flag());
+    harness.frame(|ui| {
+        ui.line_edit("name", &mut text, false);
+    });
+
+    assert_eq!(text, "abcdabcd");
+}
+
+#[test]
+fn textarea_supports_multiline_navigation_and_insert() {
+    let mut harness = UiHarness::new(300.0, 160.0);
+    let mut text = "ab\ncd".to_string();
+
+    harness.frame(|ui| {
+        ui.textarea("editor", &mut text);
+    });
+    harness.click("editor");
+    harness.frame(|ui| {
+        ui.textarea("editor", &mut text);
+    });
+    harness.key_press(OSKeyCode::KeyHome);
+    harness.key_press(OSKeyCode::KeyDownArrow);
+    harness.type_text("X");
+    let frame = harness.frame(|ui| {
+        ui.textarea("editor", &mut text);
+    });
+
+    assert_eq!(text, "ab\nXcd");
+    assert!(frame.node("editor").text_edit.is_some());
 }
 
 #[test]

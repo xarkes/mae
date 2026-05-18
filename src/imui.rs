@@ -114,6 +114,13 @@ impl Point {
             Axis::Y => self.y,
         }
     }
+
+    fn set_axis(&mut self, axis: Axis, value: f32) {
+        match axis {
+            Axis::X => self.x = value,
+            Axis::Y => self.y = value,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -421,6 +428,41 @@ impl UiSignal {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TextSelection {
+    pub anchor: usize,
+    pub cursor: usize,
+}
+
+impl TextSelection {
+    pub fn normalized(self) -> Option<(usize, usize)> {
+        if self.anchor == self.cursor {
+            None
+        } else if self.anchor < self.cursor {
+            Some((self.anchor, self.cursor))
+        } else {
+            Some((self.cursor, self.anchor))
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TextEditState {
+    pub cursor: usize,
+    pub selection: Option<TextSelection>,
+    pub desired_column: Option<usize>,
+}
+
+impl TextEditState {
+    pub fn selection_range(&self) -> Option<(usize, usize)> {
+        self.selection.and_then(TextSelection::normalized)
+    }
+
+    fn clear_selection(&mut self) {
+        self.selection = None;
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UIBoxFlags(u64);
 
@@ -625,6 +667,8 @@ pub struct UIBox {
     pref_size: [UISize; 2],
     min_size: Size,
     scroll: Point,
+    scroll_max: Point,
+    content_size: Size,
     fixed_position: Point,
     computed_size: Size,
     rect: RectCoords,
@@ -654,6 +698,8 @@ impl UIBox {
             pref_size: [UISize::ChildrenSum, UISize::ChildrenSum],
             min_size: Size::default(),
             scroll: Point::default(),
+            scroll_max: Point::default(),
+            content_size: Size::default(),
             fixed_position: Point::default(),
             computed_size: Size::default(),
             rect: RectCoords::from_size(0.0, 0.0, 0.0, 0.0),
@@ -689,6 +735,8 @@ impl UIBox {
         let rect = self.rect;
         let computed_size = self.computed_size;
         let scroll = self.scroll;
+        let scroll_max = self.scroll_max;
+        let content_size = self.content_size;
         let first_touched_frame = self.first_touched_frame;
         let last_touched_frame = self.last_touched_frame;
 
@@ -697,6 +745,8 @@ impl UIBox {
         self.rect = rect;
         self.computed_size = computed_size;
         self.scroll = scroll;
+        self.scroll_max = scroll_max;
+        self.content_size = content_size;
         self.first_touched_frame = first_touched_frame;
         self.last_touched_frame = last_touched_frame;
     }
@@ -736,6 +786,8 @@ pub struct IMUI {
     focus_key: Option<UiKey>,
     next_focus_key: Option<UiKey>,
     cursor: OSCursor,
+    text_edit_states: HashMap<UiKey, TextEditState>,
+    clipboard: String,
 
     boxes: Vec<UIBox>,
     box_table: HashMap<UiKey, usize>,
@@ -803,6 +855,8 @@ impl IMUI {
             focus_key: None,
             next_focus_key: None,
             cursor: OSCursor::Arrow,
+            text_edit_states: HashMap::new(),
+            clipboard: String::new(),
             boxes: Vec::new(),
             box_table: HashMap::new(),
             free_boxes: Vec::new(),
@@ -1070,14 +1124,17 @@ impl IMUI {
         let nodes = self
             .frame_boxes
             .iter()
-            .filter_map(|idx| self.boxes.get(*idx))
-            .map(|node| crate::testkit::UiNodeSnapshot {
+            .filter_map(|idx| self.boxes.get(*idx).map(|node| (*idx, node)))
+            .map(|(idx, node)| crate::testkit::UiNodeSnapshot {
                 key: node.key,
                 label: node.debug_label.clone(),
                 text: node.string.clone(),
                 bounds: node.rect,
                 computed_size: node.computed_size,
                 scroll: node.scroll,
+                scroll_max: node.scroll_max,
+                content_size: node.content_size,
+                clip_rect: self.clipped_rect(idx),
                 signal: node.signal,
                 visible: node.visible,
                 focused: self.focus_key == Some(node.key),
@@ -1085,6 +1142,7 @@ impl IMUI {
                 text_input: node.flags.accepts_text_input(),
                 scroll_x: node.flags.scrolls_x(),
                 scroll_y: node.flags.scrolls_y(),
+                text_edit: self.text_edit_states.get(&node.key).cloned(),
             })
             .collect();
         crate::testkit::UiSnapshot { nodes }
@@ -1156,8 +1214,12 @@ impl IMUI {
         self.boxes[handle.idx].style.bg_color = Color::new("#15191f");
         self.boxes[handle.idx].style.border_color = Color::new("#3c4652");
         self.apply_click_to_focus(handle);
+        if handle.clicked() {
+            let cursor = self.cursor_from_line_edit_click(handle, buffer);
+            self.set_text_cursor(handle.key, cursor, false);
+        }
         if self.box_is_focused(handle) {
-            self.apply_text_input(buffer, false);
+            self.apply_text_input(handle, buffer, false);
             self.boxes[handle.idx].style.border_color = self.theme.color_main;
         }
         self.set_edit_display_text(handle, buffer, masked);
@@ -1193,9 +1255,14 @@ impl IMUI {
         self.boxes[handle.idx].style.bg_color = Color::new("#15191f");
         self.boxes[handle.idx].style.border_color = Color::new("#303946");
         self.boxes[handle.idx].child_gap = 2.0;
+        self.boxes[handle.idx].string = Some(buffer.clone());
         self.apply_click_to_focus(handle);
+        if handle.clicked() {
+            let cursor = self.cursor_from_textarea_click(handle, buffer);
+            self.set_text_cursor(handle.key, cursor, false);
+        }
         if self.box_is_focused(handle) {
-            self.apply_text_input(buffer, true);
+            self.apply_text_input(handle, buffer, true);
             self.boxes[handle.idx].style.border_color = self.theme.color_main;
         }
 
@@ -1464,7 +1531,9 @@ impl IMUI {
         self.boxes[handle.idx].display_string = Some(display);
     }
 
-    fn apply_text_input(&mut self, buffer: &mut String, multiline: bool) {
+    fn apply_text_input(&mut self, handle: UIBoxHandle, buffer: &mut String, multiline: bool) {
+        let key = handle.key;
+        self.ensure_text_state(key, buffer);
         let mut ev_idx = 0;
         while ev_idx < self.events.len() {
             let ev = self.events[ev_idx];
@@ -1472,35 +1541,286 @@ impl IMUI {
                 ev_idx += 1;
                 continue;
             }
-            let mut taken = true;
-            match ev.key {
-                OSKey::Keyboard(OSKeyCode::KeyBackspace) => {
-                    buffer.pop();
-                }
-                OSKey::Keyboard(OSKeyCode::KeyEnter) if multiline => {
-                    buffer.push('\n');
-                }
-                OSKey::Keyboard(OSKeyCode::KeyEscape) => {
-                    self.focus_key = None;
-                }
-                _ => {
-                    if let Some(c) = ev.chars {
-                        if !c.is_ascii_control() {
-                            buffer.push(c);
-                        } else {
-                            taken = false;
-                        }
-                    } else {
-                        taken = false;
-                    }
-                }
-            }
+            let taken = self.apply_text_event(key, buffer, multiline, ev);
             if taken {
                 self.events.remove(ev_idx);
             } else {
                 ev_idx += 1;
             }
         }
+    }
+
+    fn ensure_text_state(&mut self, key: UiKey, buffer: &str) {
+        let len = char_count(buffer);
+        let state = self.text_edit_states.entry(key).or_default();
+        state.cursor = state.cursor.min(len);
+        if let Some(selection) = state.selection.as_mut() {
+            selection.anchor = selection.anchor.min(len);
+            selection.cursor = selection.cursor.min(len);
+            if selection.anchor == selection.cursor {
+                state.selection = None;
+            }
+        }
+    }
+
+    fn apply_text_event(
+        &mut self,
+        key: UiKey,
+        buffer: &mut String,
+        multiline: bool,
+        ev: OSEvent,
+    ) -> bool {
+        let OSKey::Keyboard(key_code) = ev.key else {
+            return false;
+        };
+        let shift = has_flag(ev.flags, OSEventFlag::Shift);
+        let primary = primary_modifier(ev.flags);
+
+        if primary {
+            match key_code {
+                OSKeyCode::KeyA => {
+                    let len = char_count(buffer);
+                    let state = self.text_edit_states.entry(key).or_default();
+                    state.cursor = len;
+                    state.selection = Some(TextSelection {
+                        anchor: 0,
+                        cursor: len,
+                    });
+                    return true;
+                }
+                OSKeyCode::KeyC => {
+                    if let Some(text) = selected_text(
+                        buffer,
+                        self.text_edit_states
+                            .get(&key)
+                            .and_then(TextEditState::selection_range),
+                    ) {
+                        self.clipboard = text;
+                    }
+                    return true;
+                }
+                OSKeyCode::KeyX => {
+                    let range = self
+                        .text_edit_states
+                        .get(&key)
+                        .and_then(TextEditState::selection_range);
+                    if let Some(text) = selected_text(buffer, range) {
+                        self.clipboard = text;
+                        delete_char_range(buffer, range.unwrap());
+                        let state = self.text_edit_states.entry(key).or_default();
+                        state.cursor = range.unwrap().0;
+                        state.clear_selection();
+                    }
+                    return true;
+                }
+                OSKeyCode::KeyV => {
+                    let text = self.clipboard.clone();
+                    self.replace_selection_or_insert(key, buffer, &text);
+                    return true;
+                }
+                _ => {}
+            }
+        }
+
+        match key_code {
+            OSKeyCode::KeyBackspace => {
+                if !self.delete_selection(key, buffer) {
+                    let state = self.text_edit_states.entry(key).or_default();
+                    if state.cursor > 0 {
+                        let pos = state.cursor;
+                        delete_char_range(buffer, (pos - 1, pos));
+                        state.cursor -= 1;
+                    }
+                }
+                true
+            }
+            OSKeyCode::KeyDelete => {
+                if !self.delete_selection(key, buffer) {
+                    let state = self.text_edit_states.entry(key).or_default();
+                    let len = char_count(buffer);
+                    if state.cursor < len {
+                        let pos = state.cursor;
+                        delete_char_range(buffer, (pos, pos + 1));
+                    }
+                }
+                true
+            }
+            OSKeyCode::KeyEnter if multiline => {
+                self.replace_selection_or_insert(key, buffer, "\n");
+                true
+            }
+            OSKeyCode::KeyEscape => {
+                self.focus_key = None;
+                true
+            }
+            OSKeyCode::KeyLeftArrow => {
+                self.move_text_cursor(
+                    key,
+                    buffer,
+                    cursor_left(buffer, self.text_cursor(key)),
+                    shift,
+                );
+                true
+            }
+            OSKeyCode::KeyRightArrow => {
+                self.move_text_cursor(
+                    key,
+                    buffer,
+                    cursor_right(buffer, self.text_cursor(key)),
+                    shift,
+                );
+                true
+            }
+            OSKeyCode::KeyHome => {
+                self.move_text_cursor(key, buffer, line_home(buffer, self.text_cursor(key)), shift);
+                true
+            }
+            OSKeyCode::KeyEnd => {
+                self.move_text_cursor(key, buffer, line_end(buffer, self.text_cursor(key)), shift);
+                true
+            }
+            OSKeyCode::KeyUpArrow if multiline => {
+                self.move_vertical(key, buffer, -1, shift);
+                true
+            }
+            OSKeyCode::KeyDownArrow if multiline => {
+                self.move_vertical(key, buffer, 1, shift);
+                true
+            }
+            OSKeyCode::KeyPageUp => {
+                self.move_text_cursor(key, buffer, 0, shift);
+                true
+            }
+            OSKeyCode::KeyPageDown => {
+                self.move_text_cursor(key, buffer, char_count(buffer), shift);
+                true
+            }
+            _ => {
+                if let Some(c) = ev.chars {
+                    if !c.is_ascii_control() {
+                        let mut s = String::new();
+                        s.push(c);
+                        self.replace_selection_or_insert(key, buffer, &s);
+                        return true;
+                    }
+                }
+                false
+            }
+        }
+    }
+
+    fn text_cursor(&self, key: UiKey) -> usize {
+        self.text_edit_states
+            .get(&key)
+            .map(|state| state.cursor)
+            .unwrap_or(0)
+    }
+
+    fn set_text_cursor(&mut self, key: UiKey, cursor: usize, extend_selection: bool) {
+        let state = self.text_edit_states.entry(key).or_default();
+        if extend_selection {
+            let anchor = state.selection.map(|s| s.anchor).unwrap_or(state.cursor);
+            state.selection = Some(TextSelection { anchor, cursor });
+        } else {
+            state.selection = None;
+        }
+        state.cursor = cursor;
+        state.desired_column = None;
+    }
+
+    fn move_text_cursor(
+        &mut self,
+        key: UiKey,
+        buffer: &str,
+        cursor: usize,
+        extend_selection: bool,
+    ) {
+        self.set_text_cursor(key, cursor.min(char_count(buffer)), extend_selection);
+    }
+
+    fn move_vertical(&mut self, key: UiKey, buffer: &str, delta: isize, extend_selection: bool) {
+        let cursor = self.text_cursor(key);
+        let (line, col) = line_col_from_cursor(buffer, cursor);
+        let state = self.text_edit_states.entry(key).or_default();
+        let desired_col = state.desired_column.unwrap_or(col);
+        state.desired_column = Some(desired_col);
+        let line_count = buffer.split('\n').count().max(1);
+        let next_line = (line as isize + delta).clamp(0, line_count as isize - 1) as usize;
+        let next_cursor = cursor_from_line_col(buffer, next_line, desired_col);
+        let _ = state;
+        self.move_text_cursor(key, buffer, next_cursor, extend_selection);
+        if let Some(state) = self.text_edit_states.get_mut(&key) {
+            state.desired_column = Some(desired_col);
+        }
+    }
+
+    fn replace_selection_or_insert(&mut self, key: UiKey, buffer: &mut String, text: &str) {
+        self.delete_selection(key, buffer);
+        let state = self.text_edit_states.entry(key).or_default();
+        let cursor = state.cursor.min(char_count(buffer));
+        let byte = char_to_byte(buffer, cursor);
+        buffer.insert_str(byte, text);
+        state.cursor = cursor + char_count(text);
+        state.clear_selection();
+        state.desired_column = None;
+    }
+
+    fn delete_selection(&mut self, key: UiKey, buffer: &mut String) -> bool {
+        let range = self
+            .text_edit_states
+            .get(&key)
+            .and_then(TextEditState::selection_range);
+        let Some(range) = range else {
+            return false;
+        };
+        delete_char_range(buffer, range);
+        let state = self.text_edit_states.entry(key).or_default();
+        state.cursor = range.0;
+        state.clear_selection();
+        state.desired_column = None;
+        true
+    }
+
+    fn cursor_from_line_edit_click(&mut self, handle: UIBoxHandle, buffer: &str) -> usize {
+        let Some(mouse) = self.mouse else {
+            return char_count(buffer);
+        };
+        let rect = self.boxes[handle.idx].rect;
+        let padding = self.boxes[handle.idx].padding;
+        let style = self.boxes[handle.idx].style;
+        let local_x = (mouse.x - rect.x0 - padding.left - style.margin).max(0.0);
+        self.cursor_from_x(buffer, style.font_size, local_x)
+    }
+
+    fn cursor_from_textarea_click(&mut self, handle: UIBoxHandle, buffer: &str) -> usize {
+        let Some(mouse) = self.mouse else {
+            return char_count(buffer);
+        };
+        let rect = self.boxes[handle.idx].rect;
+        let padding = self.boxes[handle.idx].padding;
+        let style = self.boxes[handle.idx].style;
+        let line_h = self.theme.size_text + 6.0;
+        let line = ((mouse.y - rect.y0 - padding.top + self.boxes[handle.idx].scroll.y) / line_h)
+            .floor()
+            .max(0.0) as usize;
+        let line_start = cursor_from_line_col(buffer, line, 0);
+        let line_end = line_end(buffer, line_start);
+        let line_text = substring_chars(buffer, (line_start, line_end));
+        let local_x = (mouse.x - rect.x0 - padding.left - style.margin).max(0.0);
+        line_start + self.cursor_from_x(&line_text, style.font_size, local_x)
+    }
+
+    fn cursor_from_x(&mut self, text: &str, font_size: f32, x: f32) -> usize {
+        let mut last = 0;
+        for idx in 0..=char_count(text) {
+            let prefix = substring_chars(text, (0, idx));
+            let width = self.text_size(font_size, &prefix).0;
+            if width > x {
+                return if idx == 0 { 0 } else { last };
+            }
+            last = idx;
+        }
+        last
     }
 
     fn box_from_key(&self, key: UiKey) -> Option<usize> {
@@ -1702,6 +2022,8 @@ impl IMUI {
             .max(0.0);
             let used_size = self.total_children_size(idx, axis);
             let max_scroll = (used_size - content_size).max(0.0);
+            self.boxes[idx].content_size.set_axis(axis, used_size);
+            self.boxes[idx].scroll_max.set_axis(axis, max_scroll);
             match axis {
                 Axis::X => {
                     self.boxes[idx].scroll.x = self.boxes[idx].scroll.x.clamp(0.0, max_scroll)
@@ -2131,15 +2453,21 @@ impl IMUI {
         if self.drawer.is_none() {
             return;
         }
-        self.draw_ui_root_skipping(self.root, Some(self.overlay_root));
-        self.draw_ui_root(self.overlay_root);
+        let root_clip = self.boxes[self.root].rect;
+        self.draw_ui_root_skipping_clipped(self.root, Some(self.overlay_root), root_clip);
+        self.draw_ui_root_clipped(self.overlay_root, root_clip);
     }
 
-    fn draw_ui_root(&mut self, idx: usize) {
-        self.draw_ui_root_skipping(idx, None);
+    fn draw_ui_root_clipped(&mut self, idx: usize, clip: RectCoords) {
+        self.draw_ui_root_skipping_clipped(idx, None, clip);
     }
 
-    fn draw_ui_root_skipping(&mut self, idx: usize, skip_idx: Option<usize>) {
+    fn draw_ui_root_skipping_clipped(
+        &mut self,
+        idx: usize,
+        skip_idx: Option<usize>,
+        clip: RectCoords,
+    ) {
         if skip_idx == Some(idx) {
             return;
         }
@@ -2147,6 +2475,10 @@ impl IMUI {
             return;
         }
         let rect = self.boxes[idx].rect;
+        let draw_rect = intersect_rects(rect, clip);
+        if draw_rect.width() <= 0.0 || draw_rect.height() <= 0.0 {
+            return;
+        }
         let flags = self.boxes[idx].flags;
         let signal = self.boxes[idx].signal;
         let style = self.boxes[idx].style;
@@ -2156,14 +2488,15 @@ impl IMUI {
 
         if rounded_with_border {
             // Rounded border: draw outer border shape then inset background shape.
-            self.drawer
-                .as_mut()
-                .unwrap()
-                .draw_rect(&rect, style.border_color, style.corner_radius);
+            self.drawer.as_mut().unwrap().draw_rect(
+                &draw_rect,
+                style.border_color,
+                style.corner_radius,
+            );
 
             let inset = style.border_size.max(0.0);
-            let inner_w = (rect.width() - inset * 2.0).max(0.0);
-            let inner_h = (rect.height() - inset * 2.0).max(0.0);
+            let inner_w = (draw_rect.width() - inset * 2.0).max(0.0);
+            let inner_h = (draw_rect.height() - inset * 2.0).max(0.0);
             if inner_w > 0.0 && inner_h > 0.0 {
                 let mut color = style.bg_color;
                 if flags.contains(UIBoxFlags::DRAW_HOT_EFFECTS) && signal.hovering() {
@@ -2171,8 +2504,12 @@ impl IMUI {
                     color.g = (color.g + 0.08).min(1.0);
                     color.b = (color.b + 0.08).min(1.0);
                 }
-                let inner =
-                    RectCoords::from_size(rect.x0 + inset, rect.y0 + inset, inner_w, inner_h);
+                let inner = RectCoords::from_size(
+                    draw_rect.x0 + inset,
+                    draw_rect.y0 + inset,
+                    inner_w,
+                    inner_h,
+                );
                 let inner_radius = (style.corner_radius - inset).max(0.0);
                 self.drawer
                     .as_mut()
@@ -2189,11 +2526,11 @@ impl IMUI {
             self.drawer
                 .as_mut()
                 .unwrap()
-                .draw_rect(&rect, color, style.corner_radius);
+                .draw_rect(&draw_rect, color, style.corner_radius);
         }
         if draw_border && !rounded_with_border {
             self.drawer.as_mut().unwrap().draw_empty_rect(
-                &rect,
+                &draw_rect,
                 style.border_color,
                 style.border_size,
             );
@@ -2207,19 +2544,61 @@ impl IMUI {
                     style.font_size,
                     &text,
                     text.len(),
-                    rect.x1 - padding.right - style.margin,
-                    rect.y1 - padding.bottom - style.margin,
+                    (rect.x1 - padding.right - style.margin).min(clip.x1),
+                    (rect.y1 - padding.bottom - style.margin).min(clip.y1),
                     style.text_color,
                     false,
                     style.font_icon,
                 );
             }
         }
+        let child_clip = if flags.contains(UIBoxFlags::CLIP) {
+            intersect_rects(clip, rect)
+        } else {
+            clip
+        };
         let children = self.boxes[idx].children.clone();
         for child in children {
-            self.draw_ui_root_skipping(child, skip_idx);
+            self.draw_ui_root_skipping_clipped(child, skip_idx, child_clip);
         }
+        self.draw_scrollbars(idx, clip);
+        self.draw_text_selection_if_focused(idx);
         self.draw_text_caret_if_focused(idx);
+    }
+
+    fn draw_scrollbars(&mut self, idx: usize, clip: RectCoords) {
+        if self.drawer.is_none() {
+            return;
+        }
+        let rect = self.boxes[idx].rect;
+        let scroll = self.boxes[idx].scroll;
+        let scroll_max = self.boxes[idx].scroll_max;
+        let content = self.boxes[idx].content_size;
+        let color = Color::new("#7f8a9655");
+        if self.boxes[idx].flags.scrolls_y() && scroll_max.y > 0.0 && content.height > 0.0 {
+            let track_h = rect.height().max(1.0);
+            let thumb_h = (track_h * (track_h / (content.height + track_h)).clamp(0.08, 1.0))
+                .max(12.0)
+                .min(track_h);
+            let thumb_y = rect.y0 + (track_h - thumb_h) * (scroll.y / scroll_max.y).clamp(0.0, 1.0);
+            let bar = RectCoords::from_size(rect.x1 - 5.0, thumb_y, 3.0, thumb_h);
+            let bar = intersect_rects(bar, clip);
+            if bar.width() > 0.0 && bar.height() > 0.0 {
+                self.drawer.as_mut().unwrap().draw_rect(&bar, color, 2.0);
+            }
+        }
+        if self.boxes[idx].flags.scrolls_x() && scroll_max.x > 0.0 && content.width > 0.0 {
+            let track_w = rect.width().max(1.0);
+            let thumb_w = (track_w * (track_w / (content.width + track_w)).clamp(0.08, 1.0))
+                .max(12.0)
+                .min(track_w);
+            let thumb_x = rect.x0 + (track_w - thumb_w) * (scroll.x / scroll_max.x).clamp(0.0, 1.0);
+            let bar = RectCoords::from_size(thumb_x, rect.y1 - 5.0, thumb_w, 3.0);
+            let bar = intersect_rects(bar, clip);
+            if bar.width() > 0.0 && bar.height() > 0.0 {
+                self.drawer.as_mut().unwrap().draw_rect(&bar, color, 2.0);
+            }
+        }
     }
 
     fn draw_text_caret_if_focused(&mut self, idx: usize) {
@@ -2246,16 +2625,124 @@ impl IMUI {
         }
     }
 
+    fn draw_text_selection_if_focused(&mut self, idx: usize) {
+        if self.drawer.is_none() || self.focus_key != Some(self.boxes[idx].key) {
+            return;
+        }
+        if !self.boxes[idx].flags.accepts_text_input() {
+            return;
+        }
+        let Some(range) = self
+            .text_edit_states
+            .get(&self.boxes[idx].key)
+            .and_then(TextEditState::selection_range)
+        else {
+            return;
+        };
+        let mut color = self.theme.color_main;
+        color.a = 0.35;
+        if self.boxes[idx].flags.contains(UIBoxFlags::LINE_EDIT) {
+            self.draw_line_edit_selection(idx, range, color);
+        } else if self.boxes[idx].flags.contains(UIBoxFlags::TEXTAREA) {
+            self.draw_textarea_selection(idx, range, color);
+        }
+    }
+
+    fn draw_line_edit_selection(&mut self, idx: usize, range: (usize, usize), color: Color) {
+        let rect = self.boxes[idx].rect;
+        let padding = self.boxes[idx].padding;
+        let style = self.boxes[idx].style;
+        let text = self.boxes[idx].display_string.clone().unwrap_or_default();
+        let start_text = substring_chars(&text, (0, range.0.min(char_count(&text))));
+        let selected_text = substring_chars(&text, (range.0, range.1.min(char_count(&text))));
+        let start_w = self
+            .drawer
+            .as_ref()
+            .unwrap()
+            .get_text_size(style.font_size, &start_text, start_text.len())
+            .0;
+        let selected_w = self
+            .drawer
+            .as_ref()
+            .unwrap()
+            .get_text_size(style.font_size, &selected_text, selected_text.len())
+            .0;
+        let x = rect.x0 + padding.left + style.margin + start_w;
+        let y = rect.y0 + padding.top + style.margin;
+        let h = (rect.y1 - padding.bottom - style.margin - y).max(1.0);
+        let sel = RectCoords::from_size(x, y, selected_w, h);
+        let sel = intersect_rects(sel, rect);
+        if sel.width() > 0.0 && sel.height() > 0.0 {
+            self.drawer.as_mut().unwrap().draw_rect(&sel, color, 1.0);
+        }
+    }
+
+    fn draw_textarea_selection(&mut self, idx: usize, range: (usize, usize), color: Color) {
+        let rect = self.boxes[idx].rect;
+        let padding = self.boxes[idx].padding;
+        let style = self.boxes[idx].style;
+        let text = self.boxes[idx].string.clone().unwrap_or_default();
+        let line_h = self.theme.size_text + 6.0;
+        let (start_line, _) = line_col_from_cursor(&text, range.0);
+        let (end_line, _) = line_col_from_cursor(&text, range.1);
+        for line in start_line..=end_line {
+            let line_start = cursor_from_line_col(&text, line, 0);
+            let line_end_idx = line_end(&text, line_start);
+            let start = if line == start_line {
+                range.0.max(line_start)
+            } else {
+                line_start
+            };
+            let end = if line == end_line {
+                range.1.min(line_end_idx)
+            } else {
+                line_end_idx
+            };
+            if start >= end {
+                continue;
+            }
+            let before = substring_chars(&text, (line_start, start));
+            let selected = substring_chars(&text, (start, end));
+            let start_w = self
+                .drawer
+                .as_ref()
+                .unwrap()
+                .get_text_size(style.font_size, &before, before.len())
+                .0;
+            let selected_w = self
+                .drawer
+                .as_ref()
+                .unwrap()
+                .get_text_size(style.font_size, &selected, selected.len())
+                .0;
+            let x = rect.x0 + padding.left + style.margin + start_w;
+            let y = rect.y0 + padding.top + style.margin + line as f32 * line_h
+                - self.boxes[idx].scroll.y;
+            let sel = RectCoords::from_size(x, y, selected_w, line_h);
+            let sel = intersect_rects(sel, rect);
+            if sel.width() > 0.0 && sel.height() > 0.0 {
+                self.drawer.as_mut().unwrap().draw_rect(&sel, color, 1.0);
+            }
+        }
+    }
+
     fn draw_line_edit_caret(&mut self, idx: usize) {
         let rect = self.boxes[idx].rect;
         let padding = self.boxes[idx].padding;
         let style = self.boxes[idx].style;
         let text = self.boxes[idx].display_string.clone().unwrap_or_default();
+        let cursor = self
+            .text_edit_states
+            .get(&self.boxes[idx].key)
+            .map(|state| state.cursor)
+            .unwrap_or_else(|| char_count(&text))
+            .min(char_count(&text));
+        let prefix = substring_chars(&text, (0, cursor));
         let text_width = self
             .drawer
             .as_ref()
             .unwrap()
-            .get_text_size(style.font_size, &text, text.len())
+            .get_text_size(style.font_size, &prefix, prefix.len())
             .0;
         let text_height = self
             .drawer
@@ -2280,36 +2767,30 @@ impl IMUI {
 
     fn draw_textarea_caret(&mut self, idx: usize) {
         let style = self.boxes[idx].style;
-        let children = self.boxes[idx].children.clone();
-        let target = children.last().copied();
-        let (content_x0, content_y0, content_x1, content_y1, line_text) =
-            if let Some(line_idx) = target {
-                let line = &self.boxes[line_idx];
-                let text = line.display_string.clone().unwrap_or_default();
-                (
-                    line.rect.x0 + line.padding.left + line.style.margin,
-                    line.rect.y0 + line.padding.top + line.style.margin,
-                    line.rect.x1 - line.padding.right - line.style.margin,
-                    line.rect.y1 - line.padding.bottom - line.style.margin,
-                    text,
-                )
-            } else {
-                let rect = self.boxes[idx].rect;
-                let padding = self.boxes[idx].padding;
-                (
-                    rect.x0 + padding.left + style.margin,
-                    rect.y0 + padding.top + style.margin,
-                    rect.x1 - padding.right - style.margin,
-                    rect.y1 - padding.bottom - style.margin,
-                    String::new(),
-                )
-            };
+        let rect = self.boxes[idx].rect;
+        let padding = self.boxes[idx].padding;
+        let text = self.boxes[idx].string.clone().unwrap_or_default();
+        let cursor = self
+            .text_edit_states
+            .get(&self.boxes[idx].key)
+            .map(|state| state.cursor)
+            .unwrap_or_else(|| char_count(&text))
+            .min(char_count(&text));
+        let (line_idx, col) = line_col_from_cursor(&text, cursor);
+        let line_start = cursor_from_line_col(&text, line_idx, 0);
+        let line_prefix = substring_chars(&text, (line_start, line_start + col));
+        let content_x0 = rect.x0 + padding.left + style.margin;
+        let line_h = self.theme.size_text + 6.0;
+        let content_y0 = rect.y0 + padding.top + style.margin + line_idx as f32 * line_h
+            - self.boxes[idx].scroll.y;
+        let content_x1 = rect.x1 - padding.right - style.margin;
+        let content_y1 = (content_y0 + line_h).min(rect.y1 - padding.bottom - style.margin);
 
         let text_width = self
             .drawer
             .as_ref()
             .unwrap()
-            .get_text_size(style.font_size, &line_text, line_text.len())
+            .get_text_size(style.font_size, &line_prefix, line_prefix.len())
             .0;
         let text_height = self
             .drawer
@@ -2515,6 +2996,121 @@ fn flags_match(required: Option<OSEventFlag>, actual: Option<OSEventFlag>) -> bo
         (Some(_), None) => false,
         (None, _) => true,
     }
+}
+
+fn has_flag(flags: Option<OSEventFlag>, flag: OSEventFlag) -> bool {
+    flags
+        .map(|flags| (flags as u32) & (flag as u32) != 0)
+        .unwrap_or(false)
+}
+
+fn primary_modifier(flags: Option<OSEventFlag>) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        has_flag(flags, OSEventFlag::Super)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        has_flag(flags, OSEventFlag::Control)
+    }
+}
+
+fn char_count(text: &str) -> usize {
+    text.chars().count()
+}
+
+fn char_to_byte(text: &str, char_idx: usize) -> usize {
+    text.char_indices()
+        .nth(char_idx)
+        .map(|(idx, _)| idx)
+        .unwrap_or(text.len())
+}
+
+fn delete_char_range(text: &mut String, range: (usize, usize)) {
+    let start = char_to_byte(text, range.0);
+    let end = char_to_byte(text, range.1);
+    if start <= end && end <= text.len() {
+        text.replace_range(start..end, "");
+    }
+}
+
+fn substring_chars(text: &str, range: (usize, usize)) -> String {
+    text.chars()
+        .skip(range.0)
+        .take(range.1.saturating_sub(range.0))
+        .collect()
+}
+
+fn selected_text(text: &str, range: Option<(usize, usize)>) -> Option<String> {
+    range.map(|range| substring_chars(text, range))
+}
+
+fn cursor_left(_text: &str, cursor: usize) -> usize {
+    cursor.saturating_sub(1)
+}
+
+fn cursor_right(text: &str, cursor: usize) -> usize {
+    (cursor + 1).min(char_count(text))
+}
+
+fn line_home(text: &str, cursor: usize) -> usize {
+    let mut pos = cursor.min(char_count(text));
+    let chars: Vec<char> = text.chars().collect();
+    while pos > 0 && chars[pos - 1] != '\n' {
+        pos -= 1;
+    }
+    pos
+}
+
+fn line_end(text: &str, cursor: usize) -> usize {
+    let chars: Vec<char> = text.chars().collect();
+    let mut pos = cursor.min(chars.len());
+    while pos < chars.len() && chars[pos] != '\n' {
+        pos += 1;
+    }
+    pos
+}
+
+fn line_col_from_cursor(text: &str, cursor: usize) -> (usize, usize) {
+    let mut line = 0;
+    let mut col = 0;
+    for (idx, ch) in text.chars().enumerate() {
+        if idx >= cursor {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
+}
+
+fn cursor_from_line_col(text: &str, target_line: usize, target_col: usize) -> usize {
+    let mut line = 0;
+    let mut col = 0;
+    let mut cursor = 0;
+    for ch in text.chars() {
+        if line == target_line && col == target_col {
+            return cursor;
+        }
+        if line == target_line && ch == '\n' {
+            return cursor;
+        }
+        cursor += 1;
+        if ch == '\n' {
+            if line == target_line {
+                return cursor - 1;
+            }
+            line += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+    }
+    cursor
 }
 
 pub fn u64_hash_from_string(seed: u64, string: &str) -> u64 {

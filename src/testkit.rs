@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::{
-    imui::{IMUI, Point, Size, UiKey, UiSignal},
-    os::{OSEvent, OSKey, OSKeyCode},
+    imui::{IMUI, Point, Size, TextEditState, UiKey, UiSignal},
+    os::{OSEvent, OSEventFlag, OSKey, OSKeyCode},
     render::{
         self, RectCoords, RenderBatch,
         software::{self, SoftwareSurface, Texture},
@@ -17,6 +17,9 @@ pub struct UiNodeSnapshot {
     pub bounds: RectCoords,
     pub computed_size: Size,
     pub scroll: Point,
+    pub scroll_max: Point,
+    pub content_size: Size,
+    pub clip_rect: RectCoords,
     pub signal: UiSignal,
     pub visible: bool,
     pub focused: bool,
@@ -24,6 +27,7 @@ pub struct UiNodeSnapshot {
     pub text_input: bool,
     pub scroll_x: bool,
     pub scroll_y: bool,
+    pub text_edit: Option<TextEditState>,
 }
 
 impl UiNodeSnapshot {
@@ -121,6 +125,14 @@ impl UiHarness {
 
     pub fn key_press(&mut self, key: OSKeyCode) {
         self.push_event(OSEvent::press(OSKey::Keyboard(key), None));
+    }
+
+    pub fn key_press_with_flags(&mut self, key: OSKeyCode, flags: OSEventFlag) {
+        self.push_event(OSEvent::press_with_flags(
+            OSKey::Keyboard(key),
+            None,
+            Some(flags),
+        ));
     }
 
     pub fn type_text(&mut self, text: &str) {

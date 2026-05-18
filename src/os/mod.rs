@@ -141,29 +141,46 @@ pub enum OSKey {
     Keyboard(OSKeyCode),
 }
 
+#[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum OSEventFlag {
     Control = 1,
     Alt = 2,
     Shift = 4,
+    Super = 8,
 
     ControlAlt = 3,
     ControlShift = 5,
     AltShift = 6,
     ControlAltShift = 7,
+    ControlSuper = 9,
+    AltSuper = 10,
+    ControlAltSuper = 11,
+    ShiftSuper = 12,
+    ControlShiftSuper = 13,
+    AltShiftSuper = 14,
+    ControlAltShiftSuper = 15,
 }
 impl TryFrom<i32> for OSEventFlag {
     type Error = ();
 
     fn try_from(v: i32) -> Result<Self, Self::Error> {
         match v {
-            x if x == OSEventFlag::Control as i32 => Ok(OSEventFlag::Control),
-            x if x == OSEventFlag::Alt as i32 => Ok(OSEventFlag::Alt),
-            x if x == OSEventFlag::ControlAlt as i32 => Ok(OSEventFlag::ControlAlt),
-            x if x == OSEventFlag::Shift as i32 => Ok(OSEventFlag::Shift),
-            x if x == OSEventFlag::ControlShift as i32 => Ok(OSEventFlag::ControlShift),
-            x if x == OSEventFlag::AltShift as i32 => Ok(OSEventFlag::AltShift),
-            x if x == OSEventFlag::ControlAltShift as i32 => Ok(OSEventFlag::ControlAltShift),
+            1 => Ok(OSEventFlag::Control),
+            2 => Ok(OSEventFlag::Alt),
+            3 => Ok(OSEventFlag::ControlAlt),
+            4 => Ok(OSEventFlag::Shift),
+            5 => Ok(OSEventFlag::ControlShift),
+            6 => Ok(OSEventFlag::AltShift),
+            7 => Ok(OSEventFlag::ControlAltShift),
+            8 => Ok(OSEventFlag::Super),
+            9 => Ok(OSEventFlag::ControlSuper),
+            10 => Ok(OSEventFlag::AltSuper),
+            11 => Ok(OSEventFlag::ControlAltSuper),
+            12 => Ok(OSEventFlag::ShiftSuper),
+            13 => Ok(OSEventFlag::ControlShiftSuper),
+            14 => Ok(OSEventFlag::AltShiftSuper),
+            15 => Ok(OSEventFlag::ControlAltShiftSuper),
             _ => Err(()),
         }
     }
@@ -192,13 +209,17 @@ impl OSEvent {
     }
 
     pub fn press(key: OSKey, pos: Option<Point>) -> Self {
+        Self::press_with_flags(key, pos, None)
+    }
+
+    pub fn press_with_flags(key: OSKey, pos: Option<Point>, flags: Option<OSEventFlag>) -> Self {
         Self {
             ty: OSEventType::Press,
             key,
             pos,
             chars: None,
             delta: 0.0,
-            flags: None,
+            flags,
         }
     }
 

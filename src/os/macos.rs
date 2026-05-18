@@ -367,6 +367,9 @@ fn macos_keyflag_to_osflag(flag: NSEventModifierFlags) -> Option<OSEventFlag> {
     if flag.contains(NSEventModifierFlags::Option) {
         out |= OSEventFlag::Alt as i32;
     }
+    if flag.contains(NSEventModifierFlags::Command) {
+        out |= OSEventFlag::Super as i32;
+    }
     OSEventFlag::try_from(out).ok()
 }
 
