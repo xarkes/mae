@@ -261,7 +261,7 @@ impl UiKey {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UIBoxHandle {
     idx: usize,
     key: UiKey,
@@ -302,11 +302,11 @@ impl UIBoxHandle {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct UiSignal {
     pub flags: u32,
-    pub scroll_x: i16,
-    pub scroll_y: i16,
+    pub scroll_x: f32,
+    pub scroll_y: f32,
 }
 
 impl UiSignal {
@@ -1189,6 +1189,11 @@ impl IMUI {
         self
     }
 
+    pub fn corner_radius(&mut self, handle: UIBoxHandle, radius: f32) -> &mut Self {
+        self.boxes[handle.idx].style.corner_radius = radius.max(0.0);
+        self
+    }
+
     pub fn padding_all(&mut self, handle: UIBoxHandle, value: f32) -> &mut Self {
         self.boxes[handle.idx].padding = Padding::all(value);
         self
@@ -1196,6 +1201,33 @@ impl IMUI {
 
     pub fn gap(&mut self, handle: UIBoxHandle, value: f32) -> &mut Self {
         self.boxes[handle.idx].child_gap = value;
+        self
+    }
+
+    pub fn scroll_x(&mut self, handle: UIBoxHandle, enabled: bool) -> &mut Self {
+        if enabled {
+            self.boxes[handle.idx].flags |= UIBoxFlags::SCROLL_X;
+        } else {
+            self.boxes[handle.idx].flags.0 &= !UIBoxFlags::SCROLL_X.0;
+        }
+        self
+    }
+
+    pub fn scroll_y(&mut self, handle: UIBoxHandle, enabled: bool) -> &mut Self {
+        if enabled {
+            self.boxes[handle.idx].flags |= UIBoxFlags::SCROLL_Y;
+        } else {
+            self.boxes[handle.idx].flags.0 &= !UIBoxFlags::SCROLL_Y.0;
+        }
+        self
+    }
+
+    pub fn clip(&mut self, handle: UIBoxHandle, enabled: bool) -> &mut Self {
+        if enabled {
+            self.boxes[handle.idx].flags |= UIBoxFlags::CLIP;
+        } else {
+            self.boxes[handle.idx].flags.0 &= !UIBoxFlags::CLIP.0;
+        }
         self
     }
 
@@ -1230,6 +1262,7 @@ impl IMUI {
         };
         self.boxes[handle.idx].style.bg_color = Color::new("#323842");
         self.boxes[handle.idx].style.border_color = Color::new("#48515d");
+        self.boxes[handle.idx].style.corner_radius = 6.0;
     }
 
     fn show_tooltip_for_hover(&mut self, handle: UIBoxHandle, tooltip_text: Option<&str>) {
@@ -1383,11 +1416,11 @@ impl IMUI {
 
     fn apply_scroll_signal(&mut self, idx: usize) {
         let signal = self.boxes[idx].signal;
-        if self.boxes[idx].flags.scrolls_x() && signal.scroll_x != 0 {
-            self.boxes[idx].scroll.x -= signal.scroll_x as f32 * 16.0;
+        if self.boxes[idx].flags.scrolls_x() && signal.scroll_x != 0.0 {
+            self.boxes[idx].scroll.x -= signal.scroll_x * 16.0;
         }
-        if self.boxes[idx].flags.scrolls_y() && signal.scroll_y != 0 {
-            self.boxes[idx].scroll.y -= signal.scroll_y as f32 * 16.0;
+        if self.boxes[idx].flags.scrolls_y() && signal.scroll_y != 0.0 {
+            self.boxes[idx].scroll.y -= signal.scroll_y * 16.0;
         }
     }
 
@@ -1407,7 +1440,7 @@ impl IMUI {
         let mut ev_idx = 0;
         while ev_idx < self.events.len() {
             let ev = self.events[ev_idx];
-            let in_bounds = point_in_rect(&rect, ev.pos);
+            let in_bounds = point_in_rect(&rect, ev.pos.or(self.mouse));
             let mut taken = false;
 
             if flags.is_mouse_clickable() {
@@ -1455,11 +1488,11 @@ impl IMUI {
 
             if !taken && ev.ty == OSEventType::Scroll && in_bounds {
                 if flags.scrolls_y() {
-                    signal.scroll_y += ev.delta as i16;
+                    signal.scroll_y += ev.delta;
                     taken = true;
                 }
                 if flags.scrolls_x() {
-                    signal.scroll_x += ev.delta as i16;
+                    signal.scroll_x += ev.delta;
                     taken = true;
                 }
             }
@@ -1534,6 +1567,12 @@ impl IMUI {
 
     fn reconcile_container_overflow(&mut self, parent: usize, axis: Axis) {
         if self.boxes[parent].child_layout_axis != axis {
+            return;
+        }
+        if (axis == Axis::X && self.boxes[parent].flags.scrolls_x())
+            || (axis == Axis::Y && self.boxes[parent].flags.scrolls_y())
+        {
+            // Scroll containers keep child sizes and rely on scrolling instead of shrinking.
             return;
         }
         let children: Vec<usize> = self.boxes[parent]
@@ -1949,16 +1988,47 @@ impl IMUI {
         let flags = self.boxes[idx].flags;
         let signal = self.boxes[idx].signal;
         let style = self.boxes[idx].style;
-        if flags.contains(UIBoxFlags::DRAW_BACKGROUND) {
+        let draw_bg = flags.contains(UIBoxFlags::DRAW_BACKGROUND);
+        let draw_border = flags.contains(UIBoxFlags::DRAW_BORDER);
+        let rounded_with_border = draw_bg && draw_border && style.corner_radius > 0.0;
+
+        if rounded_with_border {
+            // Rounded border: draw outer border shape then inset background shape.
+            self.drawer
+                .as_mut()
+                .unwrap()
+                .draw_rect(&rect, style.border_color, style.corner_radius);
+
+            let inset = style.border_size.max(0.0);
+            let inner_w = (rect.width() - inset * 2.0).max(0.0);
+            let inner_h = (rect.height() - inset * 2.0).max(0.0);
+            if inner_w > 0.0 && inner_h > 0.0 {
+                let mut color = style.bg_color;
+                if flags.contains(UIBoxFlags::DRAW_HOT_EFFECTS) && signal.hovering() {
+                    color.r = (color.r + 0.08).min(1.0);
+                    color.g = (color.g + 0.08).min(1.0);
+                    color.b = (color.b + 0.08).min(1.0);
+                }
+                let inner = RectCoords::from_size(rect.x0 + inset, rect.y0 + inset, inner_w, inner_h);
+                let inner_radius = (style.corner_radius - inset).max(0.0);
+                self.drawer
+                    .as_mut()
+                    .unwrap()
+                    .draw_rect(&inner, color, inner_radius);
+            }
+        } else if draw_bg {
             let mut color = style.bg_color;
             if flags.contains(UIBoxFlags::DRAW_HOT_EFFECTS) && signal.hovering() {
                 color.r = (color.r + 0.08).min(1.0);
                 color.g = (color.g + 0.08).min(1.0);
                 color.b = (color.b + 0.08).min(1.0);
             }
-            self.drawer.as_mut().unwrap().draw_rect(&rect, color);
+            self.drawer
+                .as_mut()
+                .unwrap()
+                .draw_rect(&rect, color, style.corner_radius);
         }
-        if flags.contains(UIBoxFlags::DRAW_BORDER) {
+        if draw_border && !rounded_with_border {
             self.drawer.as_mut().unwrap().draw_empty_rect(
                 &rect,
                 style.border_color,
@@ -2042,7 +2112,7 @@ impl IMUI {
         self.drawer
             .as_mut()
             .unwrap()
-            .draw_rect(&caret_rect, self.theme.color_text);
+            .draw_rect(&caret_rect, self.theme.color_text, 0.0);
     }
 
     fn draw_textarea_caret(&mut self, idx: usize) {
@@ -2091,7 +2161,7 @@ impl IMUI {
         self.drawer
             .as_mut()
             .unwrap()
-            .draw_rect(&caret_rect, self.theme.color_text);
+            .draw_rect(&caret_rect, self.theme.color_text, 0.0);
     }
 
     fn text_size(&mut self, font_size: f32, text: &str) -> (f32, f32) {

@@ -11,6 +11,9 @@ in vec4 c2v_extra;
 out vec2 v2p_tex_coords;
 out vec4 v2p_tint;
 out float v2p_omit_texture;
+out vec2 v2p_dst_pos_px;
+out vec4 v2p_dst_rect_px;
+out float v2p_corner_radius_px;
 
 uniform vec2 u_viewport_size_px;
 
@@ -38,5 +41,7 @@ void main() {
   v2p_tex_coords = src_position;
   v2p_tint = color;
   v2p_omit_texture = c2v_extra.x;
+  v2p_dst_pos_px = dst_position;
+  v2p_dst_rect_px = c2v_dst_rect;
+  v2p_corner_radius_px = c2v_extra.y;
 }
-

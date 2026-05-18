@@ -86,17 +86,19 @@ pub struct V4f32 {
 #[derive(Debug)]
 pub struct Extra {
     pub omit_texture: f32,
-    pub _unused: [f32; 3],
+    pub corner_radius_px: f32,
+    pub _unused: [f32; 2],
 }
 impl Extra {
-    pub fn new(omit_texture: bool) -> Self {
+    pub fn new(omit_texture: bool, corner_radius_px: f32) -> Self {
         let omit = match omit_texture {
             true => 1.0,
             false => 0.0,
         };
         Extra {
             omit_texture: omit,
-            _unused: [0.0, 0.0, 0.0],
+            corner_radius_px,
+            _unused: [0.0, 0.0],
         }
     }
 }

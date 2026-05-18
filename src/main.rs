@@ -1,3 +1,5 @@
+mod ide_window;
+
 use mae::{
     imui::{CrossAxisAlign, IMUI, MainAxisAlign, UIBoxHandle, UISize, UiSignal, uibox::Color},
     os::{OSEventFlag, OSKey, OSKeyCode},
@@ -17,6 +19,7 @@ fn main() {
     );
     let mut show_panel = true;
     let mut selected_tab = 0usize;
+    let mut ide_state = ide_window::IdeViewState::new();
     let mut counter = 0usize;
     let mut lazy_rendering = !ui.render_continuously();
     let mut vsync_enabled = ui.vsync_enabled();
@@ -25,6 +28,13 @@ fn main() {
     ui.eventloop(|ui| {
         if ui.input(OSKey::Keyboard(OSKeyCode::KeyT), Some(OSEventFlag::Control)) {
             show_panel = !show_panel;
+        }
+
+        if selected_tab == 3 {
+            if ide_window::render(ui, &mut ide_state) {
+                selected_tab = 0;
+            }
+            return;
         }
 
         let root = ui.row(|ui| {
@@ -41,6 +51,7 @@ fn main() {
                     nav_button(ui, "Layout", 0, &mut selected_tab);
                     nav_button(ui, "Widgets", 1, &mut selected_tab);
                     nav_button(ui, "Render", 2, &mut selected_tab);
+                    nav_button(ui, "IDE", 3, &mut selected_tab);
                 });
                 ui.gap(nav, 6.0);
             });
@@ -55,7 +66,8 @@ fn main() {
                     let heading = ui.label(match selected_tab {
                         0 => "Layout Review",
                         1 => "Widget Signals",
-                        _ => "Render Commands",
+                        2 => "Render Commands",
+                        _ => "IDE Mock",
                     });
                     ui.text_color(heading, Color::new("#ffffff"));
                     ui.width(heading, UISize::Fill);
@@ -150,7 +162,8 @@ fn main() {
                 match selected_tab {
                     0 => layout_page(ui, &mut show_panel),
                     1 => widget_page(ui, &mut input, &mut text, &mut counter),
-                    _ => render_page(ui),
+                    2 => render_page(ui),
+                    _ => {}
                 }
             });
             ui.width(content, UISize::Fill);
@@ -169,6 +182,7 @@ fn main() {
 
 fn toggle_switch(ui: &mut IMUI, label: &str, enabled: bool, tooltip: &str) -> UIBoxHandle {
     let button = ui.button(label, Some(tooltip));
+    ui.corner_radius(button, 7.0);
     ui.background(
         button,
         if enabled {
@@ -183,6 +197,7 @@ fn toggle_switch(ui: &mut IMUI, label: &str, enabled: bool, tooltip: &str) -> UI
 
 fn nav_button(ui: &mut IMUI, label: &str, id: usize, selected_tab: &mut usize) {
     let button = ui.button(&format!("{label}##nav_{id}"), None);
+    ui.corner_radius(button, 7.0);
     ui.width(button, UISize::ParentPct(1.0));
     ui.height(button, UISize::Pixels(34.0));
     ui.background(
@@ -202,6 +217,7 @@ fn layout_page(ui: &mut IMUI, show_panel: &mut bool) {
     let page = ui.column(|ui| {
         let controls = ui.row(|ui| {
             let toggle = ui.button("Toggle panel", Some("Ctrl+T"));
+            ui.corner_radius(toggle, 7.0);
             ui.width(toggle, UISize::Pixels(140.0));
             ui.height(toggle, UISize::Pixels(32.0));
             if toggle.clicked() {
@@ -265,6 +281,7 @@ fn widget_page(ui: &mut IMUI, input: &mut String, text: &mut String, counter: &m
                 "Click target",
                 Some("Reports press/hover/click signal state"),
             );
+            ui.corner_radius(button, 7.0);
             ui.width(button, UISize::Pixels(160.0));
             ui.height(button, UISize::Pixels(36.0));
             let report = signal_report(button);
@@ -280,6 +297,7 @@ fn widget_page(ui: &mut IMUI, input: &mut String, text: &mut String, counter: &m
             ui.text_color(counter_label, Color::new("#9fc8ff"));
 
             let plus = ui.button("+", Some("Increment counter"));
+            ui.corner_radius(plus, 7.0);
             ui.width(plus, UISize::Pixels(36.0));
             ui.height(plus, UISize::Pixels(32.0));
             if plus.clicked() {

@@ -53,12 +53,12 @@ impl Drawer {
                     y1: 0.0,
                 },
                 colors: [color, color, color, color],
-                extra: Extra::new(true),
+                extra: Extra::new(true, 0.0),
             };
             self.renderer.add_rect(rect, None);
         }
     }
-    pub fn draw_rect(&mut self, coords: &RectCoords, color: V4f32) {
+    pub fn draw_rect(&mut self, coords: &RectCoords, color: V4f32, corner_radius: f32) {
         let scale_factor = self.renderer.win.dpi;
         let batch = self.renderer.current_batch();
         let rect = Rect2DInst {
@@ -70,7 +70,7 @@ impl Drawer {
                 y1: 0.0,
             },
             colors: [color, color, color, color],
-            extra: Extra::new(true),
+            extra: Extra::new(true, (corner_radius * scale_factor).max(0.0)),
         };
         batch.add_rect(rect);
     }
@@ -178,7 +178,7 @@ impl Drawer {
                     },
                     src,
                     colors: [color, color, color, color],
-                    extra: Extra::new(false),
+                    extra: Extra::new(false, 0.0),
                 };
                 self.renderer.add_rect(rect, Some(texture_id));
             }
