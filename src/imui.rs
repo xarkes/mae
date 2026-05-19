@@ -2295,16 +2295,37 @@ impl IMUI {
             let is_focused = self.focus_key == Some(key);
             let is_floating = self.boxes[idx].flags.contains(UIBoxFlags::FLOATING_X)
                 || self.boxes[idx].flags.contains(UIBoxFlags::FLOATING_Y);
+            let draws_background = self.boxes[idx].flags.contains(UIBoxFlags::DRAW_BACKGROUND);
+            let draws_border = self.boxes[idx].flags.contains(UIBoxFlags::DRAW_BORDER);
+            let draws_text = self.boxes[idx].flags.contains(UIBoxFlags::DRAW_TEXT);
+            let animates_interaction =
+                self.boxes[idx].flags.contains(UIBoxFlags::DRAW_HOT_EFFECTS) || draws_border;
+            let animates_appearance =
+                is_floating && (draws_background || draws_border || draws_text);
             let box_ = &mut self.boxes[idx];
+
+            if key.is_zero() {
+                box_.hot_t = is_hot as u8 as f32;
+                box_.active_t = is_active as u8 as f32;
+                box_.focus_t = is_focused as u8 as f32;
+                box_.appear_t = 1.0;
+                box_.bg_color_animated = box_.style.bg_color;
+                box_.border_color_animated = box_.style.border_color;
+                continue;
+            }
 
             if box_.first_touched_frame == self.build_index {
                 box_.hot_t = is_hot as u8 as f32;
                 box_.active_t = is_active as u8 as f32;
                 box_.focus_t = is_focused as u8 as f32;
-                box_.appear_t = if is_floating { appear_rate } else { 1.0 };
+                box_.appear_t = if animates_appearance {
+                    appear_rate
+                } else {
+                    1.0
+                };
                 box_.bg_color_animated = box_.style.bg_color;
                 box_.border_color_animated = box_.style.border_color;
-                if is_floating && box_.appear_t < 1.0 - epsilon {
+                if animates_appearance && box_.appear_t < 1.0 - epsilon {
                     animating = true;
                 }
                 continue;
@@ -2315,7 +2336,7 @@ impl IMUI {
                 animate_scalar(box_.active_t, is_active as u8 as f32, active_rate, epsilon);
             box_.focus_t =
                 animate_scalar(box_.focus_t, is_focused as u8 as f32, focus_rate, epsilon);
-            box_.appear_t = if is_floating {
+            box_.appear_t = if animates_appearance {
                 animate_scalar(box_.appear_t, 1.0, appear_rate, epsilon)
             } else {
                 1.0
@@ -2327,17 +2348,28 @@ impl IMUI {
                 target_bg = color_mix(target_bg, self.theme.accent_active, box_.active_t * 0.35);
             }
             let target_border = color_mix(box_.style.border_color, self.theme.accent, box_.focus_t);
-            box_.bg_color_animated = color_lerp(box_.bg_color_animated, target_bg, color_rate);
-            box_.border_color_animated =
-                color_lerp(box_.border_color_animated, target_border, color_rate);
+            if draws_background {
+                box_.bg_color_animated = color_lerp(box_.bg_color_animated, target_bg, color_rate);
+            } else {
+                box_.bg_color_animated = box_.style.bg_color;
+            }
+            if draws_border {
+                box_.border_color_animated =
+                    color_lerp(box_.border_color_animated, target_border, color_rate);
+            } else {
+                box_.border_color_animated = box_.style.border_color;
+            }
 
             animating = animating
-                || (box_.hot_t - is_hot as u8 as f32).abs() > epsilon
-                || (box_.active_t - is_active as u8 as f32).abs() > epsilon
-                || (box_.focus_t - is_focused as u8 as f32).abs() > epsilon
+                || (animates_interaction
+                    && ((box_.hot_t - is_hot as u8 as f32).abs() > epsilon
+                        || (box_.active_t - is_active as u8 as f32).abs() > epsilon
+                        || (box_.focus_t - is_focused as u8 as f32).abs() > epsilon))
                 || (1.0 - box_.appear_t).abs() > epsilon
-                || color_distance(box_.bg_color_animated, target_bg) > epsilon
-                || color_distance(box_.border_color_animated, target_border) > epsilon;
+                || (draws_background
+                    && color_distance(box_.bg_color_animated, target_bg) > epsilon)
+                || (draws_border
+                    && color_distance(box_.border_color_animated, target_border) > epsilon);
         }
 
         if animating {
@@ -3678,6 +3710,62 @@ mod tests {
         assert!(hot_t > 0.0);
         assert!(hot_t < 1.0);
         assert!(ui.repaint_requested);
+    }
+
+    #[test]
+    fn setting_same_theme_does_not_request_repaint() {
+        let mut ui = IMUI::new_for_test(400.0, 200.0);
+
+        ui.repaint_requested = false;
+        ui.set_theme(UITheme::dark());
+        assert!(!ui.repaint_requested);
+
+        ui.set_theme(UITheme::light());
+        assert!(ui.repaint_requested);
+    }
+
+    #[test]
+    fn static_retained_frame_does_not_keep_lazy_rendering_awake() {
+        let mut ui = IMUI::new_for_test(400.0, 200.0);
+
+        ui.begin_frame();
+        let first = ui.button("Idle###idle_button", None);
+        ui.width(first, UISize::Pixels(120.0));
+        ui.height(first, UISize::Pixels(40.0));
+        ui.end_frame();
+
+        ui.repaint_requested = false;
+        ui.begin_frame();
+        let second = ui.button("Idle###idle_button", None);
+        ui.width(second, UISize::Pixels(120.0));
+        ui.height(second, UISize::Pixels(40.0));
+        ui.end_frame();
+
+        assert!(!ui.repaint_requested);
+    }
+
+    #[test]
+    fn transient_visual_box_does_not_keep_lazy_rendering_awake() {
+        let mut ui = IMUI::new_for_test(400.0, 200.0);
+
+        ui.begin_frame();
+        ui.floating_pane_at(Point::new(20.0, 20.0), None, |ui| {
+            let label = ui.label("Transient");
+            ui.padding_all(label, 4.0);
+        });
+        ui.end_frame();
+
+        ui.repaint_requested = false;
+        ui.begin_frame();
+        let pane = ui.floating_pane_at(Point::new(20.0, 20.0), None, |ui| {
+            let label = ui.label("Transient");
+            ui.padding_all(label, 4.0);
+        });
+        ui.end_frame();
+
+        assert!(pane.key().is_zero());
+        assert!(ui.free_boxes.contains(&pane.idx()));
+        assert!(!ui.repaint_requested);
     }
 
     #[test]
