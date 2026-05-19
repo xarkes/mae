@@ -6,7 +6,7 @@ edition = "2024"
 [features]
 default = ["opengl", "cpu", "freetype"]
 opengl = ["dep:gl"]
-fontdue = ["dep:fontdue", "dep:lru"]
+fontdue = ["dep:fontdue"]
 freetype = ["dep:freetype-rs"]
 cpu = []
 testkit = []
@@ -14,7 +14,7 @@ testkit = []
 [dependencies]
 fontdue = { version = "0.9.3", optional = true }
 gl = { version = "*", optional = true }
-lru = { version = "0.16", optional = true }
+lru = { version = "0.16" }
 log = "0.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]
