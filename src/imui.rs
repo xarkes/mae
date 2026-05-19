@@ -177,10 +177,21 @@ pub enum Axis {
     Y,
 }
 
+const SCROLLBAR_THICKNESS: f32 = 3.0;
+const SCROLLBAR_HOVER_THICKNESS: f32 = 8.0;
+const SCROLLBAR_EDGE_INSET: f32 = 2.0;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MouseButton {
     Left,
     Right,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ScrollbarDrag {
+    key: UiKey,
+    axis: Axis,
+    thumb_grab_offset: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -706,6 +717,8 @@ pub struct UIBox {
     active_t: f32,
     focus_t: f32,
     appear_t: f32,
+    scrollbar_x_t: f32,
+    scrollbar_y_t: f32,
     // Per-frame interaction result for the retained box.
     signal: UiSignal,
     visible: bool,
@@ -749,6 +762,8 @@ impl UIBox {
             active_t: 0.0,
             focus_t: 0.0,
             appear_t: 0.0,
+            scrollbar_x_t: 0.0,
+            scrollbar_y_t: 0.0,
             signal: UiSignal::default(),
             visible: true,
             first_touched_frame: 0,
@@ -779,6 +794,8 @@ impl UIBox {
         let active_t = self.active_t;
         let focus_t = self.focus_t;
         let appear_t = self.appear_t;
+        let scrollbar_x_t = self.scrollbar_x_t;
+        let scrollbar_y_t = self.scrollbar_y_t;
         let first_touched_frame = self.first_touched_frame;
         let last_touched_frame = self.last_touched_frame;
 
@@ -796,6 +813,8 @@ impl UIBox {
         self.active_t = active_t;
         self.focus_t = focus_t;
         self.appear_t = appear_t;
+        self.scrollbar_x_t = scrollbar_x_t;
+        self.scrollbar_y_t = scrollbar_y_t;
         self.first_touched_frame = first_touched_frame;
         self.last_touched_frame = last_touched_frame;
     }
@@ -977,6 +996,7 @@ pub struct IMUI {
     active_left_key: Option<UiKey>,
     active_right_key: Option<UiKey>,
     drag_start_mouse: Option<Point>,
+    active_scrollbar: Option<ScrollbarDrag>,
     focus_key: Option<UiKey>,
     next_focus_key: Option<UiKey>,
     cursor: OSCursor,
@@ -1048,6 +1068,7 @@ impl IMUI {
             active_left_key: None,
             active_right_key: None,
             drag_start_mouse: None,
+            active_scrollbar: None,
             focus_key: None,
             next_focus_key: None,
             cursor: OSCursor::Arrow,
@@ -1703,6 +1724,9 @@ impl IMUI {
         if enabled {
             self.boxes[handle.idx].flags |= UIBoxFlags::SCROLL_X;
             self.absorb_pending_scroll_for_box(handle.idx);
+            let key = self.boxes[handle.idx].key;
+            let flags = self.boxes[handle.idx].flags;
+            self.apply_scrollbar_events(handle.idx, key, flags);
         } else {
             self.boxes[handle.idx].flags.0 &= !UIBoxFlags::SCROLL_X.0;
         }
@@ -1713,6 +1737,9 @@ impl IMUI {
         if enabled {
             self.boxes[handle.idx].flags |= UIBoxFlags::SCROLL_Y;
             self.absorb_pending_scroll_for_box(handle.idx);
+            let key = self.boxes[handle.idx].key;
+            let flags = self.boxes[handle.idx].flags;
+            self.apply_scrollbar_events(handle.idx, key, flags);
         } else {
             self.boxes[handle.idx].flags.0 &= !UIBoxFlags::SCROLL_Y.0;
         }
@@ -2281,6 +2308,197 @@ impl IMUI {
         }
     }
 
+    fn scrollbar_track_rect(&self, idx: usize, axis: Axis) -> Option<RectCoords> {
+        if !self.scrollbar_available(idx, axis) {
+            return None;
+        }
+        let rect = self.boxes[idx].rect;
+        let thickness = SCROLLBAR_HOVER_THICKNESS;
+        let inset = SCROLLBAR_EDGE_INSET;
+        Some(match axis {
+            Axis::X => RectCoords::from_size(
+                rect.x0,
+                rect.y1 - thickness - inset * 2.0,
+                rect.width(),
+                thickness + inset * 2.0,
+            ),
+            Axis::Y => RectCoords::from_size(
+                rect.x1 - thickness - inset * 2.0,
+                rect.y0,
+                thickness + inset * 2.0,
+                rect.height(),
+            ),
+        })
+    }
+
+    fn scrollbar_thumb_rect(&self, idx: usize, axis: Axis, thickness: f32) -> Option<RectCoords> {
+        if !self.scrollbar_available(idx, axis) {
+            return None;
+        }
+        let rect = self.boxes[idx].rect;
+        let content = self.boxes[idx].content_size;
+        let scroll = self.boxes[idx].scroll;
+        let scroll_max = self.boxes[idx].scroll_max;
+        let inset = SCROLLBAR_EDGE_INSET;
+
+        Some(match axis {
+            Axis::X => {
+                let track_w = rect.width().max(1.0);
+                let thumb_w = scrollbar_thumb_len(track_w, content.width)
+                    .max(12.0)
+                    .min(track_w);
+                let thumb_x =
+                    rect.x0 + (track_w - thumb_w) * (scroll.x / scroll_max.x).clamp(0.0, 1.0);
+                RectCoords::from_size(thumb_x, rect.y1 - thickness - inset, thumb_w, thickness)
+            }
+            Axis::Y => {
+                let track_h = rect.height().max(1.0);
+                let thumb_h = scrollbar_thumb_len(track_h, content.height)
+                    .max(12.0)
+                    .min(track_h);
+                let thumb_y =
+                    rect.y0 + (track_h - thumb_h) * (scroll.y / scroll_max.y).clamp(0.0, 1.0);
+                RectCoords::from_size(rect.x1 - thickness - inset, thumb_y, thickness, thumb_h)
+            }
+        })
+    }
+
+    fn scrollbar_available(&self, idx: usize, axis: Axis) -> bool {
+        let flags = self.boxes[idx].flags;
+        let scroll_max = self.boxes[idx].scroll_max;
+        let content = self.boxes[idx].content_size;
+        match axis {
+            Axis::X => flags.scrolls_x() && scroll_max.x > 0.0 && content.width > 0.0,
+            Axis::Y => flags.scrolls_y() && scroll_max.y > 0.0 && content.height > 0.0,
+        }
+    }
+
+    fn scrollbar_is_hot_or_active(&self, idx: usize, axis: Axis) -> bool {
+        let key = self.boxes[idx].key;
+        if self
+            .active_scrollbar
+            .is_some_and(|drag| drag.key == key && drag.axis == axis)
+        {
+            return true;
+        }
+        self.scrollbar_track_rect(idx, axis)
+            .is_some_and(|rect| point_in_rect(&rect, self.mouse))
+    }
+
+    fn scrollbar_thickness(&self, idx: usize, axis: Axis) -> f32 {
+        let t = match axis {
+            Axis::X => self.boxes[idx].scrollbar_x_t,
+            Axis::Y => self.boxes[idx].scrollbar_y_t,
+        }
+        .clamp(0.0, 1.0);
+        SCROLLBAR_THICKNESS + (SCROLLBAR_HOVER_THICKNESS - SCROLLBAR_THICKNESS) * t
+    }
+
+    fn apply_scrollbar_events(&mut self, idx: usize, key: UiKey, flags: UIBoxFlags) {
+        if key.is_zero() || (!flags.scrolls_x() && !flags.scrolls_y()) {
+            return;
+        }
+
+        let mut ev_idx = 0;
+        while ev_idx < self.events.len() {
+            let ev = self.events[ev_idx];
+            let mut taken = false;
+
+            match ev.ty {
+                OSEventType::Press if ev.key == OSKey::LeftMouseButton => {
+                    if let Some((axis, pos)) = self.scrollbar_hit(idx, ev.pos.or(self.mouse)) {
+                        self.begin_scrollbar_drag(idx, key, axis, pos);
+                        taken = true;
+                    }
+                }
+                OSEventType::MouseMove
+                    if self.active_scrollbar.is_some_and(|drag| drag.key == key)
+                        && self.left_mouse_down =>
+                {
+                    if let Some(pos) = ev.pos.or(self.mouse) {
+                        self.drag_scrollbar_to(idx, pos);
+                        taken = true;
+                    }
+                }
+                OSEventType::Release
+                    if ev.key == OSKey::LeftMouseButton
+                        && self.active_scrollbar.is_some_and(|drag| drag.key == key) =>
+                {
+                    if let Some(pos) = ev.pos.or(self.mouse) {
+                        self.drag_scrollbar_to(idx, pos);
+                    }
+                    self.active_scrollbar = None;
+                    taken = true;
+                }
+                _ => {}
+            }
+
+            if taken {
+                self.events.remove(ev_idx);
+            } else {
+                ev_idx += 1;
+            }
+        }
+    }
+
+    fn scrollbar_hit(&self, idx: usize, pos: Option<Point>) -> Option<(Axis, Point)> {
+        let pos = pos?;
+        for axis in [Axis::Y, Axis::X] {
+            if self
+                .scrollbar_track_rect(idx, axis)
+                .is_some_and(|rect| point_in_rect(&rect, Some(pos)))
+            {
+                return Some((axis, pos));
+            }
+        }
+        None
+    }
+
+    fn begin_scrollbar_drag(&mut self, idx: usize, key: UiKey, axis: Axis, pos: Point) {
+        let thumb = self.scrollbar_thumb_rect(idx, axis, SCROLLBAR_HOVER_THICKNESS);
+        let thumb_grab_offset = thumb
+            .filter(|thumb| point_in_rect(thumb, Some(pos)))
+            .map(|thumb| pos.axis(axis) - rect_min_axis(thumb, axis))
+            .unwrap_or_else(|| self.scrollbar_thumb_len(idx, axis) * 0.5);
+
+        self.active_scrollbar = Some(ScrollbarDrag {
+            key,
+            axis,
+            thumb_grab_offset,
+        });
+        self.drag_scrollbar_to(idx, pos);
+    }
+
+    fn drag_scrollbar_to(&mut self, idx: usize, pos: Point) {
+        let Some(drag) = self.active_scrollbar else {
+            return;
+        };
+        let rect = self.boxes[idx].rect;
+        let scroll_max = self.boxes[idx].scroll_max.axis(drag.axis);
+        if scroll_max <= 0.0 {
+            return;
+        }
+        let track_min = rect_min_axis(rect, drag.axis);
+        let track_len = rect_size_axis(rect, drag.axis).max(1.0);
+        let thumb_len = self.scrollbar_thumb_len(idx, drag.axis);
+        let movable = (track_len - thumb_len).max(1.0);
+        let thumb_min =
+            (pos.axis(drag.axis) - drag.thumb_grab_offset - track_min).clamp(0.0, movable);
+        let value = scroll_max * (thumb_min / movable);
+        self.boxes[idx].scroll.set_axis(drag.axis, value);
+        self.boxes[idx].scroll_target.set_axis(drag.axis, value);
+        self.request_repaint();
+    }
+
+    fn scrollbar_thumb_len(&self, idx: usize, axis: Axis) -> f32 {
+        let rect = self.boxes[idx].rect;
+        let content = self.boxes[idx].content_size;
+        let track_len = rect_size_axis(rect, axis).max(1.0);
+        scrollbar_thumb_len(track_len, content.axis(axis))
+            .max(12.0)
+            .min(track_len)
+    }
+
     fn animate_scroll_offsets(&mut self) {
         let rate = smooth_rate(self.theme.motion.scroll_rate, self.animation_dt);
         let epsilon = 0.5;
@@ -2333,6 +2551,12 @@ impl IMUI {
                 self.boxes[idx].flags.contains(UIBoxFlags::DRAW_HOT_EFFECTS) || draws_border;
             let animates_appearance =
                 is_floating && (draws_background || draws_border || draws_text);
+            let scrollbar_x_target = (self.scrollbar_available(idx, Axis::X)
+                && self.scrollbar_is_hot_or_active(idx, Axis::X))
+                as u8 as f32;
+            let scrollbar_y_target = (self.scrollbar_available(idx, Axis::Y)
+                && self.scrollbar_is_hot_or_active(idx, Axis::Y))
+                as u8 as f32;
             let box_ = &mut self.boxes[idx];
 
             if key.is_zero() {
@@ -2340,6 +2564,8 @@ impl IMUI {
                 box_.active_t = is_active as u8 as f32;
                 box_.focus_t = is_focused as u8 as f32;
                 box_.appear_t = 1.0;
+                box_.scrollbar_x_t = scrollbar_x_target;
+                box_.scrollbar_y_t = scrollbar_y_target;
                 box_.bg_color_animated = box_.style.bg_color;
                 box_.border_color_animated = box_.style.border_color;
                 continue;
@@ -2354,6 +2580,8 @@ impl IMUI {
                 } else {
                     1.0
                 };
+                box_.scrollbar_x_t = scrollbar_x_target;
+                box_.scrollbar_y_t = scrollbar_y_target;
                 box_.bg_color_animated = box_.style.bg_color;
                 box_.border_color_animated = box_.style.border_color;
                 if animates_appearance && box_.appear_t < 1.0 - epsilon {
@@ -2372,6 +2600,10 @@ impl IMUI {
             } else {
                 1.0
             };
+            box_.scrollbar_x_t =
+                animate_scalar(box_.scrollbar_x_t, scrollbar_x_target, hot_rate, epsilon);
+            box_.scrollbar_y_t =
+                animate_scalar(box_.scrollbar_y_t, scrollbar_y_target, hot_rate, epsilon);
 
             let mut target_bg = box_.style.bg_color;
             if box_.flags.contains(UIBoxFlags::DRAW_HOT_EFFECTS) {
@@ -2397,6 +2629,8 @@ impl IMUI {
                         || (box_.active_t - is_active as u8 as f32).abs() > epsilon
                         || (box_.focus_t - is_focused as u8 as f32).abs() > epsilon))
                 || (1.0 - box_.appear_t).abs() > epsilon
+                || (box_.scrollbar_x_t - scrollbar_x_target).abs() > epsilon
+                || (box_.scrollbar_y_t - scrollbar_y_target).abs() > epsilon
                 || (draws_background
                     && color_distance(box_.bg_color_animated, target_bg) > epsilon)
                 || (draws_border
@@ -2420,6 +2654,10 @@ impl IMUI {
             .unwrap_or_else(|| RectCoords::from_size(-10000.0, -10000.0, 0.0, 0.0));
         let mouse_over = point_in_rect(&rect, self.mouse);
         let focused = self.focus_key == Some(key);
+
+        if let Some(idx) = existing_idx {
+            self.apply_scrollbar_events(idx, key, flags);
+        }
 
         let mut ev_idx = 0;
         while ev_idx < self.events.len() {
@@ -3080,33 +3318,31 @@ impl IMUI {
         if self.drawer.is_none() {
             return;
         }
-        let rect = self.boxes[idx].rect;
-        let scroll = self.boxes[idx].scroll;
-        let scroll_max = self.boxes[idx].scroll_max;
-        let content = self.boxes[idx].content_size;
         let color = color_mul_alpha(self.theme.scrollbar, self.box_opacity(idx));
-        if self.boxes[idx].flags.scrolls_y() && scroll_max.y > 0.0 && content.height > 0.0 {
-            let track_h = rect.height().max(1.0);
-            let thumb_h = (track_h * (track_h / (content.height + track_h)).clamp(0.08, 1.0))
-                .max(12.0)
-                .min(track_h);
-            let thumb_y = rect.y0 + (track_h - thumb_h) * (scroll.y / scroll_max.y).clamp(0.0, 1.0);
-            let bar = RectCoords::from_size(rect.x1 - 5.0, thumb_y, 3.0, thumb_h);
+        if self.scrollbar_available(idx, Axis::Y) {
+            let thickness = self.scrollbar_thickness(idx, Axis::Y);
+            let Some(bar) = self.scrollbar_thumb_rect(idx, Axis::Y, thickness) else {
+                return;
+            };
             let bar = intersect_rects(bar, clip);
             if bar.width() > 0.0 && bar.height() > 0.0 {
-                self.drawer.as_mut().unwrap().draw_rect(&bar, color, 2.0);
+                self.drawer
+                    .as_mut()
+                    .unwrap()
+                    .draw_rect(&bar, color, thickness * 0.5);
             }
         }
-        if self.boxes[idx].flags.scrolls_x() && scroll_max.x > 0.0 && content.width > 0.0 {
-            let track_w = rect.width().max(1.0);
-            let thumb_w = (track_w * (track_w / (content.width + track_w)).clamp(0.08, 1.0))
-                .max(12.0)
-                .min(track_w);
-            let thumb_x = rect.x0 + (track_w - thumb_w) * (scroll.x / scroll_max.x).clamp(0.0, 1.0);
-            let bar = RectCoords::from_size(thumb_x, rect.y1 - 5.0, thumb_w, 3.0);
+        if self.scrollbar_available(idx, Axis::X) {
+            let thickness = self.scrollbar_thickness(idx, Axis::X);
+            let Some(bar) = self.scrollbar_thumb_rect(idx, Axis::X, thickness) else {
+                return;
+            };
             let bar = intersect_rects(bar, clip);
             if bar.width() > 0.0 && bar.height() > 0.0 {
-                self.drawer.as_mut().unwrap().draw_rect(&bar, color, 2.0);
+                self.drawer
+                    .as_mut()
+                    .unwrap()
+                    .draw_rect(&bar, color, thickness * 0.5);
             }
         }
     }
@@ -3464,6 +3700,12 @@ impl IMUI {
             self.active_right_key = None;
         }
         if self
+            .active_scrollbar
+            .is_some_and(|drag| !self.box_table.contains_key(&drag.key))
+        {
+            self.active_scrollbar = None;
+        }
+        if self
             .hot_key
             .is_some_and(|key| !self.box_table.contains_key(&key))
         {
@@ -3691,6 +3933,24 @@ fn intersect_rects(a: RectCoords, b: RectCoords) -> RectCoords {
     }
 }
 
+fn rect_min_axis(rect: RectCoords, axis: Axis) -> f32 {
+    match axis {
+        Axis::X => rect.x0,
+        Axis::Y => rect.y0,
+    }
+}
+
+fn rect_size_axis(rect: RectCoords, axis: Axis) -> f32 {
+    match axis {
+        Axis::X => rect.width(),
+        Axis::Y => rect.height(),
+    }
+}
+
+fn scrollbar_thumb_len(track_len: f32, content_len: f32) -> f32 {
+    track_len * (track_len / (content_len + track_len)).clamp(0.08, 1.0)
+}
+
 fn mouse_button_from_key(key: OSKey) -> Option<MouseButton> {
     match key {
         OSKey::LeftMouseButton => Some(MouseButton::Left),
@@ -3706,6 +3966,33 @@ mod tests {
     fn push_test_event(ui: &mut IMUI, ev: OSEvent) {
         ui.apply_event_side_effects(&ev);
         ui.events.push(ev);
+    }
+
+    fn build_vertical_scroll_pane(ui: &mut IMUI) -> UIBoxHandle {
+        let pane = ui.named_column("###vertical_scroll_pane", |ui| {
+            for idx in 0..10 {
+                let label = ui.label(&format!("Row {idx}"));
+                ui.height(label, UISize::Pixels(24.0));
+            }
+        });
+        ui.width(pane, UISize::Pixels(120.0));
+        ui.height(pane, UISize::Pixels(72.0));
+        ui.scroll_y(pane, true);
+        pane
+    }
+
+    fn build_horizontal_scroll_pane(ui: &mut IMUI) -> UIBoxHandle {
+        let pane = ui.named_row("###horizontal_scroll_pane", |ui| {
+            for idx in 0..6 {
+                let label = ui.label(&format!("Column {idx}"));
+                ui.width(label, UISize::Pixels(72.0));
+                ui.height(label, UISize::Pixels(24.0));
+            }
+        });
+        ui.width(pane, UISize::Pixels(140.0));
+        ui.height(pane, UISize::Pixels(48.0));
+        ui.scroll_x(pane, true);
+        pane
     }
 
     #[test]
@@ -4114,6 +4401,190 @@ mod tests {
 
         let state = ui.text_edit_states.get(&edit.key()).unwrap();
         assert_eq!(state.selection_range(), Some((1, 6)));
+    }
+
+    #[test]
+    fn vertical_scrollbar_width_animates_on_hover() {
+        let mut ui = IMUI::new_for_test(400.0, 200.0);
+
+        ui.begin_frame();
+        let pane = build_vertical_scroll_pane(&mut ui);
+        ui.end_frame();
+
+        assert_eq!(
+            ui.scrollbar_thickness(pane.idx(), Axis::Y),
+            SCROLLBAR_THICKNESS
+        );
+        let thumb = ui
+            .scrollbar_thumb_rect(pane.idx(), Axis::Y, SCROLLBAR_THICKNESS)
+            .unwrap();
+        ui.mouse = Some(Point::new(
+            thumb.x0 + thumb.width() * 0.5,
+            thumb.y0 + thumb.height() * 0.5,
+        ));
+        ui.repaint_requested = false;
+
+        ui.begin_frame();
+        let pane = build_vertical_scroll_pane(&mut ui);
+        ui.end_frame();
+
+        let thickness = ui.scrollbar_thickness(pane.idx(), Axis::Y);
+        assert!(thickness > SCROLLBAR_THICKNESS);
+        assert!(thickness < SCROLLBAR_HOVER_THICKNESS);
+        assert!(ui.repaint_requested);
+
+        for _ in 0..120 {
+            ui.repaint_requested = false;
+            ui.begin_frame();
+            build_vertical_scroll_pane(&mut ui);
+            ui.end_frame();
+            if !ui.repaint_requested {
+                break;
+            }
+        }
+        assert_eq!(
+            ui.scrollbar_thickness(pane.idx(), Axis::Y),
+            SCROLLBAR_HOVER_THICKNESS
+        );
+
+        ui.mouse = Some(Point::new(300.0, 180.0));
+        ui.repaint_requested = false;
+        ui.begin_frame();
+        let pane = build_vertical_scroll_pane(&mut ui);
+        ui.end_frame();
+
+        let thickness = ui.scrollbar_thickness(pane.idx(), Axis::Y);
+        assert!(thickness > SCROLLBAR_THICKNESS);
+        assert!(thickness < SCROLLBAR_HOVER_THICKNESS);
+        assert!(ui.repaint_requested);
+    }
+
+    #[test]
+    fn horizontal_scrollbar_height_animates_on_hover() {
+        let mut ui = IMUI::new_for_test(400.0, 200.0);
+
+        ui.begin_frame();
+        let pane = build_horizontal_scroll_pane(&mut ui);
+        ui.end_frame();
+
+        assert_eq!(
+            ui.scrollbar_thickness(pane.idx(), Axis::X),
+            SCROLLBAR_THICKNESS
+        );
+        let thumb = ui
+            .scrollbar_thumb_rect(pane.idx(), Axis::X, SCROLLBAR_THICKNESS)
+            .unwrap();
+        ui.mouse = Some(Point::new(
+            thumb.x0 + thumb.width() * 0.5,
+            thumb.y0 + thumb.height() * 0.5,
+        ));
+        ui.repaint_requested = false;
+
+        ui.begin_frame();
+        let pane = build_horizontal_scroll_pane(&mut ui);
+        ui.end_frame();
+
+        let thickness = ui.scrollbar_thickness(pane.idx(), Axis::X);
+        assert!(thickness > SCROLLBAR_THICKNESS);
+        assert!(thickness < SCROLLBAR_HOVER_THICKNESS);
+        assert!(ui.repaint_requested);
+
+        for _ in 0..120 {
+            ui.repaint_requested = false;
+            ui.begin_frame();
+            build_horizontal_scroll_pane(&mut ui);
+            ui.end_frame();
+            if !ui.repaint_requested {
+                break;
+            }
+        }
+        assert_eq!(
+            ui.scrollbar_thickness(pane.idx(), Axis::X),
+            SCROLLBAR_HOVER_THICKNESS
+        );
+
+        ui.mouse = Some(Point::new(300.0, 180.0));
+        ui.repaint_requested = false;
+        ui.begin_frame();
+        let pane = build_horizontal_scroll_pane(&mut ui);
+        ui.end_frame();
+
+        let thickness = ui.scrollbar_thickness(pane.idx(), Axis::X);
+        assert!(thickness > SCROLLBAR_THICKNESS);
+        assert!(thickness < SCROLLBAR_HOVER_THICKNESS);
+        assert!(ui.repaint_requested);
+    }
+
+    #[test]
+    fn vertical_scrollbar_click_and_drag_updates_scroll() {
+        let mut ui = IMUI::new_for_test(400.0, 200.0);
+
+        ui.begin_frame();
+        let pane = build_vertical_scroll_pane(&mut ui);
+        ui.end_frame();
+
+        let thumb = ui
+            .scrollbar_thumb_rect(pane.idx(), Axis::Y, SCROLLBAR_HOVER_THICKNESS)
+            .unwrap();
+        let start = Point::new(
+            thumb.x0 + thumb.width() * 0.5,
+            thumb.y0 + thumb.height() * 0.5,
+        );
+        let end = Point::new(start.x(), start.y() + 24.0);
+
+        push_test_event(&mut ui, OSEvent::press(OSKey::LeftMouseButton, Some(start)));
+        ui.begin_frame();
+        let _pane = build_vertical_scroll_pane(&mut ui);
+        ui.end_frame();
+        assert!(ui.active_scrollbar.is_some());
+        assert!(ui.events.is_empty());
+
+        push_test_event(&mut ui, OSEvent::mouse_move(end));
+        ui.begin_frame();
+        let pane = build_vertical_scroll_pane(&mut ui);
+        ui.end_frame();
+        assert!(ui.boxes[pane.idx()].scroll.y > 0.0);
+        assert_eq!(
+            ui.boxes[pane.idx()].scroll.y,
+            ui.boxes[pane.idx()].scroll_target.y
+        );
+
+        push_test_event(&mut ui, OSEvent::release(OSKey::LeftMouseButton, Some(end)));
+        ui.begin_frame();
+        build_vertical_scroll_pane(&mut ui);
+        ui.end_frame();
+        assert!(ui.active_scrollbar.is_none());
+        assert!(ui.events.is_empty());
+    }
+
+    #[test]
+    fn vertical_scrollbar_track_click_updates_scroll() {
+        let mut ui = IMUI::new_for_test(400.0, 200.0);
+
+        ui.begin_frame();
+        let pane = build_vertical_scroll_pane(&mut ui);
+        ui.end_frame();
+
+        let thumb = ui
+            .scrollbar_thumb_rect(pane.idx(), Axis::Y, SCROLLBAR_HOVER_THICKNESS)
+            .unwrap();
+        let rect = ui.boxes[pane.idx()].rect;
+        let click = Point::new(
+            thumb.x0 + thumb.width() * 0.5,
+            thumb.y1 + (rect.y1 - thumb.y1) * 0.5,
+        );
+
+        push_test_event(&mut ui, OSEvent::press(OSKey::LeftMouseButton, Some(click)));
+        ui.begin_frame();
+        let pane = build_vertical_scroll_pane(&mut ui);
+        ui.end_frame();
+
+        assert!(ui.boxes[pane.idx()].scroll.y > 0.0);
+        assert_eq!(
+            ui.boxes[pane.idx()].scroll.y,
+            ui.boxes[pane.idx()].scroll_target.y
+        );
+        assert!(ui.events.is_empty());
     }
 
     #[test]
