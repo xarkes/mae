@@ -11,8 +11,8 @@ use crate::{
 
 pub mod uibox {
     pub use super::{
-        Color, Padding, UIBox, UIBoxFlags as UIBoxFlag, UIBoxHandle, UIBoxParams, UIBoxStyle,
-        UiSignal as UIBoxSignal, u64_hash_from_string,
+        Color, Padding, ThemeKind, UIBox, UIBoxFlags as UIBoxFlag, UIBoxHandle, UIBoxParams,
+        UIBoxStyle, UITheme, UiSignal as UIBoxSignal, u64_hash_from_string,
     };
 }
 
@@ -36,6 +36,25 @@ impl Color {
             a: 1.0,
         })
     }
+}
+
+fn color_lerp(a: Color, b: Color, t: f32) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    Color {
+        r: a.r + (b.r - a.r) * t,
+        g: a.g + (b.g - a.g) * t,
+        b: a.b + (b.b - a.b) * t,
+        a: a.a + (b.a - a.a) * t,
+    }
+}
+
+fn color_mix(a: Color, b: Color, t: f32) -> Color {
+    color_lerp(a, b, t)
+}
+
+fn color_mul_alpha(mut color: Color, alpha: f32) -> Color {
+    color.a *= alpha.clamp(0.0, 1.0);
+    color
 }
 
 pub fn color_rgb(r: u8, g: u8, b: u8) -> Color {
@@ -668,6 +687,7 @@ pub struct UIBox {
     pref_size: [UISize; 2],
     min_size: Size,
     scroll: Point,
+    scroll_target: Point,
     scroll_max: Point,
     content_size: Size,
     fixed_position: Point,
@@ -679,6 +699,12 @@ pub struct UIBox {
     main_axis_align: MainAxisAlign,
     cross_axis_align: CrossAxisAlign,
     style: UIBoxStyle,
+    bg_color_animated: Color,
+    border_color_animated: Color,
+    hot_t: f32,
+    active_t: f32,
+    focus_t: f32,
+    appear_t: f32,
     // Per-frame interaction result for the retained box.
     signal: UiSignal,
     visible: bool,
@@ -699,6 +725,7 @@ impl UIBox {
             pref_size: [UISize::ChildrenSum, UISize::ChildrenSum],
             min_size: Size::default(),
             scroll: Point::default(),
+            scroll_target: Point::default(),
             scroll_max: Point::default(),
             content_size: Size::default(),
             fixed_position: Point::default(),
@@ -715,6 +742,12 @@ impl UIBox {
                 text_color: theme.color_text,
                 ..UIBoxStyle::default()
             },
+            bg_color_animated: theme.color_bg_popup,
+            border_color_animated: theme.border,
+            hot_t: 0.0,
+            active_t: 0.0,
+            focus_t: 0.0,
+            appear_t: 0.0,
             signal: UiSignal::default(),
             visible: true,
             first_touched_frame: 0,
@@ -736,8 +769,15 @@ impl UIBox {
         let rect = self.rect;
         let computed_size = self.computed_size;
         let scroll = self.scroll;
+        let scroll_target = self.scroll_target;
         let scroll_max = self.scroll_max;
         let content_size = self.content_size;
+        let bg_color_animated = self.bg_color_animated;
+        let border_color_animated = self.border_color_animated;
+        let hot_t = self.hot_t;
+        let active_t = self.active_t;
+        let focus_t = self.focus_t;
+        let appear_t = self.appear_t;
         let first_touched_frame = self.first_touched_frame;
         let last_touched_frame = self.last_touched_frame;
 
@@ -746,29 +786,181 @@ impl UIBox {
         self.rect = rect;
         self.computed_size = computed_size;
         self.scroll = scroll;
+        self.scroll_target = scroll_target;
         self.scroll_max = scroll_max;
         self.content_size = content_size;
+        self.bg_color_animated = bg_color_animated;
+        self.border_color_animated = border_color_animated;
+        self.hot_t = hot_t;
+        self.active_t = active_t;
+        self.focus_t = focus_t;
+        self.appear_t = appear_t;
         self.first_touched_frame = first_touched_frame;
         self.last_touched_frame = last_touched_frame;
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThemeKind {
+    Dark,
+    Light,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct UIMotion {
+    pub hot_rate: f32,
+    pub active_rate: f32,
+    pub focus_rate: f32,
+    pub menu_rate: f32,
+    pub tooltip_rate: f32,
+    pub scroll_rate: f32,
+    pub epsilon: f32,
+}
+
+impl Default for UIMotion {
+    fn default() -> Self {
+        Self {
+            hot_rate: 34.0,
+            active_rate: 42.0,
+            focus_rate: 28.0,
+            menu_rate: 30.0,
+            tooltip_rate: 24.0,
+            scroll_rate: 26.0,
+            epsilon: 0.01,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct UITheme {
+    pub kind: ThemeKind,
     pub color_bg: Color,
     pub color_bg_popup: Color,
     pub color_main: Color,
     pub color_text: Color,
+    pub app_bg: Color,
+    pub sidebar_bg: Color,
+    pub panel_bg: Color,
+    pub surface_bg: Color,
+    pub surface_hover: Color,
+    pub surface_active: Color,
+    pub input_bg: Color,
+    pub popover_bg: Color,
+    pub border: Color,
+    pub border_muted: Color,
+    pub text: Color,
+    pub text_muted: Color,
+    pub text_accent: Color,
+    pub accent: Color,
+    pub accent_hover: Color,
+    pub accent_active: Color,
+    pub selection: Color,
+    pub scrollbar: Color,
     pub size_text: f32,
+    pub control_h: f32,
+    pub toolbar_h: f32,
+    pub sidebar_w: f32,
+    pub radius: f32,
+    pub gap_sm: f32,
+    pub gap_md: f32,
+    pub gap_lg: f32,
+    pub pad_sm: f32,
+    pub pad_md: f32,
+    pub pad_lg: f32,
+    pub motion: UIMotion,
 }
 
 impl Default for UITheme {
     fn default() -> Self {
+        Self::dark()
+    }
+}
+
+impl UITheme {
+    pub fn dark() -> Self {
         Self {
-            color_bg: Color::new("#20242a"),
-            color_bg_popup: Color::new("#2b3038"),
-            color_main: Color::new("#2f8f83"),
-            color_text: Color::new("#f0f3f5"),
+            kind: ThemeKind::Dark,
+            color_bg: Color::new("#11151b"),
+            color_bg_popup: Color::new("#1f2630"),
+            color_main: Color::new("#3f9f95"),
+            color_text: Color::new("#eef2f6"),
+            app_bg: Color::new("#0d1117"),
+            sidebar_bg: Color::new("#151b23"),
+            panel_bg: Color::new("#111820"),
+            surface_bg: Color::new("#1c2430"),
+            surface_hover: Color::new("#26313e"),
+            surface_active: Color::new("#183f4a"),
+            input_bg: Color::new("#0f151d"),
+            popover_bg: Color::new("#18202aee"),
+            border: Color::new("#33404f"),
+            border_muted: Color::new("#24303d"),
+            text: Color::new("#eef2f6"),
+            text_muted: Color::new("#9ba8b5"),
+            text_accent: Color::new("#8fc7ff"),
+            accent: Color::new("#3f9f95"),
+            accent_hover: Color::new("#51b7ac"),
+            accent_active: Color::new("#2d776f"),
+            selection: Color::new("#285f73"),
+            scrollbar: Color::new("#7f8a9655"),
             size_text: 14.0,
+            control_h: 32.0,
+            toolbar_h: 44.0,
+            sidebar_w: 216.0,
+            radius: 6.0,
+            gap_sm: 6.0,
+            gap_md: 10.0,
+            gap_lg: 14.0,
+            pad_sm: 6.0,
+            pad_md: 10.0,
+            pad_lg: 14.0,
+            motion: UIMotion::default(),
+        }
+    }
+
+    pub fn light() -> Self {
+        Self {
+            kind: ThemeKind::Light,
+            color_bg: Color::new("#f4f7fb"),
+            color_bg_popup: Color::new("#ffffff"),
+            color_main: Color::new("#247f78"),
+            color_text: Color::new("#17202a"),
+            app_bg: Color::new("#edf2f7"),
+            sidebar_bg: Color::new("#f8fafc"),
+            panel_bg: Color::new("#ffffff"),
+            surface_bg: Color::new("#f3f6fa"),
+            surface_hover: Color::new("#e6edf5"),
+            surface_active: Color::new("#d8f0ee"),
+            input_bg: Color::new("#ffffff"),
+            popover_bg: Color::new("#fffffff0"),
+            border: Color::new("#c8d3df"),
+            border_muted: Color::new("#dde5ee"),
+            text: Color::new("#17202a"),
+            text_muted: Color::new("#617080"),
+            text_accent: Color::new("#256fa6"),
+            accent: Color::new("#247f78"),
+            accent_hover: Color::new("#2f968e"),
+            accent_active: Color::new("#1d655f"),
+            selection: Color::new("#b9e3e0"),
+            scrollbar: Color::new("#8392a655"),
+            size_text: 14.0,
+            control_h: 32.0,
+            toolbar_h: 44.0,
+            sidebar_w: 216.0,
+            radius: 6.0,
+            gap_sm: 6.0,
+            gap_md: 10.0,
+            gap_lg: 14.0,
+            pad_sm: 6.0,
+            pad_md: 10.0,
+            pad_lg: 14.0,
+            motion: UIMotion::default(),
+        }
+    }
+
+    pub fn for_kind(kind: ThemeKind) -> Self {
+        match kind {
+            ThemeKind::Dark => Self::dark(),
+            ThemeKind::Light => Self::light(),
         }
     }
 }
@@ -802,6 +994,8 @@ pub struct IMUI {
     vsync_enabled: bool,
     repaint_requested: bool,
     timer_frequency: f64,
+    last_frame_time: f64,
+    animation_dt: f32,
     fps_window_start: f64,
     fps_frame_count: u32,
     fps: f32,
@@ -870,6 +1064,8 @@ impl IMUI {
             vsync_enabled: true,
             repaint_requested: true,
             timer_frequency: os::timer_init(),
+            last_frame_time: 0.0,
+            animation_dt: 1.0 / 60.0,
             fps_window_start: 0.0,
             fps_frame_count: 0,
             fps: 0.0,
@@ -878,7 +1074,9 @@ impl IMUI {
         if let Some(drawer) = ui.drawer.as_mut() {
             drawer.renderer.vsync(ui.vsync_enabled);
         }
-        ui.fps_window_start = ui.now_seconds();
+        let now = ui.now_seconds();
+        ui.last_frame_time = now;
+        ui.fps_window_start = now;
         ui.begin_frame();
         ui
     }
@@ -914,6 +1112,9 @@ impl IMUI {
     }
 
     pub(crate) fn begin_frame(&mut self) {
+        let now = self.now_seconds();
+        self.animation_dt = (now - self.last_frame_time).clamp(1.0 / 240.0, 1.0 / 15.0) as f32;
+        self.last_frame_time = now;
         self.build_index += 1;
         self.frame_boxes.clear();
         self.parent_stack.clear();
@@ -948,8 +1149,10 @@ impl IMUI {
     }
 
     pub(crate) fn end_frame(&mut self) {
+        self.animate_scroll_offsets();
         self.layout_root(self.root);
         self.refresh_passive_signals();
+        self.animate_visual_state();
         self.draw_ui_all();
 
         if let Some(drawer) = self.drawer.as_mut() {
@@ -962,8 +1165,10 @@ impl IMUI {
 
     #[cfg(feature = "testkit")]
     pub(crate) fn end_test_frame(&mut self) -> crate::testkit::UiSnapshot {
+        self.animate_scroll_offsets();
         self.layout_root(self.root);
         self.refresh_passive_signals();
+        self.animate_visual_state();
         self.draw_ui_all();
         let snapshot = self.snapshot();
         self.prune_boxes();
@@ -1103,6 +1308,18 @@ impl IMUI {
         self.repaint_requested = true;
     }
 
+    pub fn theme(&self) -> &UITheme {
+        &self.theme
+    }
+
+    pub fn set_theme(&mut self, theme: UITheme) {
+        let changed = self.theme.kind != theme.kind;
+        self.theme = theme;
+        if changed {
+            self.request_repaint();
+        }
+    }
+
     pub fn reset_text_input_state(&mut self) {
         self.focus_key = None;
         self.next_focus_key = None;
@@ -1212,8 +1429,9 @@ impl IMUI {
         let handle = self.alloc_box(Some(id), UIBoxFlags::LINE_EDIT);
         self.boxes[handle.idx].pref_size = [UISize::ParentPct(1.0), UISize::Pixels(32.0)];
         self.boxes[handle.idx].padding = Padding::all(7.0);
-        self.boxes[handle.idx].style.bg_color = Color::new("#15191f");
-        self.boxes[handle.idx].style.border_color = Color::new("#3c4652");
+        self.boxes[handle.idx].style.bg_color = self.theme.input_bg;
+        self.boxes[handle.idx].style.border_color = self.theme.border;
+        self.boxes[handle.idx].style.corner_radius = self.theme.radius;
         self.apply_click_to_focus(handle);
         if handle.clicked() {
             let cursor = self.cursor_from_line_edit_click(handle, buffer);
@@ -1222,7 +1440,7 @@ impl IMUI {
         }
         if self.box_is_focused(handle) {
             self.apply_text_input(handle, buffer, false);
-            self.boxes[handle.idx].style.border_color = self.theme.color_main;
+            self.boxes[handle.idx].style.border_color = self.theme.accent;
         }
         self.set_edit_display_text(handle, buffer, masked);
         handle
@@ -1254,8 +1472,9 @@ impl IMUI {
         self.boxes[handle.idx].child_layout_axis = Axis::Y;
         self.boxes[handle.idx].pref_size = [UISize::ParentPct(1.0), UISize::ParentPct(1.0)];
         self.boxes[handle.idx].padding = Padding::all(10.0);
-        self.boxes[handle.idx].style.bg_color = Color::new("#15191f");
-        self.boxes[handle.idx].style.border_color = Color::new("#303946");
+        self.boxes[handle.idx].style.bg_color = self.theme.input_bg;
+        self.boxes[handle.idx].style.border_color = self.theme.border;
+        self.boxes[handle.idx].style.corner_radius = self.theme.radius;
         self.boxes[handle.idx].child_gap = 2.0;
         self.apply_click_to_focus(handle);
         if handle.clicked() {
@@ -1265,7 +1484,7 @@ impl IMUI {
         }
         if self.box_is_focused(handle) {
             self.apply_text_input(handle, buffer, true);
-            self.boxes[handle.idx].style.border_color = self.theme.color_main;
+            self.boxes[handle.idx].style.border_color = self.theme.accent;
         }
         self.boxes[handle.idx].string = Some(buffer.clone());
 
@@ -1575,9 +1794,9 @@ impl IMUI {
             bottom: 5.0,
             left: 8.0,
         };
-        self.boxes[handle.idx].style.bg_color = Color::new("#323842");
-        self.boxes[handle.idx].style.border_color = Color::new("#48515d");
-        self.boxes[handle.idx].style.corner_radius = 6.0;
+        self.boxes[handle.idx].style.bg_color = self.theme.surface_bg;
+        self.boxes[handle.idx].style.border_color = self.theme.border;
+        self.boxes[handle.idx].style.corner_radius = self.theme.radius;
     }
 
     fn show_tooltip_for_hover(&mut self, handle: UIBoxHandle, tooltip_text: Option<&str>) {
@@ -1596,7 +1815,9 @@ impl IMUI {
                 ui.padding_all(label, 5.0);
             },
         );
-        self.background(tooltip, Color::new("#111418f0"));
+        self.background(tooltip, self.theme.popover_bg);
+        self.border_color(tooltip, self.theme.border);
+        self.corner_radius(tooltip, self.theme.radius);
         self.padding_all(tooltip, 4.0);
     }
 
@@ -1856,7 +2077,8 @@ impl IMUI {
         let rect = self.boxes[idx].rect;
         let padding = self.boxes[idx].padding;
         let style = self.boxes[idx].style;
-        let content_width = (rect.x1 - rect.x0 - padding.horizontal() - style.margin * 2.0).max(0.0);
+        let content_width =
+            (rect.x1 - rect.x0 - padding.horizontal() - style.margin * 2.0).max(0.0);
         let ranges = self.compute_visual_line_ranges(buffer, content_width, style.font_size);
         let (visual_line, col) = self.visual_line_col_from_cursor_with_ranges(&ranges, cursor);
         let state = self.text_edit_states.entry(key).or_default();
@@ -1864,7 +2086,8 @@ impl IMUI {
         state.desired_column = Some(desired_col);
         let line_count = ranges.len().max(1);
         let next_line = (visual_line as isize + delta).clamp(0, line_count as isize - 1) as usize;
-        let next_cursor = self.cursor_from_visual_line_col_with_ranges(&ranges, next_line, desired_col);
+        let next_cursor =
+            self.cursor_from_visual_line_col_with_ranges(&ranges, next_line, desired_col);
         self.move_text_cursor(key, buffer, next_cursor, extend_selection);
         if let Some(state) = self.text_edit_states.get_mut(&key) {
             state.desired_column = Some(desired_col);
@@ -1917,10 +2140,12 @@ impl IMUI {
         let padding = self.boxes[handle.idx].padding;
         let style = self.boxes[handle.idx].style;
         let line_h = self.theme.size_text + 6.0;
-        let visual_line = ((mouse.y - rect.y0 - padding.top + self.boxes[handle.idx].scroll.y) / line_h)
+        let visual_line = ((mouse.y - rect.y0 - padding.top + self.boxes[handle.idx].scroll.y)
+            / line_h)
             .floor()
             .max(0.0) as usize;
-        let content_width = (rect.x1 - rect.x0 - padding.horizontal() - style.margin * 2.0).max(0.0);
+        let content_width =
+            (rect.x1 - rect.x0 - padding.horizontal() - style.margin * 2.0).max(0.0);
         let ranges = self.compute_visual_line_ranges(buffer, content_width, style.font_size);
         let (line_start, line_end) = if visual_line < ranges.len() {
             ranges[visual_line]
@@ -2018,10 +2243,105 @@ impl IMUI {
     fn apply_scroll_signal(&mut self, idx: usize) {
         let signal = self.boxes[idx].signal;
         if self.boxes[idx].flags.scrolls_x() && signal.scroll_x != 0.0 {
-            self.boxes[idx].scroll.x -= signal.scroll_x * 16.0;
+            self.boxes[idx].scroll_target.x -= signal.scroll_x * 16.0;
         }
         if self.boxes[idx].flags.scrolls_y() && signal.scroll_y != 0.0 {
-            self.boxes[idx].scroll.y -= signal.scroll_y * 16.0;
+            self.boxes[idx].scroll_target.y -= signal.scroll_y * 16.0;
+        }
+    }
+
+    fn animate_scroll_offsets(&mut self) {
+        let rate = smooth_rate(self.theme.motion.scroll_rate, self.animation_dt);
+        let epsilon = 0.5;
+        let mut animating = false;
+        for idx in self.frame_boxes.clone() {
+            let box_ = &mut self.boxes[idx];
+            if box_.first_touched_frame == self.build_index {
+                box_.scroll = box_.scroll_target;
+                continue;
+            }
+            for axis in [Axis::X, Axis::Y] {
+                let current = box_.scroll.axis(axis);
+                let target = box_.scroll_target.axis(axis);
+                let next = current + (target - current) * rate;
+                if (target - next).abs() <= epsilon {
+                    box_.scroll.set_axis(axis, target);
+                } else {
+                    box_.scroll.set_axis(axis, next);
+                    animating = true;
+                }
+            }
+        }
+        if animating {
+            self.request_repaint();
+        }
+    }
+
+    fn animate_visual_state(&mut self) {
+        let hot_rate = smooth_rate(self.theme.motion.hot_rate, self.animation_dt);
+        let active_rate = smooth_rate(self.theme.motion.active_rate, self.animation_dt);
+        let focus_rate = smooth_rate(self.theme.motion.focus_rate, self.animation_dt);
+        let appear_rate = smooth_rate(self.theme.motion.menu_rate, self.animation_dt);
+        let color_rate = smooth_rate(30.0, self.animation_dt);
+        let epsilon = self.theme.motion.epsilon;
+        let mut animating = false;
+
+        for idx in self.frame_boxes.clone() {
+            let key = self.boxes[idx].key;
+            let is_hot = self.boxes[idx].signal.hovering();
+            let is_active = self.active_left_key == Some(key)
+                || self.active_right_key == Some(key)
+                || self.boxes[idx].signal.pressed();
+            let is_focused = self.focus_key == Some(key);
+            let is_floating = self.boxes[idx].flags.contains(UIBoxFlags::FLOATING_X)
+                || self.boxes[idx].flags.contains(UIBoxFlags::FLOATING_Y);
+            let box_ = &mut self.boxes[idx];
+
+            if box_.first_touched_frame == self.build_index {
+                box_.hot_t = is_hot as u8 as f32;
+                box_.active_t = is_active as u8 as f32;
+                box_.focus_t = is_focused as u8 as f32;
+                box_.appear_t = if is_floating { appear_rate } else { 1.0 };
+                box_.bg_color_animated = box_.style.bg_color;
+                box_.border_color_animated = box_.style.border_color;
+                if is_floating && box_.appear_t < 1.0 - epsilon {
+                    animating = true;
+                }
+                continue;
+            }
+
+            box_.hot_t = animate_scalar(box_.hot_t, is_hot as u8 as f32, hot_rate, epsilon);
+            box_.active_t =
+                animate_scalar(box_.active_t, is_active as u8 as f32, active_rate, epsilon);
+            box_.focus_t =
+                animate_scalar(box_.focus_t, is_focused as u8 as f32, focus_rate, epsilon);
+            box_.appear_t = if is_floating {
+                animate_scalar(box_.appear_t, 1.0, appear_rate, epsilon)
+            } else {
+                1.0
+            };
+
+            let mut target_bg = box_.style.bg_color;
+            if box_.flags.contains(UIBoxFlags::DRAW_HOT_EFFECTS) {
+                target_bg = color_mix(target_bg, self.theme.surface_hover, box_.hot_t * 0.55);
+                target_bg = color_mix(target_bg, self.theme.accent_active, box_.active_t * 0.35);
+            }
+            let target_border = color_mix(box_.style.border_color, self.theme.accent, box_.focus_t);
+            box_.bg_color_animated = color_lerp(box_.bg_color_animated, target_bg, color_rate);
+            box_.border_color_animated =
+                color_lerp(box_.border_color_animated, target_border, color_rate);
+
+            animating = animating
+                || (box_.hot_t - is_hot as u8 as f32).abs() > epsilon
+                || (box_.active_t - is_active as u8 as f32).abs() > epsilon
+                || (box_.focus_t - is_focused as u8 as f32).abs() > epsilon
+                || (1.0 - box_.appear_t).abs() > epsilon
+                || color_distance(box_.bg_color_animated, target_bg) > epsilon
+                || color_distance(box_.border_color_animated, target_border) > epsilon;
+        }
+
+        if animating {
+            self.request_repaint();
         }
     }
 
@@ -2148,10 +2468,14 @@ impl IMUI {
             self.boxes[idx].scroll_max.set_axis(axis, max_scroll);
             match axis {
                 Axis::X => {
-                    self.boxes[idx].scroll.x = self.boxes[idx].scroll.x.clamp(0.0, max_scroll)
+                    self.boxes[idx].scroll.x = self.boxes[idx].scroll.x.clamp(0.0, max_scroll);
+                    self.boxes[idx].scroll_target.x =
+                        self.boxes[idx].scroll_target.x.clamp(0.0, max_scroll);
                 }
                 Axis::Y => {
-                    self.boxes[idx].scroll.y = self.boxes[idx].scroll.y.clamp(0.0, max_scroll)
+                    self.boxes[idx].scroll.y = self.boxes[idx].scroll.y.clamp(0.0, max_scroll);
+                    self.boxes[idx].scroll_target.y =
+                        self.boxes[idx].scroll_target.y.clamp(0.0, max_scroll);
                 }
             }
         }
@@ -2602,8 +2926,8 @@ impl IMUI {
             return;
         }
         let flags = self.boxes[idx].flags;
-        let signal = self.boxes[idx].signal;
         let style = self.boxes[idx].style;
+        let opacity = self.box_opacity(idx);
         let draw_bg = flags.contains(UIBoxFlags::DRAW_BACKGROUND);
         let draw_border = flags.contains(UIBoxFlags::DRAW_BORDER);
         let rounded_with_border = draw_bg && draw_border && style.corner_radius > 0.0;
@@ -2612,7 +2936,7 @@ impl IMUI {
             // Rounded border: draw outer border shape then inset background shape.
             self.drawer.as_mut().unwrap().draw_rect(
                 &draw_rect,
-                style.border_color,
+                color_mul_alpha(self.boxes[idx].border_color_animated, opacity),
                 style.corner_radius,
             );
 
@@ -2620,12 +2944,6 @@ impl IMUI {
             let inner_w = (draw_rect.width() - inset * 2.0).max(0.0);
             let inner_h = (draw_rect.height() - inset * 2.0).max(0.0);
             if inner_w > 0.0 && inner_h > 0.0 {
-                let mut color = style.bg_color;
-                if flags.contains(UIBoxFlags::DRAW_HOT_EFFECTS) && signal.hovering() {
-                    color.r = (color.r + 0.08).min(1.0);
-                    color.g = (color.g + 0.08).min(1.0);
-                    color.b = (color.b + 0.08).min(1.0);
-                }
                 let inner = RectCoords::from_size(
                     draw_rect.x0 + inset,
                     draw_rect.y0 + inset,
@@ -2633,27 +2951,23 @@ impl IMUI {
                     inner_h,
                 );
                 let inner_radius = (style.corner_radius - inset).max(0.0);
-                self.drawer
-                    .as_mut()
-                    .unwrap()
-                    .draw_rect(&inner, color, inner_radius);
+                self.drawer.as_mut().unwrap().draw_rect(
+                    &inner,
+                    color_mul_alpha(self.boxes[idx].bg_color_animated, opacity),
+                    inner_radius,
+                );
             }
         } else if draw_bg {
-            let mut color = style.bg_color;
-            if flags.contains(UIBoxFlags::DRAW_HOT_EFFECTS) && signal.hovering() {
-                color.r = (color.r + 0.08).min(1.0);
-                color.g = (color.g + 0.08).min(1.0);
-                color.b = (color.b + 0.08).min(1.0);
-            }
-            self.drawer
-                .as_mut()
-                .unwrap()
-                .draw_rect(&draw_rect, color, style.corner_radius);
+            self.drawer.as_mut().unwrap().draw_rect(
+                &draw_rect,
+                color_mul_alpha(self.boxes[idx].bg_color_animated, opacity),
+                style.corner_radius,
+            );
         }
         if draw_border && !rounded_with_border {
             self.drawer.as_mut().unwrap().draw_empty_rect(
                 &draw_rect,
-                style.border_color,
+                color_mul_alpha(self.boxes[idx].border_color_animated, opacity),
                 style.border_size,
             );
         }
@@ -2668,7 +2982,7 @@ impl IMUI {
                     text.len(),
                     (rect.x1 - padding.right - style.margin).min(clip.x1),
                     (rect.y1 - padding.bottom - style.margin).min(clip.y1),
-                    style.text_color,
+                    color_mul_alpha(style.text_color, opacity),
                     false,
                     style.font_icon,
                 );
@@ -2688,6 +3002,16 @@ impl IMUI {
         self.draw_text_caret_if_focused(idx);
     }
 
+    fn box_opacity(&self, idx: usize) -> f32 {
+        let mut opacity = 1.0;
+        let mut current = Some(idx);
+        while let Some(idx) = current {
+            opacity *= self.boxes[idx].appear_t.clamp(0.0, 1.0);
+            current = self.boxes[idx].parent;
+        }
+        opacity
+    }
+
     fn draw_scrollbars(&mut self, idx: usize, clip: RectCoords) {
         if self.drawer.is_none() {
             return;
@@ -2696,7 +3020,7 @@ impl IMUI {
         let scroll = self.boxes[idx].scroll;
         let scroll_max = self.boxes[idx].scroll_max;
         let content = self.boxes[idx].content_size;
-        let color = Color::new("#7f8a9655");
+        let color = color_mul_alpha(self.theme.scrollbar, self.box_opacity(idx));
         if self.boxes[idx].flags.scrolls_y() && scroll_max.y > 0.0 && content.height > 0.0 {
             let track_h = rect.height().max(1.0);
             let thumb_h = (track_h * (track_h / (content.height + track_h)).clamp(0.08, 1.0))
@@ -2804,7 +3128,8 @@ impl IMUI {
         let style = self.boxes[idx].style;
         let text = self.boxes[idx].string.clone().unwrap_or_default();
         let line_h = self.theme.size_text + 6.0;
-        let content_width = (rect.x1 - rect.x0 - padding.horizontal() - style.margin * 2.0).max(0.0);
+        let content_width =
+            (rect.x1 - rect.x0 - padding.horizontal() - style.margin * 2.0).max(0.0);
         let ranges = self.compute_visual_line_ranges(&text, content_width, style.font_size);
         let (start_line, _) = self.visual_line_col_from_cursor_with_ranges(&ranges, range.0);
         let (end_line, _) = self.visual_line_col_from_cursor_with_ranges(&ranges, range.1);
@@ -2898,7 +3223,8 @@ impl IMUI {
             .map(|state| state.cursor)
             .unwrap_or_else(|| char_count(&text))
             .min(char_count(&text));
-        let content_width = (rect.x1 - rect.x0 - padding.horizontal() - style.margin * 2.0).max(0.0);
+        let content_width =
+            (rect.x1 - rect.x0 - padding.horizontal() - style.margin * 2.0).max(0.0);
         let ranges = self.compute_visual_line_ranges(&text, content_width, style.font_size);
         let (visual_line, col) = self.visual_line_col_from_cursor_with_ranges(&ranges, cursor);
         let (line_start, _) = ranges[visual_line.min(ranges.len() - 1)];
@@ -3122,6 +3448,27 @@ fn flags_match(required: Option<OSEventFlag>, actual: Option<OSEventFlag>) -> bo
     }
 }
 
+fn smooth_rate(rate: f32, dt: f32) -> f32 {
+    (1.0 - 2.0_f32.powf(-rate.max(0.0) * dt.max(0.0))).clamp(0.0, 1.0)
+}
+
+fn animate_scalar(current: f32, target: f32, rate: f32, epsilon: f32) -> f32 {
+    let next = current + (target - current) * rate;
+    if (target - next).abs() <= epsilon {
+        target
+    } else {
+        next
+    }
+}
+
+fn color_distance(a: Color, b: Color) -> f32 {
+    (a.r - b.r)
+        .abs()
+        .max((a.g - b.g).abs())
+        .max((a.b - b.b).abs())
+        .max((a.a - b.a).abs())
+}
+
 fn has_flag(flags: Option<OSEventFlag>, flag: OSEventFlag) -> bool {
     flags
         .map(|flags| (flags as u32) & (flag as u32) != 0)
@@ -3291,6 +3638,47 @@ fn mouse_button_from_key(key: OSKey) -> Option<MouseButton> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn built_in_themes_expose_distinct_light_and_dark_tokens() {
+        let dark = UITheme::dark();
+        let light = UITheme::light();
+
+        assert_eq!(dark.kind, ThemeKind::Dark);
+        assert_eq!(light.kind, ThemeKind::Light);
+        assert!(color_distance(dark.app_bg, light.app_bg) > 0.2);
+        assert!(dark.text.a > 0.0);
+        assert!(light.text.a > 0.0);
+        assert!(dark.accent.a > 0.0);
+        assert!(light.accent.a > 0.0);
+        assert_eq!(UITheme::for_kind(ThemeKind::Dark).kind, ThemeKind::Dark);
+        assert_eq!(UITheme::for_kind(ThemeKind::Light).kind, ThemeKind::Light);
+    }
+
+    #[test]
+    fn retained_box_hover_state_animates_toward_signal_target() {
+        let mut ui = IMUI::new_for_test(400.0, 200.0);
+
+        ui.begin_frame();
+        let first = ui.button("Hover###hover_button", None);
+        ui.width(first, UISize::Pixels(120.0));
+        ui.height(first, UISize::Pixels(40.0));
+        ui.end_frame();
+        assert_eq!(ui.boxes[first.idx()].hot_t, 0.0);
+
+        ui.repaint_requested = false;
+        ui.mouse = Some(Point::new(20.0, 20.0));
+        ui.begin_frame();
+        let second = ui.button("Hover###hover_button", None);
+        ui.width(second, UISize::Pixels(120.0));
+        ui.height(second, UISize::Pixels(40.0));
+        ui.end_frame();
+
+        let hot_t = ui.boxes[second.idx()].hot_t;
+        assert!(hot_t > 0.0);
+        assert!(hot_t < 1.0);
+        assert!(ui.repaint_requested);
+    }
 
     #[test]
     fn key_string_display_and_hash_parts_match_rad_style() {

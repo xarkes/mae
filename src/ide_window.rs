@@ -1,6 +1,5 @@
-use mae::imui::{
-    CrossAxisAlign, IMUI, MainAxisAlign, TextAreaOptions, UIBoxHandle, UISize, uibox::Color,
-};
+use crate::app_style;
+use mae::imui::{CrossAxisAlign, IMUI, MainAxisAlign, TextAreaOptions, UIBoxHandle, UISize};
 
 #[derive(Clone, Debug)]
 struct TreeEntry {
@@ -90,22 +89,21 @@ pub fn render(ui: &mut IMUI, state: &mut IdeViewState) -> bool {
     let mut back_to_demo = false;
     let root = ui.column(|ui| {
         let topbar = ui.row(|ui| {
-            ui.label("Explorer")
-                .text_color(ui, Color::new("#d6deeb"))
-                .height(ui, UISize::Pixels(28.0));
+            let explorer = ui.label("Explorer");
+            app_style::title(ui, explorer).height(ui, UISize::Pixels(28.0));
 
             let refresh = ui
                 .button("Refresh tree", Some("Reload local files"))
-                .height(ui, UISize::Pixels(28.0))
-                .corner_radius(ui, 6.0);
+                .height(ui, UISize::Pixels(28.0));
+            app_style::button(ui, refresh);
             if refresh.clicked() {
                 state.refresh_tree();
             }
 
             let back = ui
                 .button("Back to demo", Some("Return to the main demo view"))
-                .height(ui, UISize::Pixels(28.0))
-                .corner_radius(ui, 6.0);
+                .height(ui, UISize::Pixels(28.0));
+            app_style::button(ui, back);
             if back.clicked() {
                 back_to_demo = true;
             }
@@ -120,40 +118,34 @@ pub fn render(ui: &mut IMUI, state: &mut IdeViewState) -> bool {
         let body = ui.row(|ui| {
             let sidebar = ui.named_column("###ide_sidebar", |ui| {
                 for entry in &state.tree_entries {
-                    ui.label(&format!("{}{}", "  ".repeat(entry.depth), entry.name))
-                        .height(ui, UISize::Pixels(22.0))
-                        .text_color(ui, Color::new("#b7c5d3"));
+                    let row = ui.label(&format!("{}{}", "  ".repeat(entry.depth), entry.name));
+                    app_style::muted(ui, row).height(ui, UISize::Pixels(22.0));
                 }
             });
             sidebar
                 .width(ui, UISize::Pixels(state.side_width))
                 .height(ui, UISize::ParentPct(1.0))
-                .padding_all(ui, 10.0)
-                .gap(ui, 2.0)
                 .scroll_y(ui, true)
-                .clip(ui, true)
-                .background(ui, Color::new("#1f2933"))
-                .border_color(ui, Color::new("#31404f"));
+                .clip(ui, true);
+            app_style::panel(ui, sidebar).gap(ui, 2.0);
 
             let splitter = ui.button("##ide_splitter", Some("Drag to resize"));
             splitter_handle = Some(splitter);
+            let theme = *ui.theme();
+            let splitter_color = if splitter.dragging() || splitter.hover() {
+                theme.accent_hover
+            } else {
+                theme.border
+            };
             splitter
                 .width(ui, UISize::Pixels(6.0))
                 .height(ui, UISize::ParentPct(1.0))
-                .background(
-                    ui,
-                    if splitter.dragging() || splitter.hover() {
-                        Color::new("#4f6a84")
-                    } else {
-                        Color::new("#2d3a47")
-                    },
-                )
-                .corner_radius(ui, 3.0);
+                .background(ui, splitter_color)
+                .corner_radius(ui, theme.radius);
 
             let editor_panel = ui.column(|ui| {
-                ui.label("src/main.rs")
-                    .height(ui, UISize::Pixels(26.0))
-                    .text_color(ui, Color::new("#8fb5ff"));
+                let file_title = ui.label("src/main.rs");
+                app_style::accent_text(ui, file_title).height(ui, UISize::Pixels(26.0));
 
                 let editor = ui.textarea_with_options(
                     "###ide_editor",
@@ -167,15 +159,13 @@ pub fn render(ui: &mut IMUI, state: &mut IdeViewState) -> bool {
             });
             editor_panel
                 .width(ui, UISize::Fill)
-                .height(ui, UISize::ParentPct(1.0))
-                .padding_all(ui, 10.0)
-                .gap(ui, 8.0)
-                .background(ui, Color::new("#111821"))
-                .border_color(ui, Color::new("#2a3542"));
+                .height(ui, UISize::ParentPct(1.0));
+            app_style::panel(ui, editor_panel);
         });
+        let gap_md = ui.theme().gap_md;
         body.width(ui, UISize::ParentPct(1.0))
             .height(ui, UISize::Fill)
-            .gap(ui, 8.0);
+            .gap(ui, gap_md);
 
         if let Some(splitter) = splitter_handle {
             if splitter.dragging() && ui.mouse_down() {
@@ -187,11 +177,12 @@ pub fn render(ui: &mut IMUI, state: &mut IdeViewState) -> bool {
         }
     });
 
+    let theme = *ui.theme();
     root.width(ui, UISize::ParentPct(1.0))
         .height(ui, UISize::Fill)
-        .padding_all(ui, 12.0)
-        .gap(ui, 10.0)
-        .background(ui, Color::new("#0f141a"));
+        .padding_all(ui, theme.pad_lg)
+        .gap(ui, theme.gap_md)
+        .background(ui, theme.panel_bg);
 
     back_to_demo
 }

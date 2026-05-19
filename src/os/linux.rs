@@ -144,36 +144,26 @@ impl Window {
                         };
                     }
                     x11::xlib::ButtonPress => {
-                        ev = OSEvent {
-                            ty: OSEventType::Press,
-                            key: match event.button.button {
-                                1 => OSKey::LeftMouseButton,
-                                _ => {
-                                    println!("Unhandled mouse press!");
-                                    OSKey::LeftMouseButton
-                                }
-                            },
-                            pos: Some(Point::new(event.button.x as f32, event.button.y as f32)),
-                            chars: None,
-                            delta: 0.0,
-                            flags: None,
-                        };
+                        let pos = Point::new(event.button.x as f32, event.button.y as f32);
+                        if let Some(delta) = x11_scroll_delta(event.button.button) {
+                            ev = OSEvent::scroll(pos, delta);
+                        } else if let Some(key) = x11_button_to_oskey(event.button.button) {
+                            ev = OSEvent::press(key, Some(pos));
+                        } else {
+                            println!("Unhandled mouse press!");
+                            continue;
+                        }
                     }
                     x11::xlib::ButtonRelease => {
-                        ev = OSEvent {
-                            ty: OSEventType::Release,
-                            key: match event.button.button {
-                                1 => OSKey::LeftMouseButton,
-                                _ => {
-                                    println!("Unhandled mouse press!");
-                                    OSKey::LeftMouseButton
-                                }
-                            },
-                            pos: Some(Point::new(event.button.x as f32, event.button.y as f32)),
-                            chars: None,
-                            delta: 0.0,
-                            flags: None,
-                        };
+                        let pos = Point::new(event.button.x as f32, event.button.y as f32);
+                        if x11_scroll_delta(event.button.button).is_some() {
+                            continue;
+                        } else if let Some(key) = x11_button_to_oskey(event.button.button) {
+                            ev = OSEvent::release(key, Some(pos));
+                        } else {
+                            println!("Unhandled mouse release!");
+                            continue;
+                        }
                     }
                     x11::xlib::KeyPress => {
                         let mut buffer = vec![0u8, 0, 0, 0];
@@ -224,6 +214,43 @@ impl Window {
             }
         }
         events
+    }
+}
+
+fn x11_button_to_oskey(button: u32) -> Option<OSKey> {
+    match button {
+        1 => Some(OSKey::LeftMouseButton),
+        3 => Some(OSKey::RightMouseButton),
+        _ => None,
+    }
+}
+
+fn x11_scroll_delta(button: u32) -> Option<f32> {
+    match button {
+        // X11 reports vertical wheel movement as virtual buttons:
+        // 4 is wheel up, 5 is wheel down.
+        4 => Some(1.0),
+        5 => Some(-1.0),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn x11_vertical_wheel_buttons_map_to_scroll_delta() {
+        assert_eq!(x11_scroll_delta(4), Some(1.0));
+        assert_eq!(x11_scroll_delta(5), Some(-1.0));
+        assert_eq!(x11_scroll_delta(1), None);
+    }
+
+    #[test]
+    fn x11_pointer_buttons_map_to_mouse_keys() {
+        assert_eq!(x11_button_to_oskey(1), Some(OSKey::LeftMouseButton));
+        assert_eq!(x11_button_to_oskey(3), Some(OSKey::RightMouseButton));
+        assert_eq!(x11_button_to_oskey(4), None);
     }
 }
 
