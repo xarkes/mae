@@ -407,6 +407,7 @@ pub struct UiSignal {
     pub flags: u32,
     pub scroll_x: f32,
     pub scroll_y: f32,
+    pub left_press_pos: Option<Point>,
 }
 
 impl UiSignal {
@@ -1433,11 +1434,7 @@ impl IMUI {
         self.boxes[handle.idx].style.border_color = self.theme.border;
         self.boxes[handle.idx].style.corner_radius = self.theme.radius;
         self.apply_click_to_focus(handle);
-        if handle.clicked() {
-            let cursor = self.cursor_from_line_edit_click(handle, buffer);
-            self.set_text_cursor(handle.key, cursor, false);
-            self.reset_caret_blink(handle.key);
-        }
+        self.apply_line_edit_mouse_selection(handle, buffer);
         if self.box_is_focused(handle) {
             self.apply_text_input(handle, buffer, false);
             self.boxes[handle.idx].style.border_color = self.theme.accent;
@@ -1477,11 +1474,7 @@ impl IMUI {
         self.boxes[handle.idx].style.corner_radius = self.theme.radius;
         self.boxes[handle.idx].child_gap = 2.0;
         self.apply_click_to_focus(handle);
-        if handle.clicked() {
-            let cursor = self.cursor_from_textarea_click(handle, buffer);
-            self.set_text_cursor(handle.key, cursor, false);
-            self.reset_caret_blink(handle.key);
-        }
+        self.apply_textarea_mouse_selection(handle, buffer);
         if self.box_is_focused(handle) {
             self.apply_text_input(handle, buffer, true);
             self.boxes[handle.idx].style.border_color = self.theme.accent;
@@ -1822,7 +1815,7 @@ impl IMUI {
     }
 
     fn apply_click_to_focus(&mut self, handle: UIBoxHandle) {
-        if self.boxes[handle.idx].flags.click_to_focus() && handle.clicked() {
+        if self.boxes[handle.idx].flags.click_to_focus() && (handle.pressed() || handle.clicked()) {
             self.focus_key = Some(handle.key);
         }
     }
@@ -2121,26 +2114,64 @@ impl IMUI {
         true
     }
 
-    fn cursor_from_line_edit_click(&mut self, handle: UIBoxHandle, buffer: &str) -> usize {
-        let Some(mouse) = self.mouse else {
+    fn apply_line_edit_mouse_selection(&mut self, handle: UIBoxHandle, buffer: &str) {
+        if handle.pressed() {
+            let cursor =
+                self.cursor_from_line_edit_point(handle, buffer, handle.signal.left_press_pos);
+            self.set_text_cursor(handle.key, cursor, false);
+            self.reset_caret_blink(handle.key);
+        }
+        if handle.dragging() {
+            let cursor = self.cursor_from_line_edit_point(handle, buffer, self.mouse);
+            self.set_text_cursor(handle.key, cursor, true);
+            self.reset_caret_blink(handle.key);
+        }
+    }
+
+    fn apply_textarea_mouse_selection(&mut self, handle: UIBoxHandle, buffer: &str) {
+        if handle.pressed() {
+            let cursor =
+                self.cursor_from_textarea_point(handle, buffer, handle.signal.left_press_pos);
+            self.set_text_cursor(handle.key, cursor, false);
+            self.reset_caret_blink(handle.key);
+        }
+        if handle.dragging() {
+            let cursor = self.cursor_from_textarea_point(handle, buffer, self.mouse);
+            self.set_text_cursor(handle.key, cursor, true);
+            self.reset_caret_blink(handle.key);
+        }
+    }
+
+    fn cursor_from_line_edit_point(
+        &mut self,
+        handle: UIBoxHandle,
+        buffer: &str,
+        point: Option<Point>,
+    ) -> usize {
+        let Some(point) = point else {
             return char_count(buffer);
         };
         let rect = self.boxes[handle.idx].rect;
         let padding = self.boxes[handle.idx].padding;
         let style = self.boxes[handle.idx].style;
-        let local_x = (mouse.x - rect.x0 - padding.left - style.margin).max(0.0);
+        let local_x = (point.x - rect.x0 - padding.left - style.margin).max(0.0);
         self.cursor_from_x(buffer, style.font_size, local_x)
     }
 
-    fn cursor_from_textarea_click(&mut self, handle: UIBoxHandle, buffer: &str) -> usize {
-        let Some(mouse) = self.mouse else {
+    fn cursor_from_textarea_point(
+        &mut self,
+        handle: UIBoxHandle,
+        buffer: &str,
+        point: Option<Point>,
+    ) -> usize {
+        let Some(point) = point else {
             return char_count(buffer);
         };
         let rect = self.boxes[handle.idx].rect;
         let padding = self.boxes[handle.idx].padding;
         let style = self.boxes[handle.idx].style;
         let line_h = self.theme.size_text + 6.0;
-        let visual_line = ((mouse.y - rect.y0 - padding.top + self.boxes[handle.idx].scroll.y)
+        let visual_line = ((point.y - rect.y0 - padding.top + self.boxes[handle.idx].scroll.y)
             / line_h)
             .floor()
             .max(0.0) as usize;
@@ -2153,7 +2184,7 @@ impl IMUI {
             ranges.last().copied().unwrap_or((0, char_count(buffer)))
         };
         let line_text = substring_chars(buffer, (line_start, line_end));
-        let local_x = (mouse.x - rect.x0 - padding.left - style.margin).max(0.0);
+        let local_x = (point.x - rect.x0 - padding.left - style.margin).max(0.0);
         line_start + self.cursor_from_x(&line_text, style.font_size, local_x)
     }
 
@@ -2405,6 +2436,7 @@ impl IMUI {
                             self.drag_start_mouse = ev.pos.or(self.mouse);
                             if button == MouseButton::Left {
                                 signal.flags |= UiSignal::LEFT_PRESSED;
+                                signal.left_press_pos = ev.pos.or(self.mouse);
                             }
                             taken = true;
                         }
@@ -3671,6 +3703,11 @@ fn mouse_button_from_key(key: OSKey) -> Option<MouseButton> {
 mod tests {
     use super::*;
 
+    fn push_test_event(ui: &mut IMUI, ev: OSEvent) {
+        ui.apply_event_side_effects(&ev);
+        ui.events.push(ev);
+    }
+
     #[test]
     fn built_in_themes_expose_distinct_light_and_dark_tokens() {
         let dark = UITheme::dark();
@@ -3968,6 +4005,115 @@ mod tests {
 
         assert_eq!(buffer, "a");
         assert!(ui.events.is_empty());
+    }
+
+    #[test]
+    fn line_edit_selects_text_with_mouse_drag() {
+        let mut ui = IMUI::new_for_test(400.0, 200.0);
+        let mut buffer = "abcdef".to_string();
+
+        ui.begin_frame();
+        let edit = ui.line_edit("Edit###edit", &mut buffer, false);
+        ui.width(edit, UISize::Pixels(220.0));
+        ui.height(edit, UISize::Pixels(32.0));
+        ui.end_frame();
+
+        let rect = ui.boxes[edit.idx()].rect;
+        let padding = ui.boxes[edit.idx()].padding;
+        let style = ui.boxes[edit.idx()].style;
+        let char_w = style.font_size * 0.6;
+        let content_x = rect.x0 + padding.left + style.margin;
+        let y = rect.y0 + rect.height() * 0.5;
+        let start = Point::new(content_x + char_w * 1.2, y);
+        let end = Point::new(content_x + char_w * 4.2, y);
+
+        push_test_event(&mut ui, OSEvent::press(OSKey::LeftMouseButton, Some(start)));
+        ui.begin_frame();
+        let edit = ui.line_edit("Edit###edit", &mut buffer, false);
+        ui.width(edit, UISize::Pixels(220.0));
+        ui.height(edit, UISize::Pixels(32.0));
+        ui.end_frame();
+
+        let state = ui.text_edit_states.get(&edit.key()).unwrap();
+        assert_eq!(state.cursor, 1);
+        assert_eq!(state.selection_range(), None);
+        assert_eq!(ui.focus_key, Some(edit.key()));
+
+        push_test_event(&mut ui, OSEvent::mouse_move(end));
+        ui.begin_frame();
+        let edit = ui.line_edit("Edit###edit", &mut buffer, false);
+        ui.width(edit, UISize::Pixels(220.0));
+        ui.height(edit, UISize::Pixels(32.0));
+        ui.end_frame();
+
+        let state = ui.text_edit_states.get(&edit.key()).unwrap();
+        assert_eq!(state.cursor, 4);
+        assert_eq!(state.selection_range(), Some((1, 4)));
+
+        push_test_event(&mut ui, OSEvent::release(OSKey::LeftMouseButton, Some(end)));
+        ui.begin_frame();
+        let edit = ui.line_edit("Edit###edit", &mut buffer, false);
+        ui.width(edit, UISize::Pixels(220.0));
+        ui.height(edit, UISize::Pixels(32.0));
+        ui.end_frame();
+
+        let state = ui.text_edit_states.get(&edit.key()).unwrap();
+        assert_eq!(state.selection_range(), Some((1, 4)));
+    }
+
+    #[test]
+    fn textarea_selects_text_with_mouse_drag_across_lines() {
+        let mut ui = IMUI::new_for_test(400.0, 200.0);
+        let mut buffer = "abc\ndef".to_string();
+
+        ui.begin_frame();
+        let edit = ui.textarea("Text###text", &mut buffer);
+        ui.width(edit, UISize::Pixels(220.0));
+        ui.height(edit, UISize::Pixels(120.0));
+        ui.end_frame();
+
+        let rect = ui.boxes[edit.idx()].rect;
+        let padding = ui.boxes[edit.idx()].padding;
+        let style = ui.boxes[edit.idx()].style;
+        let char_w = style.font_size * 0.6;
+        let line_h = ui.theme.size_text + 6.0;
+        let content_x = rect.x0 + padding.left + style.margin;
+        let content_y = rect.y0 + padding.top + style.margin;
+        let start = Point::new(content_x + char_w * 1.2, content_y + line_h * 0.5);
+        let end = Point::new(content_x + char_w * 2.2, content_y + line_h * 1.5);
+
+        push_test_event(&mut ui, OSEvent::press(OSKey::LeftMouseButton, Some(start)));
+        ui.begin_frame();
+        let edit = ui.textarea("Text###text", &mut buffer);
+        ui.width(edit, UISize::Pixels(220.0));
+        ui.height(edit, UISize::Pixels(120.0));
+        ui.end_frame();
+
+        let state = ui.text_edit_states.get(&edit.key()).unwrap();
+        assert_eq!(state.cursor, 1);
+        assert_eq!(state.selection_range(), None);
+        assert_eq!(ui.focus_key, Some(edit.key()));
+
+        push_test_event(&mut ui, OSEvent::mouse_move(end));
+        ui.begin_frame();
+        let edit = ui.textarea("Text###text", &mut buffer);
+        ui.width(edit, UISize::Pixels(220.0));
+        ui.height(edit, UISize::Pixels(120.0));
+        ui.end_frame();
+
+        let state = ui.text_edit_states.get(&edit.key()).unwrap();
+        assert_eq!(state.cursor, 6);
+        assert_eq!(state.selection_range(), Some((1, 6)));
+
+        push_test_event(&mut ui, OSEvent::release(OSKey::LeftMouseButton, Some(end)));
+        ui.begin_frame();
+        let edit = ui.textarea("Text###text", &mut buffer);
+        ui.width(edit, UISize::Pixels(220.0));
+        ui.height(edit, UISize::Pixels(120.0));
+        ui.end_frame();
+
+        let state = ui.text_edit_states.get(&edit.key()).unwrap();
+        assert_eq!(state.selection_range(), Some((1, 6)));
     }
 
     #[test]
