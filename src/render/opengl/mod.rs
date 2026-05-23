@@ -18,7 +18,7 @@ use gl::types::{GLchar, GLenum, GLint, GLuint};
 use log;
 use std::ffi::CString;
 
-use super::Rect2DInst;
+use super::{Rect2DInst, TextureFormat};
 
 static ATTRIBS: [(u32, i32, u32, &str); 7] = [
     (0, 4, gl::FLOAT, "c2v_dst_rect"),
@@ -127,24 +127,26 @@ impl GLContext {
         }
     }
 
-    pub fn update_font_texture(&mut self, atlas: &crate::render::font_cache::Atlas) -> u32 {
+    pub fn create_texture(&mut self, width: usize, height: usize, format: TextureFormat) -> u32 {
         unsafe { gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1) };
 
-        // xarkes: Create texture for font
-        let mut font_texture = u32::MAX;
+        let mut texture = u32::MAX;
         unsafe {
-            gl::GenTextures(1, &mut font_texture);
-            gl::BindTexture(gl::TEXTURE_2D, font_texture);
+            gl::GenTextures(1, &mut texture);
+            gl::BindTexture(gl::TEXTURE_2D, texture);
+            let (internal_format, source_format) = match format {
+                TextureFormat::R8 => (gl::RED as i32, gl::RED),
+            };
             gl::TexImage2D(
                 gl::TEXTURE_2D,
                 0,
-                gl::RED as i32,
-                atlas.width as i32,
-                atlas.height as i32,
+                internal_format,
+                width as i32,
+                height as i32,
                 0,
-                gl::RED,
+                source_format,
                 gl::UNSIGNED_BYTE,
-                atlas.data.as_ptr() as *const _,
+                std::ptr::null(),
             );
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
@@ -152,7 +154,34 @@ impl GLContext {
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
         }
-        font_texture
+        texture
+    }
+
+    pub fn update_texture_region(
+        &mut self,
+        id: u32,
+        x: usize,
+        y: usize,
+        width: usize,
+        height: usize,
+        data: &[u8],
+    ) {
+        unsafe {
+            gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
+            gl::BindTexture(gl::TEXTURE_2D, id);
+            gl::TexSubImage2D(
+                gl::TEXTURE_2D,
+                0,
+                x as i32,
+                y as i32,
+                width as i32,
+                height as i32,
+                gl::RED,
+                gl::UNSIGNED_BYTE,
+                data.as_ptr() as *const _,
+            );
+            gl::BindTexture(gl::TEXTURE_2D, 0);
+        }
     }
 
     pub fn resize(&mut self, w: f32, h: f32) {
@@ -272,8 +301,20 @@ impl GLContext {
 }
 
 impl super::RenderBackend for GLContext {
-    fn update_font_texture(&mut self, atlas: &super::font_cache::Atlas) -> u32 {
-        GLContext::update_font_texture(self, atlas)
+    fn create_texture(&mut self, width: usize, height: usize, format: TextureFormat) -> u32 {
+        GLContext::create_texture(self, width, height, format)
+    }
+
+    fn update_texture_region(
+        &mut self,
+        id: u32,
+        x: usize,
+        y: usize,
+        width: usize,
+        height: usize,
+        data: &[u8],
+    ) {
+        GLContext::update_texture_region(self, id, x, y, width, height, data)
     }
 
     fn remove_texture(&mut self, id: u32) {

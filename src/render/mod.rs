@@ -8,16 +8,30 @@ pub mod software;
 use std::{cell::RefCell, rc::Rc};
 
 use crate::os::Window;
-use font_cache::FontCache;
+use font_cache::{FontCache, FontTag};
 
 pub trait RenderBackend {
-    fn update_font_texture(&mut self, atlas: &font_cache::Atlas) -> u32;
+    fn create_texture(&mut self, width: usize, height: usize, format: TextureFormat) -> u32;
+    fn update_texture_region(
+        &mut self,
+        id: u32,
+        x: usize,
+        y: usize,
+        width: usize,
+        height: usize,
+        data: &[u8],
+    );
     fn remove_texture(&mut self, id: u32);
     fn resize(&mut self, w: f32, h: f32);
     fn begin_frame(&mut self);
     fn end_frame(&mut self);
     fn render(&mut self, batches: &Vec<RenderBatch>);
     fn vsync(&mut self, enable: bool);
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextureFormat {
+    R8,
 }
 
 pub struct RenderBatch {
@@ -213,15 +227,17 @@ impl Renderer {
         println!("[profile] create_backend: {:?}", t0.elapsed());
 
         let t1 = std::time::Instant::now();
-        let font_cache = Rc::new(RefCell::new(FontCache::new(include_bytes!(
-            "../../assets/NotoSans-Regular.ttf"
-        ))));
+        let font_cache = Rc::new(RefCell::new(FontCache::new_with_tag(
+            FontTag::Main,
+            include_bytes!("../../assets/NotoSans-Regular.ttf"),
+        )));
         println!("[profile] font_cache (NotoSans): {:?}", t1.elapsed());
 
         let t2 = std::time::Instant::now();
-        let icon_font_cache = Rc::new(RefCell::new(FontCache::new(include_bytes!(
-            "../../assets/MaterialIcons-Regular.ttf"
-        ))));
+        let icon_font_cache = Rc::new(RefCell::new(FontCache::new_with_tag(
+            FontTag::Icon,
+            include_bytes!("../../assets/MaterialIcons-Regular.ttf"),
+        )));
         println!(
             "[profile] icon_font_cache (MaterialIcons): {:?}",
             t2.elapsed()
@@ -263,18 +279,61 @@ impl Renderer {
             true => self.icon_font_cache.borrow_mut(),
             false => self.font_cache.borrow_mut(),
         };
-        if fc.dirty {
-            if fc.texture_id != 0 {
-                self.ctx.remove_texture(fc.texture_id);
+
+        for atlas_index in 0..fc.atlas_count() {
+            if fc.atlas_texture_id(atlas_index) == 0 {
+                let atlas = fc.atlas(atlas_index);
+                let texture_id =
+                    self.ctx
+                        .create_texture(atlas.width, atlas.height, TextureFormat::R8);
+                fc.atlas_mut(atlas_index).set_texture_id(texture_id);
+                let atlas = fc.atlas(atlas_index);
+                self.ctx.update_texture_region(
+                    texture_id,
+                    0,
+                    0,
+                    atlas.width,
+                    atlas.height,
+                    &atlas.data,
+                );
             }
-            let texture_id = self.ctx.update_font_texture(fc.atlas());
-            fc.texture_id = texture_id;
-            fc.dirty = false;
-            println!(
-                "Font cache dirty, generating new texture: texture_id: {} (font_icon: {})",
-                texture_id, font_icon
-            );
         }
+
+        for upload in fc.take_pending_uploads() {
+            let texture_id = fc.atlas_texture_id(upload.atlas_index);
+            if texture_id != 0 {
+                self.ctx.update_texture_region(
+                    texture_id,
+                    upload.x,
+                    upload.y,
+                    upload.width,
+                    upload.height,
+                    &upload.data,
+                );
+            }
+        }
+
+        fc.refresh_run_texture_ids();
+    }
+
+    pub fn begin_font_frame(&mut self) {
+        self.font_cache.borrow_mut().begin_frame();
+        self.icon_font_cache.borrow_mut().begin_frame();
+    }
+
+    fn remove_font_textures(&mut self, font_icon: bool) {
+        let mut fc = match font_icon {
+            true => self.icon_font_cache.borrow_mut(),
+            false => self.font_cache.borrow_mut(),
+        };
+        for atlas_index in 0..fc.atlas_count() {
+            let texture_id = fc.atlas_texture_id(atlas_index);
+            if texture_id != 0 {
+                self.ctx.remove_texture(texture_id);
+                fc.atlas_mut(atlas_index).set_texture_id(0);
+            }
+        }
+        fc.mark_backend_lost();
     }
 
     pub fn resize(&mut self, w: f32, h: f32) {
@@ -290,14 +349,14 @@ impl Renderer {
             return;
         }
 
+        self.remove_font_textures(false);
+        self.remove_font_textures(true);
         self.ctx = Self::create_backend(&self.win, backend);
         self.backend = backend;
 
         let render_size = self.win.get_render_size();
         self.resize(render_size.0, render_size.1);
 
-        self.font_cache.borrow_mut().dirty = true;
-        self.icon_font_cache.borrow_mut().dirty = true;
         self.update_font_texture(false);
         self.update_font_texture(true);
 
@@ -312,6 +371,7 @@ impl Renderer {
 
         self.batches.clear();
         self.batches.push(RenderBatch::new(100));
+        self.begin_font_frame();
     }
 
     pub fn current_batch(&mut self) -> &mut RenderBatch {

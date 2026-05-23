@@ -1,146 +1,180 @@
-// Font caching and rasterization with pluggable backends.
-//
-// Backends:
-//   - fontdue (default): Pure Rust, no system dependencies
-//   - freetype: System library, better performance and memory usage
-//
-// Use `--features freetype --no-default-features` to use freetype instead of fontdue.
-
-#[cfg(any(feature = "fontdue", all(feature = "freetype", target_os = "linux")))]
 use std::collections::HashMap;
-#[cfg(any(feature = "fontdue", all(feature = "freetype", target_os = "linux")))]
-use std::num::NonZeroUsize;
 
-#[cfg(any(feature = "fontdue", all(feature = "freetype", target_os = "linux")))]
-use lru::LruCache;
+pub const ATLAS_SIZE: usize = 1024;
+const ATLAS_PADDING: usize = 1;
 
-#[cfg(any(feature = "fontdue", all(feature = "freetype", target_os = "linux")))]
-const CACHE_GLYPH_COUNT: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(512) };
-
-/// Quantize font size to avoid floating point precision issues.
-/// Rounds to nearest 0.5pt, returns a key suitable for HashMap lookup.
-#[inline]
-#[cfg(any(feature = "fontdue", all(feature = "freetype", target_os = "linux")))]
-fn quantize_size(size: f32) -> (u32, f32) {
-    // Round to nearest 0.5 (multiply by 2, round, divide by 2)
-    let quantized = (size * 2.0).round() / 2.0;
-    let key = (quantized * 2.0) as u32; // Unique key for each 0.5 increment
-    (key, quantized)
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FontTag {
+    Main,
+    Icon,
 }
 
-const ATLAS_WIDTH: usize = 1024;
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct RasterFlags(pub u32);
 
-// ============================================================================
-// Common types used by all backends
-// ============================================================================
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TextStyleKey {
+    pub font_tag: FontTag,
+    pub size_x2: u32,
+    pub dpi_x100: u32,
+    pub raster_flags: RasterFlags,
+}
+
+impl TextStyleKey {
+    pub fn new(font_tag: FontTag, size: f32, dpi_scale: f32, raster_flags: RasterFlags) -> Self {
+        Self {
+            font_tag,
+            size_x2: quantize_size(size).0,
+            dpi_x100: (dpi_scale.max(0.01) * 100.0).round() as u32,
+            raster_flags,
+        }
+    }
+
+    pub fn quantized_size(self) -> f32 {
+        self.size_x2 as f32 / 2.0
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Glyph {
     pub width: usize,
     pub height: usize,
     pub advance: f32,
-    pub x0: f32,
-    pub y0: f32,
-    pub x1: f32,
-    pub y1: f32,
     pub xoff: f32,
     pub yoff: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AtlasRegion {
+    pub atlas_index: usize,
+    pub x: usize,
+    pub y: usize,
+    pub width: usize,
+    pub height: usize,
+}
+
+impl AtlasRegion {
+    pub fn uv(self, atlas_width: usize, atlas_height: usize) -> (f32, f32, f32, f32) {
+        (
+            self.x as f32 / atlas_width as f32,
+            self.y as f32 / atlas_height as f32,
+            (self.x + self.width) as f32 / atlas_width as f32,
+            (self.y + self.height) as f32 / atlas_height as f32,
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct TextPiece {
+    pub texture_id: u32,
+    pub atlas_index: usize,
+    pub subrect_px: AtlasRegion,
+    pub advance: f32,
+    pub decode_len: usize,
+    pub offset_px: (f32, f32),
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct TextRun {
+    pub pieces: Vec<TextPiece>,
+    pub dim: (f32, f32),
+}
+
+#[derive(Clone, Debug)]
+pub struct AtlasUpload {
+    pub atlas_index: usize,
+    pub x: usize,
+    pub y: usize,
+    pub width: usize,
+    pub height: usize,
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
 pub struct Atlas {
     pub data: Vec<u8>,
     pub width: usize,
     pub height: usize,
     next_x: usize,
     next_y: usize,
-    cur_max_height: usize,
-}
-
-/// Metrics from rasterization, used by Atlas::add_glyph
-#[cfg(any(feature = "fontdue", all(feature = "freetype", target_os = "linux")))]
-struct RasterMetrics {
-    width: usize,
-    height: usize,
-    advance_width: f32,
-    xmin: i32,
-    ymin: i32,
+    row_height: usize,
+    texture_id: u32,
 }
 
 impl Atlas {
     pub fn new() -> Self {
-        Atlas {
-            data: vec![0; ATLAS_WIDTH * ATLAS_WIDTH],
-            width: ATLAS_WIDTH,
-            height: ATLAS_WIDTH,
-            next_x: 0,
-            next_y: 0,
-            cur_max_height: 0,
+        Self {
+            data: vec![0; ATLAS_SIZE * ATLAS_SIZE],
+            width: ATLAS_SIZE,
+            height: ATLAS_SIZE,
+            next_x: ATLAS_PADDING,
+            next_y: ATLAS_PADDING,
+            row_height: 0,
+            texture_id: 0,
         }
     }
 
-    /// Add a glyph to the current atlas
-    #[cfg(any(feature = "fontdue", all(feature = "freetype", target_os = "linux")))]
-    fn add_glyph(&mut self, metrics: RasterMetrics, bitmap: Vec<u8>) -> Glyph {
-        if self.next_y >= self.height {
-            // TODO(xarkes): Implement atlas eviction
-            panic!("Full atlas is not handled yet");
-        }
-        if self.next_x + metrics.width >= self.width {
-            self.next_x = 0;
-            self.next_y += self.cur_max_height;
-            self.cur_max_height = 0;
-        }
+    pub fn texture_id(&self) -> u32 {
+        self.texture_id
+    }
 
-        // Copy the square rasterized glyph in our atlas (non contiguous)
-        for y in 0..metrics.height {
-            let dst = &mut self.data[self.next_x + y * self.width + self.next_y * self.width
-                ..self.next_x + y * self.width + self.next_y * self.width + metrics.width];
-            let data = &bitmap[y * metrics.width..y * metrics.width + metrics.width];
-            dst.copy_from_slice(data);
+    pub fn set_texture_id(&mut self, texture_id: u32) {
+        self.texture_id = texture_id;
+    }
+
+    pub fn allocate(&mut self, width: usize, height: usize) -> Option<(usize, usize)> {
+        let alloc_w = width + ATLAS_PADDING * 2;
+        let alloc_h = height + ATLAS_PADDING * 2;
+        if alloc_w > self.width || alloc_h > self.height {
+            return None;
         }
 
-        let glyph = Glyph {
-            width: metrics.width,
-            height: metrics.height,
-            advance: metrics.advance_width,
-            x0: self.next_x as f32 / self.width as f32,
-            y0: self.next_y as f32 / self.height as f32,
-            x1: (self.next_x as f32 + metrics.width as f32) / self.width as f32,
-            y1: (self.next_y as f32 + metrics.height as f32) / self.height as f32,
-            xoff: metrics.xmin as f32,
-            yoff: -(metrics.height as f32 + metrics.ymin as f32),
-        };
+        if self.next_x + alloc_w > self.width {
+            self.next_x = ATLAS_PADDING;
+            self.next_y += self.row_height;
+            self.row_height = 0;
+        }
 
-        // XXX(xarkes): Not sure why I am doing +1... but it solves some artefacts showing up. Maybe there is a bug somewhere else?
-        self.next_x += metrics.width + 1;
-        self.cur_max_height = std::cmp::max(self.cur_max_height, metrics.height);
+        if self.next_y + alloc_h > self.height {
+            return None;
+        }
 
-        glyph
+        let x = self.next_x + ATLAS_PADDING;
+        let y = self.next_y + ATLAS_PADDING;
+        self.next_x += alloc_w;
+        self.row_height = self.row_height.max(alloc_h);
+        Some((x, y))
+    }
+
+    fn write_region(&mut self, x: usize, y: usize, width: usize, height: usize, data: &[u8]) {
+        debug_assert_eq!(data.len(), width * height);
+        for row in 0..height {
+            let dst = (y + row) * self.width + x;
+            let src = row * width;
+            self.data[dst..dst + width].copy_from_slice(&data[src..src + width]);
+        }
     }
 }
 
-#[cfg(any(feature = "fontdue", all(feature = "freetype", target_os = "linux")))]
-struct GlyphCache {
-    table: LruCache<char, Glyph>,
-    table_ascii: [Glyph; 256],
+pub trait FontProvider {
+    fn has_glyph(&self, glyph: char) -> bool;
+    fn rasterize(&mut self, glyph: char, size: f32, flags: RasterFlags) -> Option<RasterizedGlyph>;
+    fn line_height(&mut self, size: f32) -> f32;
 }
 
-// ============================================================================
-// Fontdue backend (default)
-// ============================================================================
+pub struct RasterizedGlyph {
+    pub glyph: Glyph,
+    pub bitmap: Vec<u8>,
+}
 
 #[cfg(feature = "fontdue")]
-pub struct FontCache {
+struct FontdueProvider {
     font: fontdue::Font,
-    glyph_cache: HashMap<u32, GlyphCache>,
-    atlas: Atlas,
-    pub(crate) dirty: bool,
-    pub(crate) texture_id: u32,
 }
 
 #[cfg(feature = "fontdue")]
-impl FontCache {
-    pub fn new(font_bytes: &[u8]) -> Self {
+impl FontdueProvider {
+    fn new(font_bytes: &[u8]) -> Self {
         let t0 = std::time::Instant::now();
         let font = fontdue::Font::from_bytes(font_bytes, fontdue::FontSettings::default()).unwrap();
         println!(
@@ -148,474 +182,493 @@ impl FontCache {
             t0.elapsed(),
             font_bytes.len() / 1024
         );
+        Self { font }
+    }
+}
 
-        let t1 = std::time::Instant::now();
-        let atlas = Atlas::new();
-        println!("[profile]   Atlas::new: {:?}", t1.elapsed());
-
-        FontCache {
-            font,
-            glyph_cache: HashMap::new(),
-            atlas,
-            dirty: true,
-            texture_id: 0,
-        }
+#[cfg(feature = "fontdue")]
+impl FontProvider for FontdueProvider {
+    fn has_glyph(&self, glyph: char) -> bool {
+        self.font.has_glyph(glyph)
     }
 
-    /// Add a glyph to the cache
-    /// Must be called only if you are sure the glyph is not in the cache already
-    fn add(&mut self, glyph: char, size: f32) -> Option<&Glyph> {
-        let (keysize, quantized_size) = quantize_size(size);
-        if !self.font.has_glyph(glyph) {
+    fn rasterize(
+        &mut self,
+        glyph: char,
+        size: f32,
+        _flags: RasterFlags,
+    ) -> Option<RasterizedGlyph> {
+        if !self.has_glyph(glyph) {
             return None;
         }
-
-        let cache = self.glyph_cache.get_mut(&keysize).unwrap();
-        debug_assert!(cache.table.peek(&glyph).is_none());
-        let (metrics, bitmap) = self.font.rasterize(glyph, quantized_size);
-        let raster_metrics = RasterMetrics {
-            width: metrics.width,
-            height: metrics.height,
-            advance_width: metrics.advance_width,
-            xmin: metrics.xmin,
-            ymin: metrics.ymin,
-        };
-        let glyph_data = self.atlas.add_glyph(raster_metrics, bitmap);
-        self.dirty = true;
-        if glyph.len_utf8() == 1 {
-            cache.table_ascii[glyph as u8 as usize] = glyph_data;
-            Some(&cache.table_ascii[glyph as u8 as usize])
-        } else {
-            cache.table.put(glyph, glyph_data);
-            Some(cache.table.peek(&glyph).unwrap())
-        }
+        let (metrics, bitmap) = self.font.rasterize(glyph, size);
+        Some(RasterizedGlyph {
+            glyph: Glyph {
+                width: metrics.width,
+                height: metrics.height,
+                advance: metrics.advance_width,
+                xoff: metrics.xmin as f32,
+                yoff: -(metrics.height as f32 + metrics.ymin as f32),
+            },
+            bitmap,
+        })
     }
 
-    fn ensure_size_cache(&mut self, size: f32) -> u32 {
-        let (keysize, _) = quantize_size(size);
-
-        if !self.glyph_cache.contains_key(&keysize) {
-            self.glyph_cache.insert(
-                keysize,
-                GlyphCache {
-                    table: LruCache::new(CACHE_GLYPH_COUNT),
-                    table_ascii: [Glyph::default(); 256],
-                },
-            );
-            // Pre-rasterize ASCII
-            for ccode in 0..=255u8 {
-                self.add(ccode as char, size);
-            }
-        }
-
-        keysize
-    }
-
-    pub fn get(&mut self, glyph: char, size: f32) -> &Glyph {
-        let (_, quantized_size) = quantize_size(size);
-        let keysize = self.ensure_size_cache(size);
-
-        // Fast path: ASCII (always pre-cached)
-        if glyph.len_utf8() == 1 {
-            return &self.glyph_cache.get(&keysize).unwrap().table_ascii[glyph as u8 as usize];
-        }
-
-        // Check if non-ASCII glyph is already cached (peek doesn't update LRU order)
-        let needs_rasterize = self
-            .glyph_cache
-            .get(&keysize)
-            .unwrap()
-            .table
-            .peek(&glyph)
-            .is_none();
-
-        if needs_rasterize {
-            // Rasterize and cache the glyph
-            if self.font.has_glyph(glyph) {
-                let (metrics, bitmap) = self.font.rasterize(glyph, quantized_size);
-                let raster_metrics = RasterMetrics {
-                    width: metrics.width,
-                    height: metrics.height,
-                    advance_width: metrics.advance_width,
-                    xmin: metrics.xmin,
-                    ymin: metrics.ymin,
-                };
-                let glyph_data = self.atlas.add_glyph(raster_metrics, bitmap);
-                self.dirty = true;
-                self.glyph_cache
-                    .get_mut(&keysize)
-                    .unwrap()
-                    .table
-                    .put(glyph, glyph_data);
-            } else {
-                // Fallback to '?'
-                return &self.glyph_cache.get(&keysize).unwrap().table_ascii['?' as usize];
-            }
-        }
-
-        // Use get to update LRU order, then return reference via peek
-        self.glyph_cache
-            .get_mut(&keysize)
-            .unwrap()
-            .table
-            .get(&glyph);
-        self.glyph_cache
-            .get(&keysize)
-            .unwrap()
-            .table
-            .peek(&glyph)
-            .unwrap()
-    }
-
-    /// Retrieve the current atlas
-    pub fn atlas(&self) -> &Atlas {
-        &self.atlas
-    }
-
-    /// Returns the nearest valid cursor position given one.
-    pub fn get_cursor_position(&mut self, size: f32, text: &str, cursorx: f32) -> (f32, usize) {
-        let mut length = 0.;
-        let mut idx = 0;
-        for c in text.chars() {
-            let glyph = self.get(c, size);
-            if cursorx > length + glyph.advance / 2. {
-                length += glyph.advance;
-            } else {
-                break;
-            }
-            idx += 1;
-        }
-        (length, idx)
-    }
-
-    pub fn get_text_size(&mut self, size: f32, text: &str, length: usize) -> (f32, f32) {
-        let mut width = 0.;
-        for (i, c) in text.char_indices() {
-            if i >= length {
-                break;
-            }
-            if c == '\t' {
-                continue;
-            }
-            let glyph = self.get(c, size);
-            width += glyph.advance;
-        }
-        (width, self.line_height(size))
-    }
-
-    pub fn line_height(&self, font_size: f32) -> f32 {
+    fn line_height(&mut self, size: f32) -> f32 {
         self.font
-            .horizontal_line_metrics(font_size)
-            .expect("font size error")
-            .new_line_size
+            .horizontal_line_metrics(size)
+            .map(|m| m.new_line_size)
+            .unwrap_or(size * 1.2)
     }
 }
 
-// ============================================================================
-// FreeType backend
-// ============================================================================
-
 #[cfg(all(feature = "freetype", not(feature = "fontdue"), target_os = "linux"))]
-use freetype::Library as FtLibrary;
-#[cfg(all(feature = "freetype", not(feature = "fontdue"), target_os = "linux"))]
-use freetype::face::LoadFlag;
-
-#[cfg(all(feature = "freetype", not(feature = "fontdue"), target_os = "linux"))]
-pub struct FontCache {
-    library: FtLibrary,
-    face_data: Vec<u8>, // Keep font data alive for the face
+struct FreeTypeProvider {
+    _library: freetype::Library,
     face: freetype::Face,
-    glyph_cache: HashMap<u32, GlyphCache>,
-    atlas: Atlas,
-    pub(crate) dirty: bool,
-    pub(crate) texture_id: u32,
 }
 
 #[cfg(all(feature = "freetype", not(feature = "fontdue"), target_os = "linux"))]
-impl FontCache {
-    pub fn new(font_bytes: &[u8]) -> Self {
+impl FreeTypeProvider {
+    fn new(font_bytes: &[u8]) -> Self {
         let t0 = std::time::Instant::now();
-        let library = FtLibrary::init().expect("Failed to initialize FreeType");
-
-        // FreeType requires the font data to remain valid for the lifetime of the face,
-        // so we keep a copy of it
-        let face_data = font_bytes.to_vec();
+        let library = freetype::Library::init().expect("Failed to initialize FreeType");
         let face = library
-            .new_memory_face(face_data.clone(), 0)
+            .new_memory_face(font_bytes.to_vec(), 0)
             .expect("Failed to load font face");
-
         println!(
             "[profile]   freetype::Face::new: {:?} (input: {} KB)",
             t0.elapsed(),
             font_bytes.len() / 1024
         );
-
-        let t1 = std::time::Instant::now();
-        let atlas = Atlas::new();
-        println!("[profile]   Atlas::new: {:?}", t1.elapsed());
-
-        FontCache {
-            library,
-            face_data,
+        Self {
+            _library: library,
             face,
-            glyph_cache: HashMap::new(),
-            atlas,
-            dirty: true,
-            texture_id: 0,
         }
     }
+}
 
-    /// Rasterize a glyph using FreeType
-    fn rasterize(&self, glyph: char, size: f32) -> Option<(RasterMetrics, Vec<u8>)> {
-        let pixel_size = size.round().max(1.0) as u32;
-        self.face
-            .set_pixel_sizes(0, pixel_size)
-            .expect("Failed to set pixel size");
-
-        // Get glyph index (returns Option<u32>)
-        let glyph_index = self.face.get_char_index(glyph as usize)?;
-
-        // Load the glyph
-        self.face
-            .load_glyph(glyph_index, LoadFlag::RENDER)
-            .expect("Failed to load glyph");
-
-        let glyph_slot = self.face.glyph();
-        let bitmap = glyph_slot.bitmap();
-        let metrics = glyph_slot.metrics();
-
-        let width = bitmap.width() as usize;
-        let height = bitmap.rows() as usize;
-
-        // Copy bitmap data (FreeType uses top-down, we need to copy row by row)
-        let mut data = vec![0u8; width * height];
-        let buffer = bitmap.buffer();
-        let pitch = bitmap.pitch().unsigned_abs() as usize;
-
-        for y in 0..height {
-            let src_offset = y * pitch;
-            let dst_offset = y * width;
-            if src_offset + width <= buffer.len() && dst_offset + width <= data.len() {
-                data[dst_offset..dst_offset + width]
-                    .copy_from_slice(&buffer[src_offset..src_offset + width]);
-            }
-        }
-
-        // FreeType metrics are in 26.6 fixed-point format (divide by 64)
-        let raster_metrics = RasterMetrics {
-            width,
-            height,
-            advance_width: (metrics.horiAdvance >> 6) as f32,
-            xmin: glyph_slot.bitmap_left(),
-            ymin: glyph_slot.bitmap_top() - height as i32,
-        };
-
-        Some((raster_metrics, data))
-    }
-
-    /// Check if font has a glyph
+#[cfg(all(feature = "freetype", not(feature = "fontdue"), target_os = "linux"))]
+impl FontProvider for FreeTypeProvider {
     fn has_glyph(&self, glyph: char) -> bool {
         self.face.get_char_index(glyph as usize).is_some()
     }
 
-    /// Add a glyph to the cache
-    fn add(&mut self, glyph: char, size: f32) -> Option<&Glyph> {
-        let (keysize, quantized_size) = quantize_size(size);
+    fn rasterize(
+        &mut self,
+        glyph: char,
+        size: f32,
+        _flags: RasterFlags,
+    ) -> Option<RasterizedGlyph> {
+        use freetype::face::LoadFlag;
 
-        // Rasterize first (before borrowing glyph_cache mutably)
-        let (metrics, bitmap) = self.rasterize(glyph, quantized_size)?;
+        let pixel_size = size.round().max(1.0) as u32;
+        self.face.set_pixel_sizes(0, pixel_size).ok()?;
+        let glyph_index = self.face.get_char_index(glyph as usize)?;
+        self.face.load_glyph(glyph_index, LoadFlag::RENDER).ok()?;
 
-        let cache = self.glyph_cache.get_mut(&keysize).unwrap();
-        debug_assert!(cache.table.peek(&glyph).is_none());
-
-        let glyph_data = self.atlas.add_glyph(metrics, bitmap);
-        self.dirty = true;
-
-        if glyph.len_utf8() == 1 {
-            cache.table_ascii[glyph as u8 as usize] = glyph_data;
-            Some(&cache.table_ascii[glyph as u8 as usize])
-        } else {
-            cache.table.put(glyph, glyph_data);
-            Some(cache.table.peek(&glyph).unwrap())
-        }
-    }
-
-    fn ensure_size_cache(&mut self, size: f32) -> u32 {
-        let (keysize, _) = quantize_size(size);
-
-        if !self.glyph_cache.contains_key(&keysize) {
-            self.glyph_cache.insert(
-                keysize,
-                GlyphCache {
-                    table: LruCache::new(CACHE_GLYPH_COUNT),
-                    table_ascii: [Glyph::default(); 256],
-                },
-            );
-            // Pre-rasterize ASCII
-            for ccode in 0..=255u8 {
-                self.add(ccode as char, size);
+        let glyph_slot = self.face.glyph();
+        let bitmap = glyph_slot.bitmap();
+        let width = bitmap.width() as usize;
+        let height = bitmap.rows() as usize;
+        let mut data = vec![0u8; width * height];
+        let pitch = bitmap.pitch().unsigned_abs() as usize;
+        let buffer = bitmap.buffer();
+        for y in 0..height {
+            let src = y * pitch;
+            let dst = y * width;
+            if src + width <= buffer.len() {
+                data[dst..dst + width].copy_from_slice(&buffer[src..src + width]);
             }
         }
 
-        keysize
+        let metrics = glyph_slot.metrics();
+        Some(RasterizedGlyph {
+            glyph: Glyph {
+                width,
+                height,
+                advance: (metrics.horiAdvance >> 6) as f32,
+                xoff: glyph_slot.bitmap_left() as f32,
+                yoff: -(height as f32 + (glyph_slot.bitmap_top() - height as i32) as f32),
+            },
+            bitmap: data,
+        })
     }
 
-    pub fn get(&mut self, glyph: char, size: f32) -> &Glyph {
-        let (_, quantized_size) = quantize_size(size);
-        let keysize = self.ensure_size_cache(size);
+    fn line_height(&mut self, size: f32) -> f32 {
+        let pixel_size = size.round().max(1.0) as u32;
+        let _ = self.face.set_pixel_sizes(0, pixel_size);
+        self.face
+            .size_metrics()
+            .map(|m| (m.height >> 6) as f32)
+            .unwrap_or(size * 1.2)
+    }
+}
 
-        // Fast path: ASCII (always pre-cached)
-        if glyph.len_utf8() == 1 {
-            return &self.glyph_cache.get(&keysize).unwrap().table_ascii[glyph as u8 as usize];
-        }
+struct FallbackProvider;
 
-        // Check if non-ASCII glyph is already cached
-        let needs_rasterize = self
-            .glyph_cache
-            .get(&keysize)
-            .unwrap()
-            .table
-            .peek(&glyph)
-            .is_none();
-
-        if needs_rasterize {
-            if let Some((metrics, bitmap)) = self.rasterize(glyph, quantized_size) {
-                let glyph_data = self.atlas.add_glyph(metrics, bitmap);
-                self.dirty = true;
-                self.glyph_cache
-                    .get_mut(&keysize)
-                    .unwrap()
-                    .table
-                    .put(glyph, glyph_data);
-            } else {
-                // Fallback to '?'
-                return &self.glyph_cache.get(&keysize).unwrap().table_ascii['?' as usize];
-            }
-        }
-
-        // Use get to update LRU order, then return reference via peek
-        self.glyph_cache
-            .get_mut(&keysize)
-            .unwrap()
-            .table
-            .get(&glyph);
-        self.glyph_cache
-            .get(&keysize)
-            .unwrap()
-            .table
-            .peek(&glyph)
-            .unwrap()
+impl FontProvider for FallbackProvider {
+    fn has_glyph(&self, _glyph: char) -> bool {
+        true
     }
 
-    /// Retrieve the current atlas
-    pub fn atlas(&self) -> &Atlas {
-        &self.atlas
+    fn rasterize(
+        &mut self,
+        _glyph: char,
+        size: f32,
+        _flags: RasterFlags,
+    ) -> Option<RasterizedGlyph> {
+        Some(RasterizedGlyph {
+            glyph: Glyph {
+                width: 0,
+                height: 0,
+                advance: size * 0.6,
+                xoff: 0.0,
+                yoff: 0.0,
+            },
+            bitmap: Vec::new(),
+        })
     }
 
-    /// Returns the nearest valid cursor position given one.
-    pub fn get_cursor_position(&mut self, size: f32, text: &str, cursorx: f32) -> (f32, usize) {
-        let mut length = 0.;
-        let mut idx = 0;
-        for c in text.chars() {
-            let glyph = self.get(c, size);
-            if cursorx > length + glyph.advance / 2. {
-                length += glyph.advance;
-            } else {
-                break;
-            }
-            idx += 1;
+    fn line_height(&mut self, size: f32) -> f32 {
+        size * 1.2
+    }
+}
+
+#[derive(Clone, Debug)]
+struct RasterEntry {
+    glyph: Glyph,
+    region: AtlasRegion,
+}
+
+pub struct FontCache {
+    tag: FontTag,
+    provider: Box<dyn FontProvider>,
+    raster_cache: HashMap<(TextStyleKey, char), RasterEntry>,
+    run_cache: HashMap<(TextStyleKey, String, usize), TextRun>,
+    atlases: Vec<Atlas>,
+    pending_uploads: Vec<AtlasUpload>,
+}
+
+impl FontCache {
+    pub fn new(font_bytes: &[u8]) -> Self {
+        Self::new_with_tag(FontTag::Main, font_bytes)
+    }
+
+    pub fn new_with_tag(tag: FontTag, font_bytes: &[u8]) -> Self {
+        let t0 = std::time::Instant::now();
+        let provider: Box<dyn FontProvider> = create_provider(font_bytes);
+        let atlases = vec![Atlas::new()];
+        println!("[profile]   FontCache::new ({:?}): {:?}", tag, t0.elapsed());
+        Self {
+            tag,
+            provider,
+            raster_cache: HashMap::new(),
+            run_cache: HashMap::new(),
+            atlases,
+            pending_uploads: Vec::new(),
         }
-        (length, idx)
+    }
+
+    pub fn tag(&self) -> FontTag {
+        self.tag
+    }
+
+    pub fn begin_frame(&mut self) {
+        self.run_cache.clear();
+    }
+
+    pub fn atlas_count(&self) -> usize {
+        self.atlases.len()
+    }
+
+    pub fn atlas(&self, index: usize) -> &Atlas {
+        &self.atlases[index]
+    }
+
+    pub fn atlas_mut(&mut self, index: usize) -> &mut Atlas {
+        &mut self.atlases[index]
+    }
+
+    pub fn atlas_texture_id(&self, index: usize) -> u32 {
+        self.atlases[index].texture_id()
+    }
+
+    pub fn take_pending_uploads(&mut self) -> Vec<AtlasUpload> {
+        std::mem::take(&mut self.pending_uploads)
+    }
+
+    pub fn mark_backend_lost(&mut self) {
+        self.pending_uploads.clear();
+        for atlas in &mut self.atlases {
+            atlas.set_texture_id(0);
+        }
+        self.refresh_run_texture_ids();
+    }
+
+    pub fn line_height(&mut self, font_size: f32) -> f32 {
+        self.provider.line_height(font_size)
     }
 
     pub fn get_text_size(&mut self, size: f32, text: &str, length: usize) -> (f32, f32) {
-        let mut width = 0.;
-        for (i, c) in text.char_indices() {
-            if i >= length {
+        self.run_from_text(size, text, length, 1.0).dim
+    }
+
+    pub fn get_cursor_position(&mut self, size: f32, text: &str, cursorx: f32) -> (f32, usize) {
+        let run = self.run_from_text(size, text, text.len(), 1.0);
+        let mut x = 0.0;
+        let mut byte_idx = 0;
+        for piece in &run.pieces {
+            if cursorx > x + piece.advance / 2.0 {
+                x += piece.advance;
+                byte_idx += piece.decode_len;
+            } else {
                 break;
             }
-            if c == '\t' {
+        }
+        (x, byte_idx)
+    }
+
+    pub fn run_from_text(
+        &mut self,
+        size: f32,
+        text: &str,
+        length: usize,
+        dpi_scale: f32,
+    ) -> TextRun {
+        let style = TextStyleKey::new(self.tag, size, dpi_scale, RasterFlags::default());
+        let length = clamp_to_char_boundary(text, length.min(text.len()));
+        let cache_key = (style, text[..length].to_owned(), length);
+        if let Some(run) = self.run_cache.get(&cache_key) {
+            return run.clone();
+        }
+
+        let run = self.build_run(style, text, length.min(text.len()));
+        self.run_cache.insert(cache_key, run.clone());
+        run
+    }
+
+    fn build_run(&mut self, style: TextStyleKey, text: &str, length: usize) -> TextRun {
+        let size = style.quantized_size();
+        let mut x = 0.0;
+        let mut pieces = Vec::new();
+        let tab_size_px = size * 4.0;
+
+        for (byte_idx, ch) in text.char_indices() {
+            if byte_idx >= length {
+                break;
+            }
+
+            if ch == '\t' {
+                let advance = tab_size_px - (x % tab_size_px);
+                x += if advance <= 0.0 { tab_size_px } else { advance };
                 continue;
             }
-            let glyph = self.get(c, size);
-            width += glyph.advance;
+
+            let entry = self.raster_entry(style, ch);
+            let texture_id = self.atlas_texture_id(entry.region.atlas_index);
+            pieces.push(TextPiece {
+                texture_id,
+                atlas_index: entry.region.atlas_index,
+                subrect_px: entry.region,
+                advance: entry.glyph.advance,
+                decode_len: ch.len_utf8(),
+                offset_px: (x + entry.glyph.xoff, entry.glyph.yoff),
+            });
+            x += entry.glyph.advance;
         }
-        (width, self.line_height(size))
-    }
 
-    pub fn line_height(&self, font_size: f32) -> f32 {
-        let pixel_size = font_size.round().max(1.0) as u32;
-        self.face
-            .set_pixel_sizes(0, pixel_size)
-            .expect("Failed to set pixel size");
-
-        // FreeType height is in 26.6 fixed-point format
-        let height = self.face.size_metrics().map(|m| m.height >> 6).unwrap_or(0);
-        height as f32
-    }
-}
-
-// ============================================================================
-// Fallback backend
-// ============================================================================
-
-#[cfg(not(any(feature = "fontdue", all(feature = "freetype", target_os = "linux"))))]
-pub struct FontCache {
-    glyph: Glyph,
-    atlas: Atlas,
-    pub(crate) dirty: bool,
-    pub(crate) texture_id: u32,
-}
-
-#[cfg(not(any(feature = "fontdue", all(feature = "freetype", target_os = "linux"))))]
-impl FontCache {
-    pub fn new(_font_bytes: &[u8]) -> Self {
-        FontCache {
-            glyph: Glyph::default(),
-            atlas: Atlas::new(),
-            dirty: true,
-            texture_id: 0,
+        TextRun {
+            pieces,
+            dim: (x, self.line_height(size)),
         }
     }
 
-    pub fn get(&mut self, _glyph: char, size: f32) -> &Glyph {
-        self.glyph = Glyph {
-            width: 0,
-            height: 0,
-            advance: size * 0.6,
-            x0: 0.0,
-            y0: 0.0,
-            x1: 0.0,
-            y1: 0.0,
-            xoff: 0.0,
-            yoff: 0.0,
+    fn raster_entry(&mut self, style: TextStyleKey, glyph: char) -> RasterEntry {
+        let glyph = if self.provider.has_glyph(glyph) {
+            glyph
+        } else {
+            '?'
         };
-        &self.glyph
+
+        if let Some(entry) = self.raster_cache.get(&(style, glyph)) {
+            return entry.clone();
+        }
+
+        let raster = self
+            .provider
+            .rasterize(glyph, style.quantized_size(), style.raster_flags)
+            .unwrap_or_else(|| {
+                self.provider
+                    .rasterize('?', style.quantized_size(), style.raster_flags)
+                    .unwrap_or(RasterizedGlyph {
+                        glyph: Glyph::default(),
+                        bitmap: Vec::new(),
+                    })
+            });
+
+        let region = self.place_raster(raster.glyph.width, raster.glyph.height, &raster.bitmap);
+        let entry = RasterEntry {
+            glyph: raster.glyph,
+            region,
+        };
+        self.raster_cache.insert((style, glyph), entry.clone());
+        entry
     }
 
-    pub fn atlas(&self) -> &Atlas {
-        &self.atlas
+    fn place_raster(&mut self, width: usize, height: usize, bitmap: &[u8]) -> AtlasRegion {
+        if width == 0 || height == 0 {
+            return AtlasRegion {
+                atlas_index: 0,
+                x: 0,
+                y: 0,
+                width,
+                height,
+            };
+        }
+        if width + ATLAS_PADDING * 2 > ATLAS_SIZE || height + ATLAS_PADDING * 2 > ATLAS_SIZE {
+            panic!(
+                "single glyph raster ({}x{}) is larger than the {}x{} atlas",
+                width, height, ATLAS_SIZE, ATLAS_SIZE
+            );
+        }
+
+        for (atlas_index, atlas) in self.atlases.iter_mut().enumerate() {
+            if let Some((x, y)) = atlas.allocate(width, height) {
+                atlas.write_region(x, y, width, height, bitmap);
+                self.pending_uploads.push(AtlasUpload {
+                    atlas_index,
+                    x,
+                    y,
+                    width,
+                    height,
+                    data: bitmap.to_vec(),
+                });
+                return AtlasRegion {
+                    atlas_index,
+                    x,
+                    y,
+                    width,
+                    height,
+                };
+            }
+        }
+
+        self.atlases.push(Atlas::new());
+        let atlas_index = self.atlases.len() - 1;
+        let atlas = self.atlases.last_mut().unwrap();
+        let (x, y) = atlas.allocate(width, height).unwrap();
+        atlas.write_region(x, y, width, height, bitmap);
+        self.pending_uploads.push(AtlasUpload {
+            atlas_index,
+            x,
+            y,
+            width,
+            height,
+            data: bitmap.to_vec(),
+        });
+        AtlasRegion {
+            atlas_index,
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
-    pub fn get_cursor_position(&mut self, size: f32, text: &str, cursorx: f32) -> (f32, usize) {
-        let advance = size * 0.6;
-        let idx = (cursorx / advance).round().max(0.0) as usize;
-        let capped = idx.min(text.chars().count());
-        (capped as f32 * advance, capped)
+    pub fn refresh_run_texture_ids(&mut self) {
+        let texture_ids: Vec<u32> = self.atlases.iter().map(Atlas::texture_id).collect();
+        for run in self.run_cache.values_mut() {
+            for piece in &mut run.pieces {
+                piece.texture_id = texture_ids[piece.atlas_index];
+            }
+        }
     }
 
-    pub fn get_text_size(&mut self, size: f32, text: &str, length: usize) -> (f32, f32) {
-        let count = text
-            .char_indices()
-            .take_while(|(idx, _)| *idx < length)
-            .filter(|(_, c)| *c != '\t')
-            .count();
-        (count as f32 * size * 0.6, size)
-    }
-
-    pub fn line_height(&self, font_size: f32) -> f32 {
-        font_size * 1.2
+    #[cfg(test)]
+    fn new_for_test() -> Self {
+        Self {
+            tag: FontTag::Main,
+            provider: Box::new(FallbackProvider),
+            raster_cache: HashMap::new(),
+            run_cache: HashMap::new(),
+            atlases: vec![Atlas::new()],
+            pending_uploads: Vec::new(),
+        }
     }
 }
 
-// On Linux: both shouldn't be enabled simultaneously
+fn create_provider(_font_bytes: &[u8]) -> Box<dyn FontProvider> {
+    #[cfg(feature = "fontdue")]
+    {
+        return Box::new(FontdueProvider::new(_font_bytes));
+    }
+
+    #[cfg(all(feature = "freetype", not(feature = "fontdue"), target_os = "linux"))]
+    {
+        return Box::new(FreeTypeProvider::new(_font_bytes));
+    }
+
+    #[allow(unreachable_code)]
+    Box::new(FallbackProvider)
+}
+
+#[inline]
+fn quantize_size(size: f32) -> (u32, f32) {
+    let quantized = (size * 2.0).round() / 2.0;
+    ((quantized * 2.0) as u32, quantized)
+}
+
+fn clamp_to_char_boundary(text: &str, mut length: usize) -> usize {
+    while length > 0 && !text.is_char_boundary(length) {
+        length -= 1;
+    }
+    length
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn atlas_allocations_do_not_overlap() {
+        let mut atlas = Atlas::new();
+        let a = atlas.allocate(10, 10).unwrap();
+        let b = atlas.allocate(10, 10).unwrap();
+        assert_ne!(a, b);
+        assert!(b.0 >= a.0 + 10 + ATLAS_PADDING);
+    }
+
+    #[test]
+    fn text_run_preserves_utf8_decode_lengths() {
+        let mut cache = FontCache::new_for_test();
+        let run = cache.run_from_text(10.0, "a\u{00e9}", 3, 1.0);
+        assert_eq!(run.pieces[0].decode_len, 1);
+        assert_eq!(run.pieces[1].decode_len, 2);
+    }
+
+    #[test]
+    fn tabs_align_to_stops() {
+        let mut cache = FontCache::new_for_test();
+        let run = cache.run_from_text(10.0, "a\tb", 3, 1.0);
+        assert_eq!(run.dim.0, 46.0);
+    }
+
+    #[test]
+    fn repeated_text_run_uses_frame_cache() {
+        let mut cache = FontCache::new_for_test();
+        let first = cache.run_from_text(10.0, "abc", 3, 1.0);
+        let upload_count = cache.pending_uploads.len();
+        let second = cache.run_from_text(10.0, "abc", 3, 1.0);
+        assert_eq!(second.pieces.len(), first.pieces.len());
+        assert_eq!(cache.pending_uploads.len(), upload_count);
+    }
+
+    #[test]
+    fn run_width_matches_summed_advances() {
+        let mut cache = FontCache::new_for_test();
+        let run = cache.run_from_text(10.0, "abc", 3, 1.0);
+        let summed = run.pieces.iter().map(|piece| piece.advance).sum::<f32>();
+        assert_eq!(run.dim.0, summed);
+    }
+}

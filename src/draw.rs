@@ -1,4 +1,4 @@
-use crate::render::{Extra, Rect2DInst, RectCoords, Renderer, V4f32};
+use crate::render::{Extra, Rect2DInst, RectCoords, Renderer, V4f32, font_cache::ATLAS_SIZE};
 
 pub struct Drawer {
     pub renderer: Renderer,
@@ -76,14 +76,10 @@ impl Drawer {
     }
 
     pub fn get_text_size(&self, size: f32, text: &str, length: usize) -> (f32, f32) {
-        // let scale_factor = self.renderer.win.dpi;
-        // let size = size * scale_factor;
-        let (width, height) = self
-            .renderer
+        self.renderer
             .font_cache
             .borrow_mut()
-            .get_text_size(size, text, length);
-        (width, height)
+            .get_text_size(size, text, length)
     }
 
     pub fn draw_text(
@@ -105,68 +101,70 @@ impl Drawer {
         let xmax = xmax * scale_factor;
         let ymax = ymax * scale_factor;
 
-        // We update the font texture before drawing chars
-        // Drawing chars may update the atlas, and thus the next frame would use a wrong atlas
-        // But we accept it and wait for next draw call to update the texture
+        {
+            let cache = match font_icon {
+                true => &self.renderer.icon_font_cache,
+                false => &self.renderer.font_cache,
+            };
+            cache
+                .borrow_mut()
+                .run_from_text(size, text, length, scale_factor);
+        }
         self.renderer.update_font_texture(font_icon);
 
-        let mut x = xstart;
         let y = y * scale_factor + size;
         let vertical_clip_pad = match font_icon {
-            true => self.renderer.icon_font_cache.borrow().line_height(size) - size,
-            false => self.renderer.font_cache.borrow().line_height(size) - size,
+            true => self.renderer.icon_font_cache.borrow_mut().line_height(size) - size,
+            false => self.renderer.font_cache.borrow_mut().line_height(size) - size,
         }
         .max(0.0);
-        for (i, c) in text.char_indices() {
-            if i >= length {
-                break;
-            }
-            if x >= xmax {
-                break;
-            }
-            if c == '\t' {
-                x += size;
+
+        let run = {
+            let cache = match font_icon {
+                true => &self.renderer.icon_font_cache,
+                false => &self.renderer.font_cache,
+            };
+            cache
+                .borrow_mut()
+                .run_from_text(size, text, length, scale_factor)
+        };
+
+        for piece in &run.pieces {
+            let w = piece.subrect_px.width as f32;
+            let h = piece.subrect_px.height as f32;
+            if w <= 0.0 || h <= 0.0 || piece.texture_id == 0 {
                 continue;
             }
-            let (glyph, texture_id) = match font_icon {
-                true => {
-                    let mut fc = self.renderer.icon_font_cache.borrow_mut();
-                    let texture = fc.texture_id;
-                    (fc.get(c, size).clone(), texture)
-                }
-                false => {
-                    let mut fc = self.renderer.font_cache.borrow_mut();
-                    let texture = fc.texture_id;
-                    (fc.get(c, size).clone(), texture)
-                }
-            };
 
-            // xarkes: push a rect instruction for each character
-            let w = (glyph.width) as f32;
-            let h = (glyph.height) as f32;
-            let xpos = x + glyph.xoff;
-            let ypos = y + glyph.yoff;
+            let xpos = xstart + piece.offset_px.0;
+            let ypos = y + piece.offset_px.1;
+            if xpos >= xmax {
+                break;
+            }
+
             {
                 let avail_width = xmax - xpos;
                 let width_trunc = f32::min(w, avail_width);
                 let avail_height = (ymax + vertical_clip_pad) - ypos;
                 let height_trunc = f32::min(h, avail_height);
+                if width_trunc <= 0.0 || height_trunc <= 0.0 {
+                    continue;
+                }
+                let (u0, v0, u1, v1) = piece.subrect_px.uv(ATLAS_SIZE, ATLAS_SIZE);
                 // xarkes: handle aligned truncation
                 let src = match underflow {
                     false => RectCoords {
-                        x0: glyph.x0,
-                        y0: glyph.y0,
-                        // XXX: we use here atlas relative coords, maybe renderer should rework texture coordinates?
-                        x1: glyph.x0 + width_trunc / 1024.,
-                        y1: glyph.y0 + height_trunc / 1024.,
+                        x0: u0,
+                        y0: v0,
+                        x1: u0 + width_trunc / ATLAS_SIZE as f32,
+                        y1: v0 + height_trunc / ATLAS_SIZE as f32,
                     },
                     // XXX: This is wrong but I think I need to rework the whole API anyways :')
                     true => RectCoords {
-                        x0: glyph.x1 - width_trunc / 1024.,
-                        y0: glyph.y1 - height_trunc / 1024.,
-                        // XXX: we use here atlas relative coords, maybe renderer should rework texture coordinates?
-                        x1: glyph.x1,
-                        y1: glyph.y1,
+                        x0: u1 - width_trunc / ATLAS_SIZE as f32,
+                        y0: v1 - height_trunc / ATLAS_SIZE as f32,
+                        x1: u1,
+                        y1: v1,
                     },
                 };
                 let rect = Rect2DInst {
@@ -180,10 +178,9 @@ impl Drawer {
                     colors: [color, color, color, color],
                     extra: Extra::new(false, 0.0),
                 };
-                self.renderer.add_rect(rect, Some(texture_id));
+                self.renderer.add_rect(rect, Some(piece.texture_id));
             }
-            x += glyph.advance;
         }
-        x - xstart
+        run.dim.0
     }
 }

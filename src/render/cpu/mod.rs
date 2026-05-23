@@ -13,7 +13,10 @@ mod os_impl;
 use crate::os::Window;
 use std::collections::HashMap;
 
-use super::software::{self, SoftwareSurface, Texture};
+use super::{
+    TextureFormat,
+    software::{self, SoftwareSurface, Texture},
+};
 
 pub struct CPUContext {
     surface: SoftwareSurface,
@@ -39,20 +42,35 @@ impl CPUContext {
         }
     }
 
-    pub fn update_font_texture(&mut self, atlas: &crate::render::font_cache::Atlas) -> u32 {
+    pub fn create_texture(&mut self, width: usize, height: usize, _format: TextureFormat) -> u32 {
         let texture_id = self.next_texture_id;
         self.next_texture_id += 1;
 
         self.textures.insert(
             texture_id,
             Texture {
-                width: atlas.width,
-                height: atlas.height,
-                data: atlas.data.clone(),
+                width,
+                height,
+                data: vec![0; width * height],
             },
         );
 
         texture_id
+    }
+
+    pub fn update_texture_region(
+        &mut self,
+        id: u32,
+        x: usize,
+        y: usize,
+        width: usize,
+        height: usize,
+        data: &[u8],
+    ) {
+        let Some(texture) = self.textures.get_mut(&id) else {
+            return;
+        };
+        texture.update_region(x, y, width, height, data);
     }
 
     pub fn resize(&mut self, w: f32, h: f32) {
@@ -82,8 +100,20 @@ impl CPUContext {
 }
 
 impl super::RenderBackend for CPUContext {
-    fn update_font_texture(&mut self, atlas: &super::font_cache::Atlas) -> u32 {
-        CPUContext::update_font_texture(self, atlas)
+    fn create_texture(&mut self, width: usize, height: usize, format: TextureFormat) -> u32 {
+        CPUContext::create_texture(self, width, height, format)
+    }
+
+    fn update_texture_region(
+        &mut self,
+        id: u32,
+        x: usize,
+        y: usize,
+        width: usize,
+        height: usize,
+        data: &[u8],
+    ) {
+        CPUContext::update_texture_region(self, id, x, y, width, height, data)
     }
 
     fn remove_texture(&mut self, id: u32) {

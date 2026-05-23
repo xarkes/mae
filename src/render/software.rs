@@ -11,6 +11,19 @@ pub struct Texture {
     pub data: Vec<u8>,
 }
 
+impl Texture {
+    pub fn update_region(&mut self, x: usize, y: usize, width: usize, height: usize, data: &[u8]) {
+        assert!(x + width <= self.width);
+        assert!(y + height <= self.height);
+        assert_eq!(data.len(), width * height);
+        for row in 0..height {
+            let dst = (y + row) * self.width + x;
+            let src = row * width;
+            self.data[dst..dst + width].copy_from_slice(&data[src..src + width]);
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SoftwareSurface {
     width: usize,
@@ -283,5 +296,25 @@ fn blend_pixel(existing: u32, color: &V4f32) -> u32 {
         let g = (color.g * 255.0 * alpha + eg as f32 * inv_alpha) as u8;
         let b = (color.b * 255.0 * alpha + eb as f32 * inv_alpha) as u8;
         pack_color(r, g, b, 255)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn texture_region_update_only_changes_target_bytes() {
+        let mut texture = Texture {
+            width: 4,
+            height: 4,
+            data: vec![0; 16],
+        };
+        texture.update_region(1, 1, 2, 2, &[1, 2, 3, 4]);
+        assert_eq!(texture.data[5], 1);
+        assert_eq!(texture.data[6], 2);
+        assert_eq!(texture.data[9], 3);
+        assert_eq!(texture.data[10], 4);
+        assert_eq!(texture.data.iter().filter(|&&b| b != 0).count(), 4);
     }
 }
