@@ -1,5 +1,8 @@
 use crate::app_style;
-use mae::imui::{CrossAxisAlign, IMUI, MainAxisAlign, TextAreaOptions, UIBoxHandle, UISize};
+use mae::{
+    imui::{CrossAxisAlign, IMUI, MainAxisAlign, TextAreaOptions, UIBoxHandle, UISize},
+    os::OSCursor,
+};
 
 #[derive(Clone, Debug)]
 struct TreeEntry {
@@ -127,7 +130,6 @@ pub fn render(ui: &mut IMUI, state: &mut IdeViewState) -> bool {
                 .height(ui, UISize::ParentPct(1.0))
                 .scroll_y(ui, true)
                 .clip(ui, true);
-            app_style::panel(ui, sidebar).gap(ui, 2.0);
 
             let splitter = ui.button("##ide_splitter", Some("Drag to resize"));
             splitter_handle = Some(splitter);
@@ -138,10 +140,13 @@ pub fn render(ui: &mut IMUI, state: &mut IdeViewState) -> bool {
                 theme.border
             };
             splitter
-                .width(ui, UISize::Pixels(6.0))
+                .width(ui, UISize::Pixels(1.0))
                 .height(ui, UISize::ParentPct(1.0))
+                .padding_all(ui, 0.0)
+                .corner_radius(ui, 0.0)
                 .background(ui, splitter_color)
-                .corner_radius(ui, theme.radius);
+                .border_color(ui, splitter_color)
+                .cursor(ui, OSCursor::ResizeH);
 
             let editor_panel = ui.column(|ui| {
                 let file_title = ui.label("src/main.rs");
@@ -160,17 +165,15 @@ pub fn render(ui: &mut IMUI, state: &mut IdeViewState) -> bool {
             editor_panel
                 .width(ui, UISize::Fill)
                 .height(ui, UISize::ParentPct(1.0));
-            app_style::panel(ui, editor_panel);
         });
-        let gap_md = ui.theme().gap_md;
         body.width(ui, UISize::ParentPct(1.0))
             .height(ui, UISize::Fill)
-            .gap(ui, gap_md);
+            .gap(ui, 0.0);
 
         if let Some(splitter) = splitter_handle {
             if splitter.dragging() && ui.mouse_down() {
                 if let (Some(mouse), body_bounds) = (ui.mouse_position(), ui.bounds(body)) {
-                    let new_w = (mouse.x() - body_bounds.x0 - 3.0).clamp(180.0, 520.0);
+                    let new_w = (mouse.x() - body_bounds.x0 - 0.5).clamp(180.0, 520.0);
                     state.side_width = new_w;
                 }
             }

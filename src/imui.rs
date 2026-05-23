@@ -392,6 +392,11 @@ impl UIBoxHandle {
         self
     }
 
+    pub fn cursor(self, ui: &mut IMUI, cursor: OSCursor) -> Self {
+        ui.cursor(self, cursor);
+        self
+    }
+
     pub fn scroll_y(self, ui: &mut IMUI, enabled: bool) -> Self {
         ui.scroll_y(self, enabled);
         self
@@ -705,6 +710,7 @@ pub struct UIBox {
     fixed_position: Point,
     computed_size: Size,
     rect: RectCoords,
+    cursor: Option<OSCursor>,
     child_layout_axis: Axis,
     padding: Padding,
     child_gap: f32,
@@ -745,6 +751,7 @@ impl UIBox {
             fixed_position: Point::default(),
             computed_size: Size::default(),
             rect: RectCoords::from_size(0.0, 0.0, 0.0, 0.0),
+            cursor: None,
             child_layout_axis: Axis::Y,
             padding: Padding::default(),
             child_gap: 0.0,
@@ -1707,6 +1714,11 @@ impl IMUI {
 
     fn corner_radius(&mut self, handle: UIBoxHandle, radius: f32) -> &mut Self {
         self.boxes[handle.idx].style.corner_radius = radius.max(0.0);
+        self
+    }
+
+    fn cursor(&mut self, handle: UIBoxHandle, cursor: OSCursor) -> &mut Self {
+        self.boxes[handle.idx].cursor = Some(cursor);
         self
     }
 
@@ -3273,22 +3285,22 @@ impl IMUI {
                 style.border_size,
             );
         }
-        if flags.contains(UIBoxFlags::DRAW_TEXT) {
-            if let Some(text) = self.boxes[idx].display_string.clone() {
-                let padding = self.boxes[idx].padding;
-                self.drawer.as_mut().unwrap().draw_text(
-                    rect.x0 + padding.left + style.margin,
-                    rect.y0 + padding.top + style.margin,
-                    style.font_size,
-                    &text,
-                    text.len(),
-                    (rect.x1 - padding.right - style.margin).min(clip.x1),
-                    (rect.y1 - padding.bottom - style.margin).min(clip.y1),
-                    color_mul_alpha(style.text_color, opacity),
-                    false,
-                    style.font_icon,
-                );
-            }
+        if flags.contains(UIBoxFlags::DRAW_TEXT)
+            && let Some(text) = self.boxes[idx].display_string.clone()
+        {
+            let padding = self.boxes[idx].padding;
+            self.drawer.as_mut().unwrap().draw_text(
+                rect.x0 + padding.left + style.margin,
+                rect.y0 + padding.top + style.margin,
+                style.font_size,
+                &text,
+                text.len(),
+                (rect.x1 - padding.right - style.margin).min(clip.x1),
+                (rect.y1 - padding.bottom - style.margin).min(clip.y1),
+                color_mul_alpha(style.text_color, opacity),
+                false,
+                style.font_icon,
+            );
         }
         let child_clip = if flags.contains(UIBoxFlags::CLIP) {
             intersect_rects(clip, rect)
@@ -3624,8 +3636,16 @@ impl IMUI {
             self.cursor = if self.boxes[idx].flags.accepts_text_input() {
                 OSCursor::IBeam
             } else {
-                OSCursor::Hand
+                self.boxes[idx].cursor.unwrap_or(OSCursor::Hand)
             };
+        }
+
+        if self.left_mouse_down {
+            if let Some(idx) = self.active_left_key.and_then(|key| self.box_from_key(key)) {
+                if let Some(cursor) = self.boxes[idx].cursor {
+                    self.cursor = cursor;
+                }
+            }
         }
     }
 

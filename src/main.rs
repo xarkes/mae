@@ -21,8 +21,8 @@ fn main() {
     let mut text = String::from(
         "Mae is now a GUI framework demo.\n\nThis text area exercises text input, children-sum layout, parent-percent layout, and draw command generation.\n\nClick in here and type.",
     );
-    let mut show_panel = true;
-    let mut selected_tab = 0usize;
+    let mut show_panel = false;
+    let mut selected_tab = 3usize;
     let mut ide_state = ide_window::IdeViewState::new();
     let mut counter = 0usize;
     let mut lazy_rendering = !ui.render_continuously();
