@@ -10,9 +10,11 @@ use objc2::{
     sel,
 };
 use objc2_app_kit::{
-    NSAnyEventMask, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
-    NSAutoresizingMaskOptions, NSBackingStoreType, NSCursor, NSEventModifierFlags, NSEventType,
-    NSMenu, NSMenuItem, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
+    NSAnyEventMask, NSAppearance, NSAppearanceNameVibrantDark, NSApplication,
+    NSApplicationActivationPolicy, NSApplicationDelegate, NSAutoresizingMaskOptions,
+    NSBackingStoreType, NSColor, NSCursor, NSEventModifierFlags, NSEventType, NSMenu, NSMenuItem,
+    NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState,
+    NSVisualEffectView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
 };
 use objc2_foundation::{
     MainThreadMarker, NSDate, NSDefaultRunLoopMode, NSNotification, NSObject, NSObjectProtocol,
@@ -32,6 +34,8 @@ pub struct Window {
     pub view: OnceCell<Retained<NSView>>,
     pub dpi: f32,
 }
+
+const MACOS_BACKDROP_OPACITY: f64 = 0.78;
 
 define_class!(
     // SAFETY:
@@ -84,6 +88,8 @@ define_class!(
             window.center();
             unsafe { window.setContentMinSize(NSSize::new(100.0, 100.0)) };
             window.setDelegate(Some(ProtocolObject::from_ref(self)));
+            window.setOpaque(false);
+            window.setBackgroundColor(Some(&NSColor::clearColor()));
 
             // xarkes: create menu bar and add cmd+Q shortcut
             let menubar = NSMenu::new(mtm);
@@ -103,15 +109,50 @@ define_class!(
             app_menu.addItem(&quit_menu_item);
             app_menu_item.setSubmenu(Some(&app_menu));
 
-            // xarkes: create NSView and apply it to window
-            let view = unsafe { NSView::initWithFrame(NSView::alloc(mtm), frame_rect) };
-            unsafe {
-                view.setAutoresizingMask(
-                    NSAutoresizingMaskOptions::ViewWidthSizable
-                        | NSAutoresizingMaskOptions::ViewHeightSizable,
-                );
+            let content = NSView::initWithFrame(NSView::alloc(mtm), frame_rect);
+            content.setAutoresizingMask(
+                NSAutoresizingMaskOptions::ViewWidthSizable
+                    | NSAutoresizingMaskOptions::ViewHeightSizable,
+            );
+            content.setWantsLayer(true);
+
+            let backdrop =
+                NSVisualEffectView::initWithFrame(NSVisualEffectView::alloc(mtm), frame_rect);
+            backdrop.setMaterial(NSVisualEffectMaterial::HUDWindow);
+            backdrop.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+            backdrop.setState(NSVisualEffectState::Active);
+            backdrop.setAlphaValue(MACOS_BACKDROP_OPACITY);
+            backdrop.setAutoresizingMask(
+                NSAutoresizingMaskOptions::ViewWidthSizable
+                    | NSAutoresizingMaskOptions::ViewHeightSizable,
+            );
+            let appearance = unsafe { NSAppearance::appearanceNamed(NSAppearanceNameVibrantDark) };
+            if let Some(appearance) = appearance {
+                unsafe {
+                    let _: () = msg_send![
+                        Retained::as_ptr(&backdrop),
+                        setAppearance: Retained::as_ptr(&appearance)
+                    ];
+                }
             }
-            window.setContentView(Some(&view));
+            content.addSubview(&backdrop);
+
+            // xarkes: create NSView and apply it to window
+            let view = NSView::initWithFrame(NSView::alloc(mtm), frame_rect);
+            view.setAutoresizingMask(
+                NSAutoresizingMaskOptions::ViewWidthSizable
+                    | NSAutoresizingMaskOptions::ViewHeightSizable,
+            );
+            view.setWantsLayer(true);
+            unsafe {
+                let layer: *mut objc2::runtime::AnyObject =
+                    msg_send![Retained::as_ptr(&view), layer];
+                if !layer.is_null() {
+                    let _: () = msg_send![layer, setOpaque: false];
+                }
+            }
+            content.addSubview(&view);
+            window.setContentView(Some(&content));
 
             // xarkes: show the window
             window.makeKeyAndOrderFront(None);

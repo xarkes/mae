@@ -82,7 +82,12 @@ impl GLContext {
         unsafe {
             // xarkes: enable blending for our text textures
             gl::Enable(gl::BLEND);
-            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+            gl::BlendFuncSeparate(
+                gl::SRC_ALPHA,
+                gl::ONE_MINUS_SRC_ALPHA,
+                gl::ONE,
+                gl::ONE_MINUS_SRC_ALPHA,
+            );
 
             // xarkes: create Vertex Array Object
             gl::GenVertexArrays(1, &mut vao);
@@ -100,7 +105,7 @@ impl GLContext {
             gl::BindBuffer(gl::ARRAY_BUFFER, 0);
             gl::BindVertexArray(0);
 
-            gl::ClearColor(117. / 256., 139. / 256., 153. / 256., 0.);
+            gl::ClearColor(0.0, 0.0, 0.0, 0.0);
         }
 
         // xarkes: enable gl debugging

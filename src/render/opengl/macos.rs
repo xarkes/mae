@@ -100,6 +100,13 @@ pub fn ogl_create_context(win: &Window) -> *mut AnyObject {
         let view = win.view.get().unwrap();
         let _: () = msg_send![context, setView: Retained::as_ptr(view)];
         let _: () = msg_send![context, makeCurrentContext];
+        let surface_opacity = 0i32;
+        #[allow(deprecated)]
+        let _: () = msg_send![
+            context,
+            setValues: &surface_opacity,
+            forParameter: NSOpenGLContextParameter::SurfaceOpacity
+        ];
         ctx = context;
     }
 
