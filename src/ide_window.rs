@@ -6,20 +6,26 @@ use mae::{
     os::OSCursor,
 };
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
+    time::Instant,
 };
 
 const NEW_NOTE_ICON: &str = "\u{e89c}";
 const LIGHT_THEME_ICON: &str = "\u{e518}";
 const DARK_THEME_ICON: &str = "\u{e51c}";
+const TREE_CHEVRON_RIGHT_ICON: &str = "\u{e5cc}";
+const TREE_EXPAND_MORE_ICON: &str = "\u{e5cf}";
 const SPLITTER_WIDTH: f32 = 1.0;
 const SPLITTER_HIT_PADDING_X: f32 = 5.0;
 const SIDEBAR_MIN_WIDTH: f32 = 180.0;
 const SIDEBAR_MAX_WIDTH: f32 = 520.0;
 const TREE_ROW_HEIGHT: f32 = 26.0;
 const TREE_INDENT_WIDTH: f32 = 14.0;
+const TREE_ICON_WIDTH: f32 = 32.0;
+const TREE_ANIMATION_RATE: f32 = 18.0;
+const TREE_ANIMATION_EPSILON: f32 = 0.01;
 
 #[derive(Clone, Debug)]
 struct TreeEntry {
@@ -29,12 +35,20 @@ struct TreeEntry {
     is_dir: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct TreeAnimation {
+    progress: f32,
+    target: f32,
+}
+
 pub struct IdeViewState {
     pub side_width: f32,
     pub editor_text: String,
     theme_kind: ThemeKind,
     tree_entries: Vec<TreeEntry>,
     expanded_folders: HashSet<String>,
+    tree_animations: HashMap<String, TreeAnimation>,
+    last_tree_animation_tick: Instant,
     splitter_drag_offset: f32,
 }
 
@@ -48,6 +62,8 @@ impl IdeViewState {
             theme_kind: ThemeKind::Dark,
             tree_entries: Vec::new(),
             expanded_folders: HashSet::from([String::from(".")]),
+            tree_animations: HashMap::new(),
+            last_tree_animation_tick: Instant::now(),
             splitter_drag_offset: 0.0,
         }
     }
@@ -97,17 +113,24 @@ pub fn render(ui: &mut IMUI, state: &mut IdeViewState) -> bool {
                         ui.set_theme(UITheme::for_kind(state.theme_kind));
                     }
                 });
+                let toolbar_h = ui.theme().toolbar_h;
+                let toolbar_pad = ((toolbar_h - TREE_ICON_WIDTH) * 0.5).max(0.0);
                 toolbar
                     .width(ui, UISize::ParentPct(1.0))
-                    .height(ui, UISize::Pixels(ui.theme().toolbar_h))
-                    .align(ui, MainAxisAlign::Start, CrossAxisAlign::Center)
+                    .height(ui, UISize::Pixels(toolbar_h))
+                    .padding_all(ui, toolbar_pad)
+                    .align(ui, MainAxisAlign::Center, CrossAxisAlign::Center)
                     .gap(ui, ui.theme().gap_sm);
 
-                let separator = ui.label("###ide_sidebar_separator");
+                let separator = ui.named_column("###ide_sidebar_separator", |_| {});
+                let separator_color = match ui.theme().kind {
+                    ThemeKind::Dark => ui.theme().border,
+                    ThemeKind::Light => ui.theme().text_muted,
+                };
                 separator
                     .width(ui, UISize::ParentPct(1.0))
                     .height(ui, UISize::Pixels(1.0))
-                    .background(ui, ui.theme().border_muted);
+                    .background(ui, separator_color);
 
                 if sidebar_button(ui, "Back to demo", Some("Return to the main demo view"))
                     .clicked()
@@ -193,37 +216,114 @@ pub fn render(ui: &mut IMUI, state: &mut IdeViewState) -> bool {
 }
 
 fn render_tree(ui: &mut IMUI, state: &mut IdeViewState) {
+    update_tree_animations(ui, state);
+
     let entries = state.tree_entries.clone();
     for entry in entries {
-        if !ancestors_are_expanded(state, &entry.path_key) {
+        let visibility = tree_entry_visibility(state, &entry.path_key);
+        if visibility <= TREE_ANIMATION_EPSILON {
             continue;
         }
 
         let expanded = state.expanded_folders.contains(&entry.path_key);
-        let arrow = if entry.is_dir {
-            if expanded { "v" } else { ">" }
-        } else {
-            " "
-        };
-        let row = ui.row(|ui| {
-            ui.label(&format!("###ide_tree_indent_{}", entry.path_key))
+        let row_h = TREE_ROW_HEIGHT * visibility;
+        let row = ui.named_row(&format!("###ide_tree_row_{}", entry.path_key), |ui| {
+            ui.named_column(&format!("###ide_tree_indent_{}", entry.path_key), |_| {})
                 .width(ui, UISize::Pixels(entry.depth as f32 * TREE_INDENT_WIDTH))
-                .height(ui, UISize::Pixels(TREE_ROW_HEIGHT));
+                .height(ui, UISize::Pixels(row_h));
 
-            let label = format!("{arrow} {}###ide_tree_{}", entry.name, entry.path_key);
-            let button = sidebar_button(ui, &label, None).width(ui, UISize::Fill);
-            if button.clicked() && entry.is_dir {
-                if expanded {
-                    state.expanded_folders.remove(&entry.path_key);
+            let mut clicked = false;
+            if entry.is_dir {
+                let icon = if expanded {
+                    TREE_EXPAND_MORE_ICON
                 } else {
-                    state.expanded_folders.insert(entry.path_key.clone());
-                }
+                    TREE_CHEVRON_RIGHT_ICON
+                };
+                let icon = ui
+                    .button_icon_plain(&format!("{icon}###ide_tree_icon_{}", entry.path_key), None)
+                    .width(ui, UISize::Pixels(TREE_ICON_WIDTH))
+                    .height(ui, UISize::Pixels(row_h))
+                    .padding_all(ui, 0.0);
+                clicked |= icon.clicked();
+            } else {
+                ui.named_column(
+                    &format!("###ide_tree_icon_spacer_{}", entry.path_key),
+                    |_| {},
+                )
+                .width(ui, UISize::Pixels(TREE_ICON_WIDTH))
+                .height(ui, UISize::Pixels(row_h));
+            }
+
+            let label = format!("{}###ide_tree_label_{}", entry.name, entry.path_key);
+            let button = sidebar_button(ui, &label, None)
+                .width(ui, UISize::Fill)
+                .height(ui, UISize::Pixels(row_h));
+            clicked |= button.clicked();
+
+            if clicked && entry.is_dir {
+                toggle_tree_entry(ui, state, &entry.path_key, expanded);
             }
         });
         row.width(ui, UISize::ParentPct(1.0))
-            .height(ui, UISize::Pixels(TREE_ROW_HEIGHT))
+            .height(ui, UISize::Pixels(row_h))
             .align(ui, MainAxisAlign::Start, CrossAxisAlign::Center)
-            .gap(ui, 0.0);
+            .gap(ui, 0.0)
+            .clip(ui, true);
+    }
+}
+
+fn toggle_tree_entry(ui: &mut IMUI, state: &mut IdeViewState, path_key: &str, expanded: bool) {
+    if expanded {
+        state.expanded_folders.remove(path_key);
+        state.tree_animations.insert(
+            path_key.to_string(),
+            TreeAnimation {
+                progress: 1.0,
+                target: 0.0,
+            },
+        );
+    } else {
+        state.expanded_folders.insert(path_key.to_string());
+        state.tree_animations.insert(
+            path_key.to_string(),
+            TreeAnimation {
+                progress: 0.0,
+                target: 1.0,
+            },
+        );
+    }
+    state.last_tree_animation_tick = Instant::now();
+    ui.request_repaint();
+}
+
+fn update_tree_animations(ui: &mut IMUI, state: &mut IdeViewState) {
+    let now = Instant::now();
+    let dt = now
+        .duration_since(state.last_tree_animation_tick)
+        .as_secs_f32()
+        .clamp(1.0 / 240.0, 1.0 / 15.0);
+    state.last_tree_animation_tick = now;
+
+    if state.tree_animations.is_empty() {
+        return;
+    }
+
+    let rate = (1.0 - 2.0_f32.powf(-TREE_ANIMATION_RATE * dt)).clamp(0.0, 1.0);
+    let mut finished = Vec::new();
+    for (path_key, animation) in state.tree_animations.iter_mut() {
+        animation.progress += (animation.target - animation.progress) * rate;
+        if (animation.target - animation.progress).abs() <= TREE_ANIMATION_EPSILON {
+            animation.progress = animation.target;
+            finished.push(path_key.clone());
+        }
+    }
+
+    for path_key in finished {
+        state.tree_animations.remove(&path_key);
+    }
+
+    if !state.tree_animations.is_empty() {
+        ui.request_repaint();
     }
 }
 
@@ -304,16 +404,31 @@ fn collect_rs_entries(root: &Path, rel: &Path, depth: usize, out: &mut Vec<TreeE
     out.len() > start_len
 }
 
-fn ancestors_are_expanded(state: &IdeViewState, path_key: &str) -> bool {
+fn tree_entry_visibility(state: &IdeViewState, path_key: &str) -> f32 {
+    if path_key == "." {
+        return 1.0;
+    }
+
+    let mut visibility: f32 = 1.0;
     let mut ancestor = Path::new(path_key).parent();
     while let Some(path) = ancestor {
         let key = tree_path_key(path);
-        if !state.expanded_folders.contains(&key) {
-            return false;
+        let animation_progress = state
+            .tree_animations
+            .get(&key)
+            .map(|animation| animation.progress);
+        let ancestor_visibility = if state.expanded_folders.contains(&key) {
+            animation_progress.unwrap_or(1.0)
+        } else {
+            animation_progress.unwrap_or(0.0)
+        };
+        visibility *= ancestor_visibility;
+        if visibility <= TREE_ANIMATION_EPSILON {
+            return 0.0;
         }
         ancestor = path.parent();
     }
-    true
+    visibility
 }
 
 fn tree_path_key(path: &Path) -> String {

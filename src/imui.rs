@@ -1096,7 +1096,7 @@ impl IMUI {
             overlay_root: 0,
             parent_stack: Vec::new(),
             build_index: 0,
-            render_continuously: true,
+            render_continuously: false,
             vsync_enabled: true,
             repaint_requested: true,
             timer_frequency: os::timer_init(),
