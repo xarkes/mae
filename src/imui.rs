@@ -1461,6 +1461,24 @@ impl IMUI {
         handle
     }
 
+    pub fn button_icon_plain(&mut self, label: &str, tooltip_text: Option<&str>) -> UIBoxHandle {
+        let handle = self.alloc_box(Some(label), UIBoxFlags::CLICKABLE | UIBoxFlags::DRAW_TEXT);
+        self.boxes[handle.idx].style.font_icon = true;
+        self.boxes[handle.idx].style.font_size = 24.0;
+        self.boxes[handle.idx].style.text_color = if handle.dragging() || handle.pressed() {
+            self.theme.accent_active
+        } else if handle.hover() {
+            self.theme.accent_hover
+        } else {
+            self.theme.text_muted
+        };
+        self.boxes[handle.idx].padding = Padding::all(2.0);
+        self.width(handle, UISize::Pixels(32.0));
+        self.height(handle, UISize::Pixels(32.0));
+        self.show_tooltip_for_hover(handle, tooltip_text);
+        handle
+    }
+
     pub fn line_edit(&mut self, id: &str, buffer: &mut String, masked: bool) -> UIBoxHandle {
         let handle = self.alloc_box(Some(id), UIBoxFlags::LINE_EDIT);
         self.boxes[handle.idx].pref_size = [UISize::ParentPct(1.0), UISize::Pixels(32.0)];
@@ -4077,6 +4095,87 @@ mod tests {
         assert!(hot_t > 0.0);
         assert!(hot_t < 1.0);
         assert!(ui.repaint_requested);
+    }
+
+    #[test]
+    fn plain_icon_button_draws_only_clickable_icon_text() {
+        let mut ui = IMUI::new_for_test(400.0, 200.0);
+
+        ui.begin_frame();
+        let icon = ui.button_icon_plain("\u{e89c}###plain_icon", None);
+        ui.end_frame();
+
+        let icon_box = &ui.boxes[icon.idx()];
+        assert!(icon_box.flags.contains(UIBoxFlags::CLICKABLE));
+        assert!(icon_box.flags.contains(UIBoxFlags::DRAW_TEXT));
+        assert!(!icon_box.flags.contains(UIBoxFlags::DRAW_BACKGROUND));
+        assert!(!icon_box.flags.contains(UIBoxFlags::DRAW_BORDER));
+        assert!(icon_box.style.font_icon);
+        assert!(color_distance(icon_box.style.text_color, ui.theme.text_muted) < 0.001);
+    }
+
+    #[test]
+    fn plain_icon_button_highlights_with_text_color_on_hover() {
+        let mut ui = IMUI::new_for_test(400.0, 200.0);
+
+        ui.begin_frame();
+        let first = ui.button_icon_plain("\u{e89c}###plain_icon_hover", None);
+        ui.end_frame();
+        assert!(
+            color_distance(ui.boxes[first.idx()].style.text_color, ui.theme.text_muted) < 0.001
+        );
+
+        ui.mouse = Some(Point::new(8.0, 8.0));
+        ui.begin_frame();
+        let second = ui.button_icon_plain("\u{e89c}###plain_icon_hover", None);
+
+        assert!(second.hover());
+        assert!(
+            color_distance(
+                ui.boxes[second.idx()].style.text_color,
+                ui.theme.accent_hover
+            ) < 0.001
+        );
+        assert!(
+            !ui.boxes[second.idx()]
+                .flags
+                .contains(UIBoxFlags::DRAW_BACKGROUND)
+        );
+        assert!(
+            !ui.boxes[second.idx()]
+                .flags
+                .contains(UIBoxFlags::DRAW_BORDER)
+        );
+        ui.end_frame();
+    }
+
+    #[test]
+    fn plain_icon_button_remains_clickable() {
+        let mut ui = IMUI::new_for_test(400.0, 200.0);
+
+        ui.begin_frame();
+        ui.button_icon_plain("\u{e89c}###plain_icon_click", None);
+        ui.end_frame();
+
+        push_test_event(
+            &mut ui,
+            OSEvent::press(OSKey::LeftMouseButton, Some(Point::new(8.0, 8.0))),
+        );
+        push_test_event(
+            &mut ui,
+            OSEvent::release(OSKey::LeftMouseButton, Some(Point::new(8.0, 8.0))),
+        );
+        ui.begin_frame();
+        let clicked = ui.button_icon_plain("\u{e89c}###plain_icon_click", None);
+
+        assert!(clicked.clicked());
+        assert!(
+            color_distance(
+                ui.boxes[clicked.idx()].style.text_color,
+                ui.theme.accent_active
+            ) < 0.001
+        );
+        ui.end_frame();
     }
 
     #[test]
