@@ -397,6 +397,11 @@ impl UIBoxHandle {
         self
     }
 
+    pub fn hit_padding_x(self, ui: &mut IMUI, value: f32) -> Self {
+        ui.hit_padding_x(self, value);
+        self
+    }
+
     pub fn scroll_y(self, ui: &mut IMUI, enabled: bool) -> Self {
         ui.scroll_y(self, enabled);
         self
@@ -711,6 +716,7 @@ pub struct UIBox {
     computed_size: Size,
     rect: RectCoords,
     cursor: Option<OSCursor>,
+    hit_padding: Padding,
     child_layout_axis: Axis,
     padding: Padding,
     child_gap: f32,
@@ -752,6 +758,7 @@ impl UIBox {
             computed_size: Size::default(),
             rect: RectCoords::from_size(0.0, 0.0, 0.0, 0.0),
             cursor: None,
+            hit_padding: Padding::default(),
             child_layout_axis: Axis::Y,
             padding: Padding::default(),
             child_gap: 0.0,
@@ -1722,6 +1729,13 @@ impl IMUI {
         self
     }
 
+    fn hit_padding_x(&mut self, handle: UIBoxHandle, value: f32) -> &mut Self {
+        let value = value.max(0.0);
+        self.boxes[handle.idx].hit_padding.left = value;
+        self.boxes[handle.idx].hit_padding.right = value;
+        self
+    }
+
     fn padding_all(&mut self, handle: UIBoxHandle, value: f32) -> &mut Self {
         self.boxes[handle.idx].padding = Padding::all(value);
         self
@@ -2662,7 +2676,7 @@ impl IMUI {
     ) -> UiSignal {
         let mut signal = UiSignal::default();
         let rect = existing_idx
-            .map(|idx| self.boxes[idx].rect)
+            .map(|idx| expanded_rect(self.boxes[idx].rect, self.boxes[idx].hit_padding))
             .unwrap_or_else(|| RectCoords::from_size(-10000.0, -10000.0, 0.0, 0.0));
         let mouse_over = point_in_rect(&rect, self.mouse);
         let focused = self.focus_key == Some(key);
@@ -3618,7 +3632,7 @@ impl IMUI {
         }
 
         for &idx in &frame_boxes {
-            let rect = self.clipped_rect(idx);
+            let rect = expanded_rect(self.clipped_rect(idx), self.boxes[idx].hit_padding);
             if point_in_rect(&rect, self.mouse) {
                 self.boxes[idx].signal.flags |= UiSignal::MOUSE_OVER;
                 if self.boxes[idx].flags.is_mouse_clickable() {
@@ -3939,6 +3953,15 @@ fn point_in_rect(rect: &RectCoords, point: Option<Point>) -> bool {
         return false;
     };
     point.x >= rect.x0 && point.x <= rect.x1 && point.y >= rect.y0 && point.y <= rect.y1
+}
+
+fn expanded_rect(rect: RectCoords, padding: Padding) -> RectCoords {
+    RectCoords::from_size(
+        rect.x0 - padding.left,
+        rect.y0 - padding.top,
+        rect.width() + padding.horizontal(),
+        rect.height() + padding.vertical(),
+    )
 }
 
 fn intersect_rects(a: RectCoords, b: RectCoords) -> RectCoords {

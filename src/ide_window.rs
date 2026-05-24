@@ -4,6 +4,11 @@ use mae::{
     os::OSCursor,
 };
 
+const SPLITTER_WIDTH: f32 = 1.0;
+const SPLITTER_HIT_PADDING_X: f32 = 5.0;
+const SIDEBAR_MIN_WIDTH: f32 = 180.0;
+const SIDEBAR_MAX_WIDTH: f32 = 520.0;
+
 #[derive(Clone, Debug)]
 struct TreeEntry {
     depth: usize,
@@ -14,6 +19,7 @@ pub struct IdeViewState {
     pub side_width: f32,
     pub editor_text: String,
     tree_entries: Vec<TreeEntry>,
+    splitter_drag_offset: f32,
 }
 
 impl IdeViewState {
@@ -24,67 +30,9 @@ impl IdeViewState {
                 "// IDE mock view\nfn main() {\n    println!(\"Hello from Mae IDE view\");\n}\n",
             ),
             tree_entries: Vec::new(),
+            splitter_drag_offset: 0.0,
         };
-        s.refresh_tree();
         s
-    }
-
-    fn refresh_tree(&mut self) {
-        self.tree_entries.clear();
-        let root = std::path::Path::new(".");
-        collect_tree(root, 0, 3, 250, &mut self.tree_entries);
-    }
-}
-
-fn collect_tree(
-    dir: &std::path::Path,
-    depth: usize,
-    max_depth: usize,
-    max_entries: usize,
-    out: &mut Vec<TreeEntry>,
-) {
-    if depth > max_depth || out.len() >= max_entries {
-        return;
-    }
-    let Ok(read_dir) = std::fs::read_dir(dir) else {
-        return;
-    };
-
-    let mut dirs = Vec::new();
-    let mut files = Vec::new();
-    for entry in read_dir.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') {
-            continue;
-        }
-        if path.is_dir() {
-            dirs.push((name, path));
-        } else {
-            files.push(name);
-        }
-    }
-    dirs.sort_by(|a, b| a.0.cmp(&b.0));
-    files.sort();
-
-    for (name, path) in dirs {
-        if out.len() >= max_entries {
-            break;
-        }
-        out.push(TreeEntry {
-            depth,
-            name: format!("▸ {name}"),
-        });
-        collect_tree(&path, depth + 1, max_depth, max_entries, out);
-    }
-    for name in files {
-        if out.len() >= max_entries {
-            break;
-        }
-        out.push(TreeEntry {
-            depth,
-            name: format!("  {name}"),
-        });
     }
 }
 
@@ -94,15 +42,6 @@ pub fn render(ui: &mut IMUI, state: &mut IdeViewState) -> bool {
         let topbar = ui.row(|ui| {
             let explorer = ui.label("Explorer");
             app_style::title(ui, explorer).height(ui, UISize::Pixels(28.0));
-
-            let refresh = ui
-                .button("Refresh tree", Some("Reload local files"))
-                .height(ui, UISize::Pixels(28.0));
-            app_style::button(ui, refresh);
-            if refresh.clicked() {
-                state.refresh_tree();
-            }
-
             let back = ui
                 .button("Back to demo", Some("Return to the main demo view"))
                 .height(ui, UISize::Pixels(28.0));
@@ -120,10 +59,7 @@ pub fn render(ui: &mut IMUI, state: &mut IdeViewState) -> bool {
         let mut splitter_handle: Option<UIBoxHandle> = None;
         let body = ui.row(|ui| {
             let sidebar = ui.named_column("###ide_sidebar", |ui| {
-                for entry in &state.tree_entries {
-                    let row = ui.label(&format!("{}{}", "  ".repeat(entry.depth), entry.name));
-                    app_style::muted(ui, row).height(ui, UISize::Pixels(22.0));
-                }
+                ui.button("HELLO", None);
             });
             sidebar
                 .width(ui, UISize::Pixels(state.side_width))
@@ -140,13 +76,14 @@ pub fn render(ui: &mut IMUI, state: &mut IdeViewState) -> bool {
                 theme.border
             };
             splitter
-                .width(ui, UISize::Pixels(1.0))
+                .width(ui, UISize::Pixels(SPLITTER_WIDTH))
                 .height(ui, UISize::ParentPct(1.0))
                 .padding_all(ui, 0.0)
                 .corner_radius(ui, 0.0)
                 .background(ui, splitter_color)
                 .border_color(ui, splitter_color)
-                .cursor(ui, OSCursor::ResizeH);
+                .cursor(ui, OSCursor::ResizeH)
+                .hit_padding_x(ui, SPLITTER_HIT_PADDING_X);
 
             let editor_panel = ui.column(|ui| {
                 let file_title = ui.label("src/main.rs");
@@ -171,11 +108,24 @@ pub fn render(ui: &mut IMUI, state: &mut IdeViewState) -> bool {
             .gap(ui, 0.0);
 
         if let Some(splitter) = splitter_handle {
+            if splitter.pressed()
+                && let (Some(press_pos), body_bounds) =
+                    (splitter.signal().left_press_pos, ui.bounds(body))
+            {
+                let local_press_x = press_pos.x() - body_bounds.x0;
+                let splitter_center_x = state.side_width + SPLITTER_WIDTH * 0.5;
+                state.splitter_drag_offset = local_press_x - splitter_center_x;
+            }
+
             if splitter.dragging() && ui.mouse_down() {
                 if let (Some(mouse), body_bounds) = (ui.mouse_position(), ui.bounds(body)) {
-                    let new_w = (mouse.x() - body_bounds.x0 - 0.5).clamp(180.0, 520.0);
+                    let local_mouse_x = mouse.x() - body_bounds.x0;
+                    let new_w = (local_mouse_x - state.splitter_drag_offset - SPLITTER_WIDTH * 0.5)
+                        .clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
                     state.side_width = new_w;
                 }
+            } else {
+                state.splitter_drag_offset = 0.0;
             }
         }
     });
