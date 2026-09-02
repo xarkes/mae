@@ -3706,7 +3706,19 @@ impl IMUI {
                 }
             }
         }
-        self.text_edit_states.entry(key).or_default().cursor = cursor.min(new_len);
+        let state = self.text_edit_states.entry(key).or_default();
+        state.cursor = cursor.min(new_len);
+        // An edit replaces whatever was selected, so nothing is selected once
+        // it lands. Dropping the selection here is what `apply_pending_dom_
+        // selection` already does for a rich-text host, and a plain field
+        // needs it just as much: its `input` read-back reports only a caret,
+        // never an anchor, so a *programmatic* selection (`set_textarea_
+        // cursor` — "select the placeholder name so typing replaces it")
+        // would otherwise survive every keystroke. `sync_hosted_focus` then
+        // sees `(0, cursor)` change as the text grows and re-pushes it as a
+        // live selection, which the next character replaces: typing
+        // "Groceries" over a selected placeholder landed as "es".
+        state.selection = None;
     }
 
     /// If a `RICH_TEXT_HOST`'s hosted `<div contenteditable>` reported a new
