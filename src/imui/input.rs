@@ -41,6 +41,14 @@ impl IMUI {
         if let Some(pos) = ev.pos {
             self.mouse = Some(pos);
         }
+        // Remember the press *before* any box gets the chance to consume it —
+        // see `IMUI::frame_presses` and `press_outside`.
+        if ev.ty == OSEventType::Press
+            && mouse_button_from_key(ev.key).is_some()
+            && let Some(pos) = ev.pos.or(self.mouse)
+        {
+            self.frame_presses.push(pos);
+        }
         if ev.key == OSKey::LeftMouseButton {
             match ev.ty {
                 OSEventType::Press => self.left_mouse_down = true,
@@ -241,24 +249,39 @@ impl IMUI {
     /// surface opened by a left-click is not torn down again by the very press
     /// that opened it while the button is still down.
     ///
-    /// Panes are tested against their painted rect from the previous frame,
-    /// which is empty for a pane built for the first time this frame; suppress
-    /// dismissal on that opening frame at the call site (an `armed` flag) rather
-    /// than relying on the geometry.
-    pub fn press_outside(&self, panes: &[UIBoxHandle]) -> bool {
-        self.events.iter().any(|ev| {
-            if ev.ty != OSEventType::Press
-                || !matches!(ev.key, OSKey::LeftMouseButton | OSKey::RightMouseButton)
-            {
-                return false;
-            }
-            let Some(pos) = ev.pos else {
-                return false;
-            };
+    /// Reads [`IMUI::frame_presses`] rather than the event queue: a press that
+    /// landed on a clickable box outside the pane has already been consumed by
+    /// the time an overlay built later in the frame asks about it, and clicking
+    /// something *behind* an open palette is the most ordinary way there is to
+    /// dismiss it.
+    ///
+    /// Panes are tested against their painted rect from the previous frame, so
+    /// a pane that has none — one built for the first time this frame — reports
+    /// nothing: a surface that was not on screen when the button went down
+    /// cannot have been clicked away from, and the press that opened it is
+    /// almost always still in this frame's record. That covers the opening
+    /// frame on its own; callers need no `armed` flag of their own.
+    ///
+    /// Takes `&mut self` to request a repaint when it fires: the caller closes
+    /// its surface *during* this build, after the surface itself was already
+    /// emitted, so the frame that no longer shows it still has to be asked for.
+    pub fn press_outside(&mut self, panes: &[UIBoxHandle]) -> bool {
+        let painted_last_frame = |pane: &UIBoxHandle| {
+            let rect = self.boxes[pane.idx()].previous_clip_rect;
+            rect.width() > 0.0 && rect.height() > 0.0
+        };
+        if !panes.iter().all(painted_last_frame) {
+            return false;
+        }
+        let outside = self.frame_presses.iter().any(|pos| {
             !panes
                 .iter()
-                .any(|pane| point_in_rect(&self.boxes[pane.idx()].previous_clip_rect, Some(pos)))
-        })
+                .any(|pane| point_in_rect(&self.boxes[pane.idx()].previous_clip_rect, Some(*pos)))
+        });
+        if outside {
+            self.request_repaint();
+        }
+        outside
     }
 
     pub fn reset_text_input_state(&mut self) {
@@ -430,6 +453,17 @@ impl IMUI {
                 && ev.key == OSKey::Keyboard(OSKeyCode::KeyEnter)
             {
                 signal.flags |= UISignal::COMMIT;
+                // Whatever the app does with the commit — rename the row, close
+                // the field — happens during *this* build, after this widget was
+                // already emitted from its pre-commit state, so the result shows
+                // only on the next frame. Nothing else asks for that frame here:
+                // the key is deliberately left in the queue for the editor (no
+                // `remove_event`, hence no repaint from it), a single-line field
+                // ignores Enter, and there is no key-up event on any platform to
+                // wake the loop again. The rename would sit visibly uncommitted
+                // until some unrelated event happened to drive another frame.
+                // Self-limiting: the next frame sees no Enter press.
+                self.request_repaint();
             }
 
             if !taken

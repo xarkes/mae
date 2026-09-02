@@ -2343,6 +2343,16 @@ pub struct IMUI {
     drawer: Option<Drawer>,
     size: Size,
     events: Vec<OSEvent>,
+    /// Where a mouse button was *pressed* during the frame under construction,
+    /// recorded as the events arrive and cleared when the frame ends.
+    ///
+    /// Separate from `events` because that queue is *consumed*: the first
+    /// clickable box under the pointer removes the press from it (see
+    /// `remove_event`). [`press_outside`](IMUI::press_outside) — the dismissal
+    /// test every popover, menu and palette runs — must still see a press that
+    /// landed on a widget outside the pane, which is precisely the common case:
+    /// dismissing a palette by clicking a row in the sidebar behind it.
+    frame_presses: Vec<Point>,
     mouse: Option<Point>,
     left_mouse_down: bool,
     right_mouse_down: bool,

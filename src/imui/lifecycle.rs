@@ -103,6 +103,7 @@ impl IMUI {
             drawer,
             size,
             events: Vec::new(),
+            frame_presses: Vec::new(),
             mouse: None,
             left_mouse_down: false,
             right_mouse_down: false,
@@ -449,6 +450,7 @@ impl IMUI {
             win.set_cursor(cursor);
         }
 
+        self.frame_presses.clear();
         self.prune_boxes();
     }
 
@@ -464,6 +466,7 @@ impl IMUI {
         self.draw_ui_all();
         self.update_previous_clip_rects();
         let snapshot = self.snapshot();
+        self.frame_presses.clear();
         self.prune_boxes();
         snapshot
     }

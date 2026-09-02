@@ -1350,6 +1350,59 @@ fn press_outside_is_edge_triggered_and_pane_aware() {
 }
 
 #[test]
+fn press_outside_still_reports_a_press_a_widget_behind_the_pane_consumed() {
+    // The event queue is *consumed*: the first clickable box under the pointer
+    // removes the press from it. An overlay is built after the view it floats
+    // over, so by the time a palette asks "was I clicked away from?" the row it
+    // was clicked away *onto* has already taken the event — which is the most
+    // ordinary dismissal there is, and used to leave the palette on screen.
+    let mut harness = UiHarness::new(300.0, 200.0);
+
+    // (press_outside, the background button's own click) for the frame built.
+    fn frame(harness: &mut UiHarness) -> (bool, bool) {
+        let mut out = (false, false);
+        harness.frame(|ui| {
+            // Background content first, exactly like an app drawing its main
+            // view before its overlays.
+            let bg = ui.button("behind###behind_btn", None);
+            bg.width(ui, UISize::Pixels(300.0))
+                .height(ui, UISize::Pixels(200.0));
+            let pane = ui.floating_pane_at(Point::new(10.0, 10.0), Some("###pane"), |ui| {
+                ui.label("inside###inside_lbl");
+            });
+            pane.width(ui, UISize::Pixels(80.0))
+                .height(ui, UISize::Pixels(40.0));
+            out = (ui.press_outside(&[pane]), bg.clicked());
+        });
+        out
+    }
+
+    // Frame once so the pane has a painted rect to test against.
+    frame(&mut harness);
+
+    harness.mouse_down(OSKey::LeftMouseButton, 250.0, 180.0);
+    assert_eq!(
+        frame(&mut harness).0,
+        true,
+        "a press on the widget behind the pane is still a press outside it"
+    );
+
+    // Edge-triggered all the same: the release completes the button's click,
+    // and neither that frame nor an idle one reports a second dismissal.
+    harness.mouse_up(OSKey::LeftMouseButton, 250.0, 180.0);
+    assert_eq!(
+        frame(&mut harness),
+        (false, true),
+        "the click behind still lands, and only the press edge dismisses"
+    );
+    assert_eq!(
+        frame(&mut harness).0,
+        false,
+        "an idle frame reports nothing"
+    );
+}
+
+#[test]
 fn enter_commits_a_single_line_field_but_not_a_textarea() {
     // Inline rename reacts to the widget's own commit signal rather than the
     // app sniffing raw key events and guessing which field had focus.
@@ -1390,6 +1443,57 @@ fn enter_commits_a_single_line_field_but_not_a_textarea() {
     harness.key_press(OSKeyCode::KeyEnter);
     frame(&mut harness, &mut line, &mut area, &mut out);
     assert!(!out.1, "Enter in a textarea is a newline, not a commit");
+}
+
+#[test]
+fn committing_a_field_asks_for_the_frame_that_shows_what_the_app_did() {
+    // The loop only draws when something asks it to. A commit is reported
+    // *during* a build, after the field was already emitted from its
+    // pre-commit state, so whatever the app does with it — rename the row,
+    // close the field — can only appear on the next frame. Nothing else asks
+    // for that one: the Enter press is left in the queue for the editor, so no
+    // consumed-event repaint fires, and there is no key-up event to wake the
+    // loop later. Renames sat visibly uncommitted until an unrelated event
+    // happened to drive another frame.
+    let mut harness = UiHarness::new(300.0, 200.0);
+    let mut buf = String::from("name");
+
+    fn frame(harness: &mut UiHarness, buf: &mut String) -> bool {
+        let mut committed = false;
+        harness.frame(|ui| {
+            let field = ui.line_edit("###field", buf, false);
+            field
+                .width(ui, UISize::Pixels(200.0))
+                .height(ui, UISize::Pixels(24.0));
+            committed = field.signal().committed();
+        });
+        committed
+    }
+
+    frame(&mut harness, &mut buf);
+    harness.click("###field");
+    frame(&mut harness, &mut buf);
+
+    // Settle every animation the click started (focus ring, caret follow), so
+    // the only thing left that can ask for a frame is the commit itself — the
+    // state a field the user has been typing in for a moment is really in.
+    for _ in 0..600 {
+        frame(&mut harness, &mut buf);
+        if !harness.ui_mut().take_repaint_request() {
+            break;
+        }
+    }
+    assert!(
+        !harness.ui_mut().take_repaint_request(),
+        "a settled field should not be asking for frames"
+    );
+
+    harness.key_press(OSKeyCode::KeyEnter);
+    assert!(frame(&mut harness, &mut buf), "Enter should commit");
+    assert!(
+        harness.ui_mut().take_repaint_request(),
+        "the commit frame must ask for the frame that shows its effect"
+    );
 }
 
 #[test]
