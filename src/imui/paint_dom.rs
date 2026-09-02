@@ -126,6 +126,31 @@ fn utf16_offset(value: &str, chars: usize) -> u32 {
         .sum()
 }
 
+/// The inverse of [`utf16_offset`]: the char index `units` UTF-16 code units
+/// into `value`.
+///
+/// Every offset a browser hands back — `selectionStart`, a `Range`'s offsets,
+/// a `Selection`'s anchor — counts UTF-16 code units, and every offset on the
+/// Rust side is a char index. The two agree only while the text stays inside
+/// the BMP, so anything past it (every emoji, which is a surrogate *pair*)
+/// shifted the caret by one char per emoji before it. Worse, a UTF-16 offset
+/// used to slice the UTF-8 `String` directly lands mid-character for any
+/// non-ASCII text at all and panics — which in a wasm build kills the frame,
+/// so typing an accent or an emoji stopped text input dead.
+///
+/// An offset that falls *inside* a surrogate pair (which a browser should
+/// never produce) rounds up to the end of that char rather than splitting it.
+fn char_offset_from_utf16(value: &str, units: usize) -> usize {
+    let mut seen = 0usize;
+    for (index, c) in value.chars().enumerate() {
+        if seen >= units {
+            return index;
+        }
+        seen += c.len_utf16();
+    }
+    value.chars().count()
+}
+
 /// Minimal RGBA -> PNG encoder (uncompressed "stored" zlib block — no need
 /// for real compression, this only ever runs once per image at DOM-node
 /// creation time, not per frame). Same technique as `render/png.rs`'s
@@ -358,12 +383,13 @@ fn resolve_raw_offset(node: &Node, offset: u32) -> Option<usize> {
     if let Some(text) = node.dyn_ref::<Text>() {
         // A span's element has exactly one child: the text node
         // `paint_div`'s `set_text_content` gives it. `offset` is a UTF-16
-        // code-unit count, treated here as a char count — an accepted
-        // imprecision for non-BMP text, matching `attach_input_listeners`'s
-        // `read_back` cursor conversion elsewhere in this file.
+        // code-unit count into that span's own text, and `data-raw-start` a
+        // char index into the raw buffer, so the offset is converted rather
+        // than added as-is — see `char_offset_from_utf16`.
         let parent = text.parent_element()?;
         let raw_start: usize = parent.get_attribute("data-raw-start")?.parse().ok()?;
-        return Some(raw_start + offset as usize);
+        let within = char_offset_from_utf16(&text.data(), offset as usize);
+        return Some(raw_start + within);
     }
     let el = node.dyn_ref::<Element>()?;
     // Not a text node: `offset` is a child index — land on that child's own
@@ -421,7 +447,11 @@ fn dom_caret_target_for_raw(host: &Element, raw: usize) -> Option<(Node, u32)> {
             // `set_text_content` gave it. Rows (whose children are span
             // elements) and the host itself fall through to `_` below.
             Some(child) if child.node_type() == Node::TEXT_NODE => {
-                let offset = (raw - start) as u32;
+                // `raw`/`start` are char indices into the buffer; a DOM
+                // caret offset counts UTF-16 code units into this span's own
+                // text, so the distance between them has to be converted —
+                // see `utf16_offset`.
+                let offset = utf16_offset(&child.text_content().unwrap_or_default(), raw - start);
                 if raw < end {
                     inside.get_or_insert((child, offset));
                 } else {
@@ -747,7 +777,7 @@ impl DomReconciler {
         // could never override — same reason the `.mae-hot` rules above
         // need it.
         //
-        // The last two rules are for touch. The grey flash a browser paints
+        // The last three rules are for touch. The grey flash a browser paints
         // over a tapped element is its own affordance, and duplicates (badly)
         // the `.mae-hot:active` one above. And the container's
         // `touch-action: pinch-zoom` (`os/wasm.rs`) inherits, which would
@@ -755,6 +785,18 @@ impl DomReconciler {
         // is the one place the browser, not mae, owns panning, so it gets
         // `auto` back; `overscroll-behavior: contain` then keeps a scroll
         // past its end from dragging the page behind it.
+        //
+        // The last rule stops the *page* from zooming when a field is
+        // focused. iOS Safari zooms in on any focused text field whose font
+        // is under 16px — mae's default text is 14 — and then leaves the
+        // whole layout scaled and panned sideways, so tapping a note to type
+        // in it threw the app off screen. The threshold is what the browser
+        // reads, so the fix is to meet it rather than to fight the zoom
+        // afterwards (`maximum-scale=1` in the viewport would also take the
+        // *user's* pinch away on Android, which is the opposite of what is
+        // wanted). Fields carry their requested size as `--mae-font-size`,
+        // so this only ever raises a size below the threshold and leaves a
+        // larger one alone; on a mouse-driven page it does not apply at all.
         let style_el = document
             .create_element("style")
             .expect("create style element");
@@ -768,7 +810,9 @@ impl DomReconciler {
              user-select: text !important; -webkit-user-select: text !important; }\
              * { -webkit-tap-highlight-color: transparent; }\
              input, textarea, [contenteditable=\"true\"] { touch-action: auto; \
-             overscroll-behavior: contain; }",
+             overscroll-behavior: contain; }\
+             @media (pointer: coarse) { input, textarea, [contenteditable=\"true\"] { \
+             font-size: max(16px, var(--mae-font-size, 16px)) !important; } }",
         ));
         let _ = container.append_child(&style_el);
         DomReconciler {
@@ -927,11 +971,11 @@ impl DomReconciler {
         match kind {
             RichTextAnchorKind::Text => {
                 let text_node = el.first_child()?;
-                let len = text_node
-                    .text_content()
-                    .map(|s| s.encode_utf16().count() as u32)
-                    .unwrap_or(0);
-                let intra = cursor.saturating_sub(start) as u32;
+                let text = text_node.text_content().unwrap_or_default();
+                let len = text.encode_utf16().count() as u32;
+                // `cursor`/`start` are char indices; a DOM caret offset counts
+                // UTF-16 code units — see `utf16_offset`.
+                let intra = utf16_offset(&text, cursor.saturating_sub(start));
                 Some((text_node, intra.min(len)))
             }
             RichTextAnchorKind::Atomic => {
@@ -1215,6 +1259,22 @@ impl DomReconciler {
         let _ = style.set_property("border-radius", &format!("{corner_radius}px"));
         let (top, right, bottom, left) = inset;
         let _ = style.set_property("padding", &format!("{top}px {right}px {bottom}px {left}px"));
+    }
+
+    /// The font size of a *hosted* field (`<input>`, `<textarea>`,
+    /// `contenteditable`), written so the touch rule in the injected
+    /// stylesheet can raise it to the 16px iOS needs to leave the page alone.
+    ///
+    /// The size goes in as `--mae-font-size` as well as `font-size`, because
+    /// an inline declaration beats any plain rule: the media query reads the
+    /// custom property back out and takes `max(16px, it)`, so a field larger
+    /// than the threshold keeps its own size and a mouse-driven page is
+    /// untouched. Nothing else on the page needs this — only a focused field
+    /// triggers the zoom.
+    fn apply_hosted_font_size(style: &web_sys::CssStyleDeclaration, font_size: f32) {
+        let px = format!("{font_size}px");
+        let _ = style.set_property("--mae-font-size", &px);
+        let _ = style.set_property("font-size", &px);
     }
 
     /// `padding.X + style.margin` — the same inset `paint.rs` uses for text
@@ -1527,7 +1587,7 @@ impl DomReconciler {
             let s = el.style();
             let _ = s.set_property("box-sizing", "border-box");
             let _ = s.set_property("color", &css_color(style.text_color));
-            let _ = s.set_property("font-size", &format!("{}px", style.font_size));
+            Self::apply_hosted_font_size(&s, style.font_size);
             let _ = s.set_property("font-family", "'Mae Sans', sans-serif");
             let _ = s.set_property("line-height", "1.2");
             let _ = s.set_property("outline", "none");
@@ -1661,7 +1721,7 @@ impl DomReconciler {
             let s = el.style();
             let _ = s.set_property("box-sizing", "border-box");
             let _ = s.set_property("color", &css_color(style.text_color));
-            let _ = s.set_property("font-size", &format!("{}px", style.font_size));
+            Self::apply_hosted_font_size(&s, style.font_size);
             let _ = s.set_property("font-family", "'Mae Sans', sans-serif");
             let _ = s.set_property("line-height", "1.2");
             let _ = s.set_property("outline", "none");
@@ -1880,7 +1940,8 @@ impl DomReconciler {
                     let i: &HtmlInputElement = target.unchecked_ref();
                     (i.value(), i.selection_start().ok().flatten().unwrap_or(0))
                 };
-                let cursor = value[..(cursor as usize).min(value.len())].chars().count();
+                // `selectionStart` counts UTF-16 code units; mae counts chars.
+                let cursor = char_offset_from_utf16(&value, cursor as usize);
                 pending
                     .borrow_mut()
                     .entry(ui_key)
@@ -3283,6 +3344,20 @@ impl IMUI {
         let is_rich_text_host =
             flags.contains(UIBoxFlags::MULTILINE) && flags.contains(UIBoxFlags::RICH_TEXT_HOST);
         let is_image = flags.contains(UIBoxFlags::DRAW_IMAGE);
+        // Gated on the same flags the `paint_div` branch below reads, so a
+        // hosted `<input>`/`<textarea>` shows exactly the chrome its box asked
+        // for. These used to be passed unconditionally, which drew a border
+        // around every hosted field on this backend — including the note
+        // editor, whose `TextAreaOptions::border(false)` omits `DRAW_BORDER`
+        // precisely so there is none (a chromeless editor cannot rely on a
+        // transparent border colour, because the painted border blends to the
+        // accent on focus).
+        let hosted_bg = flags
+            .contains(UIBoxFlags::DRAW_BACKGROUND)
+            .then_some(self.boxes[idx].bg_color_animated);
+        let hosted_border = flags
+            .contains(UIBoxFlags::DRAW_BORDER)
+            .then_some((self.boxes[idx].border_color_animated, style.border_size));
         let floating =
             flags.contains(UIBoxFlags::FLOATING_X) || flags.contains(UIBoxFlags::FLOATING_Y);
         let mount_point = if floating { None } else { mount_point };
@@ -3365,8 +3440,8 @@ impl IMUI {
                 mount_point,
                 ui_key,
                 rect,
-                Some(self.boxes[idx].bg_color_animated),
-                Some((self.boxes[idx].border_color_animated, style.border_size)),
+                hosted_bg,
+                hosted_border,
                 style.corner_radius,
                 &style,
                 padding,
@@ -3402,8 +3477,8 @@ impl IMUI {
                 mount_point,
                 ui_key,
                 rect,
-                Some(self.boxes[idx].bg_color_animated),
-                Some((self.boxes[idx].border_color_animated, style.border_size)),
+                hosted_bg,
+                hosted_border,
                 style.corner_radius,
                 &style,
                 &value,

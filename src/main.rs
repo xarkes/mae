@@ -71,6 +71,15 @@ fn main() {
     // which makes it impractical for `tests/testkit_driver.rs`'s scenario
     // functions to reconstruct the "expected text after this edit" against.
     let mut short_text = String::from("line one\nline two");
+    // Seeded with text a browser and mae *count differently*: an accented
+    // letter is two UTF-8 bytes and one UTF-16 code unit, an emoji four bytes
+    // and two units, while both are a single char to mae. Every offset a
+    // browser reports (`selectionStart`, a `Range`) is in UTF-16 units and
+    // every offset in mae is a char index, so this is the seed that makes
+    // `tests/testkit_driver.rs`'s `emoji_line_edit_text_input_test_all` run
+    // the same nine edits over text where the two disagree — on the DOM
+    // backend as well as native, which is where they can disagree at all.
+    let mut emoji_input = String::from("Caf\u{e9}\u{1F389}me");
     // A `RICH_TEXT_HOST` demo widget (see `widget_section`): the DOM
     // backend hosts this as a `<div contenteditable>` instead of a plain
     // `<textarea>` — exercises that path for CDP-driven testing the same
@@ -88,6 +97,12 @@ fn main() {
     // meant to exercise this box was actually clicking into `short_text`'s
     // plain `<textarea>` instead, until this seed collision was found.
     let mut markdown_text = String::from("note one\nnote two");
+    // A rendered-markdown seed carrying the same accent and emoji as
+    // `emoji_input` — the rich-text host maps caret offsets between the
+    // buffer and the DOM in both directions, so it needs the same coverage
+    // over text where char indices and UTF-16 offsets disagree. Distinct
+    // text from every other seed, for the reason `markdown_text` above is.
+    let mut emoji_markdown_text = String::from("t\u{e9}xt\u{1F389}here");
     // Whether `###demo_markdown_textarea` is `MarkdownMode::Rendered` (hidden
     // markers, a `RICH_TEXT_HOST`) or `::Source` (literal markers, a plain
     // `<textarea>`) — toggled by the button next to it. `markdown_mode` is
@@ -283,7 +298,9 @@ fn main() {
                         &mut input,
                         &mut text,
                         &mut short_text,
+                        &mut emoji_input,
                         &mut markdown_text,
+                        &mut emoji_markdown_text,
                         &mut markdown_rendered,
                         &mut counter,
                         &mut right_clicks,
@@ -465,7 +482,9 @@ fn widget_section(
     input: &mut String,
     text: &mut String,
     short_text: &mut String,
+    emoji_input: &mut String,
     markdown_text: &mut String,
+    emoji_markdown_text: &mut String,
     markdown_rendered: &mut bool,
     counter: &mut usize,
     right_clicks: &mut usize,
@@ -548,6 +567,10 @@ fn widget_section(
         ui.textarea("###demo_short_textarea", short_text)
             .height(ui, UISize::Pixels(60.0));
 
+        // Non-BMP/accented seed — see `emoji_input`'s doc comment.
+        ui.line_edit("###demo_emoji_line_edit", emoji_input, false)
+            .height(ui, UISize::Pixels(34.0));
+
         // Rendered-markdown textarea (`MarkdownMode::Rendered` by default,
         // toggled below) — in that mode the DOM backend hosts this as a
         // `RICH_TEXT_HOST` `<div contenteditable>` instead of a plain
@@ -568,6 +591,14 @@ fn widget_section(
             TextAreaOptions::default(),
         )
         .height(ui, UISize::Pixels(120.0));
+
+        // Non-BMP/accented seed — see `emoji_markdown_text`'s doc comment.
+        ui.markdown_textarea_with_options(
+            "###demo_emoji_markdown_textarea",
+            emoji_markdown_text,
+            TextAreaOptions::default(),
+        )
+        .height(ui, UISize::Pixels(80.0));
 
         section_title(ui, "Icons");
         let icon_row = ui.row(|ui| {

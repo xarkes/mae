@@ -427,7 +427,9 @@ fn cdp_key_text(key: OSKeyCode) -> Option<&'static str> {
 /// that only set `key`/`text` (no `code`) would *look* like it dispatches a
 /// real keystroke without actually exercising that bridge at all, silently
 /// defeating the entire reason to use real key events over `Input.
-/// insertText` in the first place. Extend as new characters are needed.
+/// insertText` in the first place. Extend as new characters gain a key of
+/// their own; anything with no key on this board falls through to the
+/// keyless form at the end.
 fn cdp_char_key(ch: char) -> (String, u32, bool) {
     match ch {
         'a'..='z' => (
@@ -470,10 +472,16 @@ fn cdp_char_key(ch: char) -> (String, u32, bool) {
         '|' => ("Backslash".to_string(), 0xDC, true),
         '`' => ("Backquote".to_string(), 0xC0, false),
         '~' => ("Backquote".to_string(), 0xC0, true),
-        other => panic!(
-            "CdpDriver::type_text: no CDP key mapping for {other:?} yet — extend `cdp_char_key` \
-             as new characters are needed"
-        ),
+        // Anything with no key on a US-QWERTY board — an accented letter, an
+        // emoji — is dispatched the way a real device produces one: with the
+        // text but no physical key behind it (an emoji picker, a compose key
+        // and an IME commit all arrive this way). Chrome inserts on `text`
+        // alone, and a hosted field is where such a character can land in the
+        // first place: `os/wasm.rs` deliberately leaves typing inside one to
+        // the browser, so no `code` is needed for it to be seen. A *named*
+        // key still needs its `code` for the reasons above, which is why this
+        // fallback is limited to characters.
+        other => (String::new(), 0, other.is_uppercase()),
     }
 }
 

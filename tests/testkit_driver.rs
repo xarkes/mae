@@ -449,6 +449,77 @@ driver_test!(
     cdp: launch_demo
 );
 
+/// The same nine edits over text a browser and mae count differently.
+///
+/// An accented letter is one UTF-16 code unit and two UTF-8 bytes; an emoji
+/// is two units and four bytes; both are one char to mae. Every offset a
+/// browser hands back counts units and every offset in mae counts chars, so
+/// this seed is where the two disagree — and the DOM half of this test is the
+/// point of it, since native never sees a UTF-16 number at all. Before it,
+/// reading the caret back off a hosted field sliced the UTF-8 buffer at a
+/// UTF-16 offset: a panic mid-frame for anything non-ASCII, and a caret one
+/// char further along for every emoji before it. Uses a single-codepoint
+/// emoji so a char step and a grapheme step (what an arrow key moves by) stay
+/// the same thing, which is what `goto_index` assumes.
+const EMOJI_SEED: &str = "Caf\u{e9}\u{1F389}me";
+
+fn emoji_line_edit_widget(ui: &mut IMUI, buffer: &mut String) {
+    ui.line_edit("###demo_emoji_line_edit", buffer, false)
+        .width(ui, UISize::Pixels(200.0))
+        .height(ui, UISize::Pixels(32.0));
+}
+
+fn emoji_line_edit_text_input_test_all<D: UiDriver>(new_driver: impl FnMut() -> D) {
+    text_input_test_all(EMOJI_SEED, new_driver);
+}
+
+driver_test!(
+    emoji_line_edit_text_input_test_all,
+    native: || {
+        let mut buffer = String::from(EMOJI_SEED);
+        NativeDriver::new(300.0, 100.0, move |ui| emoji_line_edit_widget(ui, &mut buffer))
+    },
+    // Drives `###demo_emoji_line_edit` (`src/main.rs`), seeded to match.
+    cdp: launch_demo
+);
+
+/// The same, against a `RICH_TEXT_HOST`.
+///
+/// A rendered-markdown editor is a `<div contenteditable>` whose caret is
+/// mapped between the raw buffer and the DOM in *both* directions — a
+/// `Range`'s UTF-16 offset in, a UTF-16 offset for `set_base_and_extent` out
+/// — so both conversions have to agree about what an emoji costs, or the
+/// caret walks away from where it was put. Its own seed, distinct from every
+/// other one on the demo page, for the reason `MARKDOWN_SEED` is.
+const EMOJI_MARKDOWN_SEED: &str = "t\u{e9}xt\u{1F389}here";
+
+fn emoji_markdown_textarea_widget(ui: &mut IMUI, buffer: &mut String) {
+    ui.set_markdown_mode(MarkdownMode::Rendered);
+    ui.markdown_textarea_with_options(
+        "###demo_emoji_markdown_textarea",
+        buffer,
+        TextAreaOptions::default(),
+    )
+    .width(ui, UISize::Pixels(220.0))
+    .height(ui, UISize::Pixels(80.0));
+}
+
+fn emoji_markdown_text_input_test_all<D: UiDriver>(new_driver: impl FnMut() -> D) {
+    text_input_test_all(EMOJI_MARKDOWN_SEED, new_driver);
+}
+
+driver_test!(
+    emoji_markdown_text_input_test_all,
+    native: || {
+        let mut buffer = String::from(EMOJI_MARKDOWN_SEED);
+        NativeDriver::new(300.0, 200.0, move |ui| {
+            emoji_markdown_textarea_widget(ui, &mut buffer)
+        })
+    },
+    // Drives `###demo_emoji_markdown_textarea` (`src/main.rs`), seeded to match.
+    cdp: launch_demo
+);
+
 fn plain_textarea_text_input_test_all<D: UiDriver>(new_driver: impl FnMut() -> D) {
     text_input_test_all(MULTILINE_SEED, new_driver);
 }
