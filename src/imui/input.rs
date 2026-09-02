@@ -25,6 +25,12 @@ impl IMUI {
         }
         // Refresh the IME preedit (composing text) for inline rendering this frame.
         self.ime_preedit = self.os_window().and_then(|win| win.ime_preedit());
+        // Ctrl+C / `kill` don't come through the window server, so they're
+        // folded in here as the same `Quit` event AppKit's own termination
+        // request produces — one shutdown path for every way of closing.
+        if crate::os::take_quit_signal() {
+            self.events.push(OSEvent::quit());
+        }
 
         for ev in self.events.clone() {
             self.apply_event_side_effects(&ev);

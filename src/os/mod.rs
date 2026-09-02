@@ -14,6 +14,8 @@ compile_error!("Support for targeted OS is not implemented!",);
 #[cfg_attr(target_arch = "wasm32", path = "wasm.rs")]
 mod os_impl;
 
+mod signals;
+
 use super::imui::Point;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -375,6 +377,13 @@ pub fn clipboard_get() -> Option<String> {
 /// caller decodes the bytes (e.g. via the `image` crate, which sniffs format).
 pub fn clipboard_get_image() -> Option<Vec<u8>> {
     os_impl::clipboard_get_image()
+}
+
+/// Whether a quit signal (Ctrl+C / `kill`) has arrived since the last call, so
+/// the event loop can turn it into a `Quit` event and take the app's normal
+/// shutdown path instead of being killed where it stands. See `signals.rs`.
+pub fn take_quit_signal() -> bool {
+    signals::take_quit_signal()
 }
 
 /// Open a native file picker for choosing an image (png/jpg/jpeg). Returns the
