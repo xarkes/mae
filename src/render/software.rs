@@ -8,19 +8,27 @@ pub const DEFAULT_CLEAR_COLOR: u32 = 0xFF758B99;
 pub struct Texture {
     pub width: usize,
     pub height: usize,
+    /// 1 for an alpha (R8) atlas, 4 for a color (RGBA8) atlas.
+    pub bytes_per_pixel: usize,
     pub data: Vec<u8>,
 }
 
 impl Texture {
     pub fn update_region(&mut self, x: usize, y: usize, width: usize, height: usize, data: &[u8]) {
+        let bpp = self.bytes_per_pixel;
         assert!(x + width <= self.width);
         assert!(y + height <= self.height);
-        assert_eq!(data.len(), width * height);
+        assert_eq!(data.len(), width * height * bpp);
+        let row_bytes = width * bpp;
         for row in 0..height {
-            let dst = (y + row) * self.width + x;
-            let src = row * width;
-            self.data[dst..dst + width].copy_from_slice(&data[src..src + width]);
+            let dst = ((y + row) * self.width + x) * bpp;
+            let src = row * row_bytes;
+            self.data[dst..dst + row_bytes].copy_from_slice(&data[src..src + row_bytes]);
         }
+    }
+
+    pub fn is_color(&self) -> bool {
+        self.bytes_per_pixel == 4
     }
 }
 
@@ -110,7 +118,12 @@ fn draw_rect(surface: &mut SoftwareSurface, inst: &Rect2DInst, texture: Option<&
         for px in x0..x1 {
             let sample_x = px as f32 + 0.5;
             let sample_y = py as f32 + 0.5;
-            if radius > 0.0 && !rounded_rect_contains(sample_x, sample_y, inst) {
+            let coverage = if radius > 0.0 {
+                rounded_rect_coverage(sample_x, sample_y, inst)
+            } else {
+                1.0
+            };
+            if coverage <= 0.0 {
                 continue;
             }
 
@@ -130,12 +143,23 @@ fn draw_rect(surface: &mut SoftwareSurface, inst: &Rect2DInst, texture: Option<&
                 if let Some(tex) = texture {
                     let tex_u = src.x0 + t_x * (src.x1 - src.x0);
                     let tex_v = src.y0 + t_y * (src.y1 - src.y0);
-                    let alpha = sample_texture(tex, tex_u, tex_v);
-                    V4f32 {
-                        r: color.r,
-                        g: color.g,
-                        b: color.b,
-                        a: color.a * alpha,
+                    if tex.is_color() {
+                        // Color glyph (emoji): use RGBA directly, modulated by tint opacity.
+                        let c = sample_texture_rgba(tex, tex_u, tex_v);
+                        V4f32 {
+                            r: c.r,
+                            g: c.g,
+                            b: c.b,
+                            a: c.a * color.a,
+                        }
+                    } else {
+                        let alpha = sample_texture(tex, tex_u, tex_v);
+                        V4f32 {
+                            r: color.r,
+                            g: color.g,
+                            b: color.b,
+                            a: color.a * alpha,
+                        }
                     }
                 } else {
                     color
@@ -143,6 +167,9 @@ fn draw_rect(surface: &mut SoftwareSurface, inst: &Rect2DInst, texture: Option<&
             } else {
                 color
             };
+
+            let mut final_color = final_color;
+            final_color.a *= coverage;
 
             let idx = py * surface.width + px;
             if idx < surface.pixels.len() {
@@ -180,10 +207,15 @@ fn draw_solid_rect(
         for py in y0..y1 {
             let row = py * surface.width;
             for px in x0..x1 {
-                let sample_x = px as f32 + 0.5;
-                let sample_y = py as f32 + 0.5;
-                if rounded_rect_contains(sample_x, sample_y, inst) {
+                let coverage = rounded_rect_coverage(px as f32 + 0.5, py as f32 + 0.5, inst);
+                if coverage >= 1.0 {
                     surface.pixels[row + px] = packed;
+                } else if coverage > 0.0 {
+                    // Edge pixel: blend the opaque colour in proportionally
+                    // rather than snapping it fully on or fully off.
+                    let mut edge = color;
+                    edge.a *= coverage;
+                    surface.pixels[row + px] = blend_pixel(surface.pixels[row + px], &edge);
                 }
             }
         }
@@ -193,11 +225,17 @@ fn draw_solid_rect(
     for py in y0..y1 {
         let row = py * surface.width;
         for px in x0..x1 {
-            let sample_x = px as f32 + 0.5;
-            let sample_y = py as f32 + 0.5;
-            if radius <= 0.0 || rounded_rect_contains(sample_x, sample_y, inst) {
-                surface.pixels[row + px] = blend_pixel(surface.pixels[row + px], &color);
+            let coverage = if radius <= 0.0 {
+                1.0
+            } else {
+                rounded_rect_coverage(px as f32 + 0.5, py as f32 + 0.5, inst)
+            };
+            if coverage <= 0.0 {
+                continue;
             }
+            let mut blended = color;
+            blended.a *= coverage;
+            surface.pixels[row + px] = blend_pixel(surface.pixels[row + px], &blended);
         }
     }
 }
@@ -214,7 +252,12 @@ fn same_color(a: V4f32, b: V4f32) -> bool {
     a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a
 }
 
-fn rounded_rect_contains(x: f32, y: f32, inst: &Rect2DInst) -> bool {
+/// How much of the pixel at `(x, y)` the rounded rect covers, `0.0..=1.0`.
+///
+/// A one-pixel linear ramp across the corner arc, matching
+/// `opengl/fragment.glsl` so the two backends antialias identically. Only the
+/// arcs need this — the straight edges are already exact, being the loop bounds.
+fn rounded_rect_coverage(x: f32, y: f32, inst: &Rect2DInst) -> f32 {
     let rect = inst.dst;
     let radius = inst
         .extra
@@ -223,14 +266,14 @@ fn rounded_rect_contains(x: f32, y: f32, inst: &Rect2DInst) -> bool {
         .min(rect.width().abs() * 0.5)
         .min(rect.height().abs() * 0.5);
     if radius <= 0.0 {
-        return true;
+        return 1.0;
     }
-
+    // Distance from the nearest corner circle's centre, minus its radius: the
+    // signed distance to the boundary, in pixels.
     let cx = x.clamp(rect.x0 + radius, rect.x1 - radius);
     let cy = y.clamp(rect.y0 + radius, rect.y1 - radius);
-    let dx = x - cx;
-    let dy = y - cy;
-    dx * dx + dy * dy <= radius * radius
+    let distance = (x - cx).hypot(y - cy) - radius;
+    (0.5 - distance).clamp(0.0, 1.0)
 }
 
 #[inline]
@@ -276,6 +319,22 @@ fn sample_texture(tex: &Texture, u: f32, v: f32) -> f32 {
     }
 }
 
+fn sample_texture_rgba(tex: &Texture, u: f32, v: f32) -> V4f32 {
+    let tx = ((u * tex.width as f32) as usize).min(tex.width.saturating_sub(1));
+    let ty = ((v * tex.height as f32) as usize).min(tex.height.saturating_sub(1));
+    let idx = (ty * tex.width + tx) * 4;
+    if idx + 3 < tex.data.len() {
+        V4f32 {
+            r: tex.data[idx] as f32 / 255.0,
+            g: tex.data[idx + 1] as f32 / 255.0,
+            b: tex.data[idx + 2] as f32 / 255.0,
+            a: tex.data[idx + 3] as f32 / 255.0,
+        }
+    } else {
+        V4f32::default()
+    }
+}
+
 #[inline]
 fn blend_pixel(existing: u32, color: &V4f32) -> u32 {
     let (er, eg, eb, _ea) = unpack_color(existing);
@@ -308,6 +367,7 @@ mod tests {
         let mut texture = Texture {
             width: 4,
             height: 4,
+            bytes_per_pixel: 1,
             data: vec![0; 16],
         };
         texture.update_region(1, 1, 2, 2, &[1, 2, 3, 4]);

@@ -1,5 +1,6 @@
 extern crate objc2;
 use crate::os::Window;
+use crate::render::RendererError;
 use objc2::msg_send;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject};
@@ -14,13 +15,16 @@ enum NSOpenGLPFA {
     // AuxBuffers = 7,
     ColorSize = 8,
     AlphaSize = 11,
-    DepthSize = 12,
-    StencilSize = 13,
+    // Depth, stencil, and MSAA are intentionally not requested. Mae's current
+    // renderer is strictly 2D and does not use those buffers; on macOS they can
+    // substantially increase the OpenGL surface/driver footprint.
+    // DepthSize = 12,
+    // StencilSize = 13,
     // AccumSize = 14,
     // MinimumPolicy = 51,
     // MaximumPolicy = 52,
-    SampleBuffers = 55,
-    Samples = 56,
+    // SampleBuffers = 55,
+    // Samples = 56,
     // AuxDepthStencil = 57,
     // ColorFloat = 58,
     // Multisample = 59,
@@ -59,7 +63,7 @@ enum NSOpenGLProfile {
 pub type GLContextHandle = *mut AnyObject;
 pub type GLStringPtr = *const i8;
 
-pub fn ogl_create_context(win: &Window) -> *mut AnyObject {
+pub fn ogl_create_context(win: &Window) -> Result<*mut AnyObject, RendererError> {
     let class_name = CStr::from_bytes_with_nul(b"NSOpenGLPixelFormat\0").unwrap();
     let class_name_ctx = CStr::from_bytes_with_nul(b"NSOpenGLContext\0").unwrap();
     let attrs = [
@@ -71,15 +75,7 @@ pub fn ogl_create_context(win: &Window) -> *mut AnyObject {
         24,
         NSOpenGLPFA::AlphaSize as u32,
         8,
-        NSOpenGLPFA::DepthSize as u32,
-        24,
-        NSOpenGLPFA::StencilSize as u32,
-        8,
         NSOpenGLPFA::DoubleBuffer as u32,
-        NSOpenGLPFA::SampleBuffers as u32,
-        1,
-        NSOpenGLPFA::Samples as u32,
-        4,
         0,
     ];
 
@@ -127,7 +123,9 @@ pub fn ogl_create_context(win: &Window) -> *mut AnyObject {
         )
     };
     if lib_ptr == std::ptr::null_mut() {
-        panic!("Could not load libGL, renderer cannot be used.");
+        return Err(RendererError::OGLInitFailed(
+            "dlopen(libGL.dylib) failed".to_string(),
+        ));
     }
 
     // SAFETY(xarkes): We trust the OS to give us valid pointers with dlopen and dlsym
@@ -137,7 +135,7 @@ pub fn ogl_create_context(win: &Window) -> *mut AnyObject {
         addr as *const std::ffi::c_void
     });
 
-    ctx
+    Ok(ctx)
 }
 
 pub fn ogl_resize(ctx: &GLContextHandle) {

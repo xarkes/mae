@@ -1,14 +1,49 @@
 mod app_style;
-mod ide_window;
 
 use mae::{
     imui::{
-        CrossAxisAlign, IMUI, MainAxisAlign, ThemeKind, UIBoxHandle, UISize, UITheme, UiSignal,
-        uibox::Color,
+        CrossAxisAlign, IMUI, MainAxisAlign, MarkdownMode, TextAreaOptions, ThemeKind, UIBoxHandle,
+        UISignal, UISize, UITheme, uibox::Color,
     },
     os::{OSEventFlag, OSKey, OSKeyCode},
-    render::Backend,
 };
+// The renderer-backend dropdown (below) is GL/CPU-specific — there's no
+// equivalent concept for the DOM backend, and `Backend` is an uninhabited
+// type in a `--no-default-features --features dom` build, so this import
+// (and the dropdown code that uses it) only exists for the other targets.
+#[cfg(not(all(target_arch = "wasm32", feature = "dom")))]
+use mae::render::Backend;
+
+// Material icon codepoints (same font/convention as src/imui/toast.rs).
+const ICON_INFO: &str = "\u{e88e}";
+const ICON_WARNING: &str = "\u{e002}";
+const ICON_DANGER: &str = "\u{e000}";
+const ICON_CLOSE: &str = "\u{e5cd}";
+const ICON_FOLDER: &str = "\u{e2c7}";
+
+const DEMO_IMAGE_KEY: &str = "demo_gradient";
+const DEMO_IMAGE_SIZE: u32 = 96;
+
+/// Registers a small procedural gradient the first time it's needed (checked
+/// every frame via `has_image`, which is a cheap HashMap lookup — the actual
+/// RGBA buffer is only ever allocated and uploaded once).
+fn ensure_demo_image(ui: &mut IMUI) {
+    if ui.has_image(DEMO_IMAGE_KEY) {
+        return;
+    }
+    let n = DEMO_IMAGE_SIZE;
+    let mut rgba = Vec::with_capacity((n * n * 4) as usize);
+    for y in 0..n {
+        for x in 0..n {
+            let checker = ((x / 12) + (y / 12)) % 2 == 0;
+            let r = (x * 255 / n) as u8;
+            let g = (y * 255 / n) as u8;
+            let b = if checker { 200u8 } else { 90u8 };
+            rgba.extend_from_slice(&[r, g, b, 255]);
+        }
+    }
+    ui.provide_image(DEMO_IMAGE_KEY, n, n, &rgba);
+}
 
 fn main() {
     println!(
@@ -16,60 +51,83 @@ fn main() {
         env!("CARGO_PKG_VERSION")
     );
 
-    let mut ui = IMUI::new(920, 620);
+    #[cfg(all(target_arch = "wasm32", feature = "dom"))]
+    console_error_panic_hook::set_once();
+
+    // Same `IMUI`, same widget code below either way — only how the window/
+    // event source is created and how the frame loop is driven differ (see
+    // `imui/lifecycle.rs`: `new_dom`/`run_dom` vs `new`/`eventloop`).
+    #[cfg(all(target_arch = "wasm32", feature = "dom"))]
+    let mut ui = IMUI::new_dom("mae-root");
+    #[cfg(not(all(target_arch = "wasm32", feature = "dom")))]
+    let mut ui = IMUI::new(920, 620, "Mae demo");
+
     let mut input = String::from("Edit me");
     let mut text = String::from(
         "Mae is now a GUI framework demo.\n\nThis text area exercises text input, children-sum layout, parent-percent layout, and draw command generation.\n\nClick in here and type.",
     );
+    // Short, driver-test-friendly seed — `text` above stays long for the
+    // showcase (and `www/test_dom_e2e.py` already asserts its exact value),
+    // which makes it impractical for `tests/testkit_driver.rs`'s scenario
+    // functions to reconstruct the "expected text after this edit" against.
+    let mut short_text = String::from("line one\nline two");
+    // A `RICH_TEXT_HOST` demo widget (see `widget_section`): the DOM
+    // backend hosts this as a `<div contenteditable>` instead of a plain
+    // `<textarea>` — exercises that path for CDP-driven testing the same
+    // way `text`/`input` above exercise the plain one. `MarkdownMode::
+    // Rendered` (below) is global to the `IMUI` instance.
+    //
+    // Deliberately a *different* string from `short_text` above, same shape
+    // (two same-length lines) otherwise: `tests/testkit_driver.rs`'s
+    // `UiDriver::click`/`exists` select an element by its *current text*
+    // (there's no separate "select by stable id" on the DOM backend — see
+    // `paint_dom.rs`'s `data-mae-id` handling), so two widgets sharing one
+    // seed is a real, easy-to-hit test bug: the query matches whichever
+    // element happens to come first in DOM order, silently exercising the
+    // wrong widget. This is exactly what happened here — every CDP test
+    // meant to exercise this box was actually clicking into `short_text`'s
+    // plain `<textarea>` instead, until this seed collision was found.
+    let mut markdown_text = String::from("note one\nnote two");
+    // Whether `###demo_markdown_textarea` is `MarkdownMode::Rendered` (hidden
+    // markers, a `RICH_TEXT_HOST`) or `::Source` (literal markers, a plain
+    // `<textarea>`) — toggled by the button next to it. `markdown_mode` is
+    // global to the whole `IMUI` instance (there's only the one markdown
+    // textarea here to be affected).
+    // Exists so CDP-driven tests can reach `Source` mode at all: the demo's
+    // own global mode used to be hardcoded to `Rendered`, with no way for a
+    // test driving the real page (as opposed to `NativeDriver`'s own
+    // from-scratch widget closure) to ever exercise the other one.
+    let mut markdown_rendered = true;
     let mut show_panel = false;
-    let mut selected_tab = 3usize;
-    let mut ide_state = ide_window::IdeViewState::new();
     let mut counter = 0usize;
+    let mut right_clicks = 0usize;
+    let mut clickable_row_hits = 0usize;
     let mut lazy_rendering = !ui.render_continuously();
     let mut vsync_enabled = ui.vsync_enabled();
+    let mut refresh_cap_enabled = ui.cap_fps_to_refresh_rate();
+    #[cfg(not(all(target_arch = "wasm32", feature = "dom")))]
     let mut renderer_menu_open = false;
     let mut theme_kind = ThemeKind::Dark;
 
-    ui.eventloop(|ui| {
+    // `move`: `run_dom` needs the closure to be `'static` (it's kept alive by a
+    // recursively-rescheduled `requestAnimationFrame` callback, well past this
+    // stack frame); `eventloop`'s blocking loop doesn't need that but is happy
+    // with a `move` closure too, so one closure serves both entry points below.
+    let build = move |ui: &mut IMUI| {
         ui.set_theme(UITheme::for_kind(theme_kind));
+        ui.set_markdown_mode(if markdown_rendered {
+            MarkdownMode::Rendered
+        } else {
+            MarkdownMode::Source
+        });
         if ui.input(OSKey::Keyboard(OSKeyCode::KeyT), Some(OSEventFlag::Control)) {
             show_panel = !show_panel;
         }
 
-        if selected_tab == 3 {
-            if ide_window::render(ui, &mut ide_state) {
-                selected_tab = 0;
-            }
-            return;
-        }
-
-        let root = ui.row(|ui| {
-            let sidebar = ui.column(|ui| {
-                let brand = ui.label("Mae");
-                app_style::title(ui, brand).height(ui, UISize::Pixels(34.0));
-
-                let subtitle = ui.label("GUI framework");
-                app_style::muted(ui, subtitle).height(ui, UISize::Pixels(28.0));
-
-                let nav = ui.named_column("###nav", |ui| {
-                    nav_button(ui, "Layout", 0, &mut selected_tab);
-                    nav_button(ui, "Widgets", 1, &mut selected_tab);
-                    nav_button(ui, "Render", 2, &mut selected_tab);
-                    nav_button(ui, "IDE", 3, &mut selected_tab);
-                });
-                let gap_sm = ui.theme().gap_sm;
-                nav.gap(ui, gap_sm);
-            });
-            app_style::sidebar(ui, sidebar);
-
+        let root = ui.column(|ui| {
             let content = ui.column(|ui| {
                 let header = ui.row(|ui| {
-                    let title = ui.label(match selected_tab {
-                        0 => "Layout Review",
-                        1 => "Widget Signals",
-                        2 => "Render Commands",
-                        _ => "IDE Mock",
-                    });
+                    let title = ui.label("Mae — GUI framework demo");
                     app_style::title(ui, title)
                         .width(ui, UISize::Fill)
                         .height(ui, UISize::Pixels(36.0));
@@ -119,79 +177,140 @@ fn main() {
                         ui.set_vsync_enabled(vsync_enabled);
                     }
 
-                    let current_backend = ui.renderer_backend();
-                    let control_h = ui.theme().control_h;
-                    let renderer_button = ui
-                        .button(
-                            &format!("Renderer: {}##renderer_dropdown", current_backend.label()),
-                            Some("Select the active renderer"),
-                        )
-                        .width(ui, UISize::Pixels(150.0))
-                        .height(ui, UISize::Pixels(control_h));
-                    if renderer_button.clicked() {
-                        renderer_menu_open = !renderer_menu_open;
+                    let refresh_cap_label =
+                        format!("Cap {:.0}Hz##refresh_cap_toggle", ui.refresh_rate_hz());
+                    let refresh_cap_switch = toggle_switch(
+                        ui,
+                        &refresh_cap_label,
+                        refresh_cap_enabled,
+                        "Cap maximum FPS to the screen refresh rate",
+                    );
+                    if refresh_cap_switch.clicked() {
+                        refresh_cap_enabled = !refresh_cap_enabled;
+                        ui.set_cap_fps_to_refresh_rate(refresh_cap_enabled);
                     }
 
-                    if renderer_menu_open {
-                        let trigger_bounds = ui.bounds(renderer_button);
-                        let menu_width = 180.0;
-                        let menu = ui.floating_pane_at(
-                            mae::imui::Point::new(
-                                trigger_bounds.x1 - menu_width,
-                                trigger_bounds.y1 + 6.0,
-                            ),
-                            Some("###renderer_menu"),
-                            |ui| {
-                                let theme = *ui.theme();
-                                for backend in Backend::available() {
-                                    let option = ui
-                                        .button(
-                                            &format!(
-                                                "{}{}##renderer_option_{:?}",
-                                                if backend == current_backend { "* " } else { "" },
-                                                backend.label(),
-                                                backend
-                                            ),
-                                            None,
-                                        )
-                                        .width(ui, UISize::Pixels(menu_width))
-                                        .height(ui, UISize::Pixels(30.0))
-                                        .background(
-                                            ui,
-                                            if backend == current_backend {
-                                                theme.accent
-                                            } else {
-                                                theme.surface_bg
-                                            },
-                                        );
-                                    if option.clicked() {
-                                        ui.set_renderer_backend(backend);
-                                        vsync_enabled = ui.vsync_enabled();
-                                        renderer_menu_open = false;
+                    // No equivalent to a GL/CPU backend switch exists for the DOM
+                    // backend (`ui.renderer_backend()` is uncallable in that build —
+                    // `Backend` has zero variants with neither `opengl` nor `cpu`
+                    // compiled in), so this dropdown only exists on the other targets.
+                    #[cfg(not(all(target_arch = "wasm32", feature = "dom")))]
+                    {
+                        let current_backend = ui.renderer_backend();
+                        let control_h = ui.theme().control_h;
+                        let renderer_button = ui
+                            .button(
+                                &format!(
+                                    "Renderer: {}##renderer_dropdown",
+                                    current_backend.as_str()
+                                ),
+                                Some("Select the active renderer"),
+                            )
+                            .width(ui, UISize::Pixels(150.0))
+                            .height(ui, UISize::Pixels(control_h));
+                        if renderer_button.clicked() {
+                            renderer_menu_open = !renderer_menu_open;
+                        }
+
+                        if renderer_menu_open {
+                            let trigger_bounds = ui.bounds(renderer_button);
+                            let menu_width = 180.0;
+                            let menu = ui.floating_pane_at(
+                                mae::imui::Point::new(
+                                    trigger_bounds.x1 - menu_width,
+                                    trigger_bounds.y1 + 6.0,
+                                ),
+                                Some("###renderer_menu"),
+                                |ui| {
+                                    let theme = *ui.theme();
+                                    for backend in Backend::available() {
+                                        let option = ui
+                                            .button(
+                                                &format!(
+                                                    "{}{}##renderer_option_{:?}",
+                                                    if backend == current_backend {
+                                                        "* "
+                                                    } else {
+                                                        ""
+                                                    },
+                                                    backend.as_str(),
+                                                    backend
+                                                ),
+                                                None,
+                                            )
+                                            .width(ui, UISize::Pixels(menu_width))
+                                            .height(ui, UISize::Pixels(30.0))
+                                            .background(
+                                                ui,
+                                                if backend == current_backend {
+                                                    theme.accent
+                                                } else {
+                                                    theme.surface_bg
+                                                },
+                                            );
+                                        if option.clicked() {
+                                            ui.set_renderer_backend(backend);
+                                            vsync_enabled = ui.vsync_enabled();
+                                            refresh_cap_enabled = ui.cap_fps_to_refresh_rate();
+                                            renderer_menu_open = false;
+                                        }
                                     }
-                                }
-                            },
-                        );
-                        app_style::popover(ui, menu);
+                                },
+                            );
+                            app_style::popover(ui, menu);
+                        }
                     }
                 });
-                app_style::toolbar(ui, header).align(
-                    ui,
-                    MainAxisAlign::Start,
-                    CrossAxisAlign::Center,
-                );
+                app_style::toolbar(ui, header)
+                    .width(ui, UISize::Fill)
+                    .align(ui, MainAxisAlign::Start, CrossAxisAlign::Center);
 
-                match selected_tab {
-                    0 => layout_page(ui, &mut show_panel),
-                    1 => widget_page(ui, &mut input, &mut text, &mut counter),
-                    2 => render_page(ui),
-                    _ => {}
-                }
+                // All four sections stacked in one continuously scrollable
+                // body (the sidebar/tab-switcher this demo used to have is
+                // gone — everything is visible together instead). Needs a
+                // stable id: an anonymous `ui.column` gets a brand new,
+                // never-before-seen box every single frame (no identity to
+                // persist across frames by), so its `scroll`/`scroll_target`
+                // would silently reset to zero on every rebuild — wheel
+                // input would never accumulate into a visible scroll.
+                let body = ui.named_column("###demo_body_scroll", |ui| {
+                    section_heading(ui, "Layout");
+                    layout_section(ui, &mut show_panel);
+
+                    section_heading(ui, "Widgets");
+                    widget_section(
+                        ui,
+                        &mut input,
+                        &mut text,
+                        &mut short_text,
+                        &mut markdown_text,
+                        &mut markdown_rendered,
+                        &mut counter,
+                        &mut right_clicks,
+                        &mut clickable_row_hits,
+                    );
+
+                    section_heading(ui, "Render");
+                    render_section(ui);
+
+                    section_heading(ui, "Scroll");
+                    scroll_section(ui);
+                });
+                body.width(ui, UISize::Fill)
+                    .height(ui, UISize::Fill)
+                    .gap(ui, ui.theme().gap_md)
+                    .scroll_y(ui, true)
+                    .clip(ui, true);
             });
             app_style::content(ui, content);
         });
         app_style::app_root(ui, root);
-    });
+    };
+
+    #[cfg(all(target_arch = "wasm32", feature = "dom"))]
+    ui.run_dom(build);
+    #[cfg(not(all(target_arch = "wasm32", feature = "dom")))]
+    ui.eventloop(build);
 }
 
 fn toggle_switch(ui: &mut IMUI, label: &str, enabled: bool, tooltip: &str) -> UIBoxHandle {
@@ -199,15 +318,7 @@ fn toggle_switch(ui: &mut IMUI, label: &str, enabled: bool, tooltip: &str) -> UI
     app_style::toggle(ui, button, enabled)
 }
 
-fn nav_button(ui: &mut IMUI, label: &str, id: usize, selected_tab: &mut usize) {
-    let raw = ui.button(&format!("{label}##nav_{id}"), None);
-    let button = app_style::nav_item(ui, raw, *selected_tab == id);
-    if button.clicked() {
-        *selected_tab = id;
-    }
-}
-
-fn layout_page(ui: &mut IMUI, show_panel: &mut bool) {
+fn layout_section(ui: &mut IMUI, show_panel: &mut bool) {
     let page = ui.column(|ui| {
         let controls = ui.row(|ui| {
             let control_h = ui.theme().control_h;
@@ -236,13 +347,10 @@ fn layout_page(ui: &mut IMUI, show_panel: &mut bool) {
         let body = ui.row(|ui| {
             let left = ui.column(|ui| {
                 section_title(ui, "Sizing");
-                metric_row(ui, "Pixels", "Fixed sizes");
-                metric_row(ui, "ParentPct", "Relative to parent");
-                metric_row(ui, "ChildrenSum", "Content driven");
-                metric_row(ui, "Fill", "Remaining space");
+                sizing_demo(ui);
             });
             let surface_bg = ui.theme().surface_bg;
-            left.height(ui, UISize::ParentPct(1.0))
+            left.height(ui, UISize::Pixels(340.0))
                 .background(ui, surface_bg);
             app_style::panel(ui, left);
 
@@ -261,27 +369,125 @@ fn layout_page(ui: &mut IMUI, show_panel: &mut bool) {
             }
         });
         body.width(ui, UISize::ParentPct(1.0))
-            .height(ui, UISize::Fill)
+            .height(ui, UISize::ChildrenSum)
             .gap(ui, 12.0);
     });
     page.width(ui, UISize::ParentPct(1.0))
-        .height(ui, UISize::Fill)
+        .height(ui, UISize::ChildrenSum)
         .gap(ui, 12.0);
 }
 
-fn widget_page(ui: &mut IMUI, input: &mut String, text: &mut String, counter: &mut usize) {
+/// One labeled, colored bar per [`UISize`] variant, each actually sized the
+/// way its label describes — a visual complement to the API rather than a
+/// name/description text table.
+fn sizing_demo(ui: &mut IMUI) {
+    let radius = ui.theme().radius;
+    let track_bg = ui.theme().surface_active;
+
+    let track = ui.row(|ui| {
+        let bar = ui.label("Pixels: 150px");
+        bar.width(ui, UISize::Pixels(150.0))
+            .height(ui, UISize::ParentPct(1.0))
+            .background(ui, Color::new("#6fa8d7"))
+            .corner_radius(ui, radius)
+            .text_center(ui, true);
+    });
+    track
+        .width(ui, UISize::ParentPct(1.0))
+        .height(ui, UISize::Pixels(40.0))
+        .padding_all(ui, 4.0)
+        .background(ui, track_bg)
+        .corner_radius(ui, radius);
+
+    let track = ui.row(|ui| {
+        let bar = ui.label("ParentPct: 50% of this track");
+        bar.width(ui, UISize::ParentPct(0.5))
+            .height(ui, UISize::ParentPct(1.0))
+            .background(ui, Color::new("#75b878"))
+            .corner_radius(ui, radius)
+            .text_center(ui, true);
+    });
+    track
+        .width(ui, UISize::ParentPct(1.0))
+        .height(ui, UISize::Pixels(40.0))
+        .padding_all(ui, 4.0)
+        .background(ui, track_bg)
+        .corner_radius(ui, radius);
+
+    let track = ui.row(|ui| {
+        // The bar (a container, not the label itself — a leaf label is
+        // already text-sized) hugs exactly its child label plus padding.
+        let bar = ui.row(|ui| {
+            ui.label("ChildrenSum: hugs its content");
+        });
+        bar.width(ui, UISize::ChildrenSum)
+            .height(ui, UISize::ParentPct(1.0))
+            .padding(ui, 0.0, 14.0, 0.0, 14.0)
+            .background(ui, Color::new("#d7b56f"))
+            .corner_radius(ui, radius)
+            .align(ui, MainAxisAlign::Center, CrossAxisAlign::Center);
+    });
+    track
+        .width(ui, UISize::ParentPct(1.0))
+        .height(ui, UISize::Pixels(40.0))
+        .padding_all(ui, 4.0)
+        .background(ui, track_bg)
+        .corner_radius(ui, radius);
+
+    let neutral_bg = ui.theme().surface_bg;
+    let track = ui.row(|ui| {
+        let anchor = ui.label("Pixels: 90px");
+        anchor
+            .width(ui, UISize::Pixels(90.0))
+            .height(ui, UISize::ParentPct(1.0))
+            .background(ui, neutral_bg)
+            .corner_radius(ui, radius)
+            .text_center(ui, true);
+
+        let bar = ui.label("Fill: remaining space");
+        bar.width(ui, UISize::Fill)
+            .height(ui, UISize::ParentPct(1.0))
+            .background(ui, Color::new("#b074d7"))
+            .corner_radius(ui, radius)
+            .text_center(ui, true);
+    });
+    track
+        .width(ui, UISize::ParentPct(1.0))
+        .height(ui, UISize::Pixels(40.0))
+        .padding_all(ui, 4.0)
+        .gap(ui, 6.0)
+        .background(ui, track_bg)
+        .corner_radius(ui, radius);
+}
+
+fn widget_section(
+    ui: &mut IMUI,
+    input: &mut String,
+    text: &mut String,
+    short_text: &mut String,
+    markdown_text: &mut String,
+    markdown_rendered: &mut bool,
+    counter: &mut usize,
+    right_clicks: &mut usize,
+    clickable_row_hits: &mut usize,
+) {
     let body = ui.column(|ui| {
         section_title(ui, "Signals");
         let signal_row = ui.row(|ui| {
             let button = ui
                 .button(
                     "Click target",
-                    Some("Reports press/hover/click signal state"),
+                    Some(
+                        "Reports press/hover/click signal state; right-click to test RIGHT_CLICKED",
+                    ),
                 )
                 .width(ui, UISize::Pixels(160.0))
                 .height(ui, UISize::Pixels(36.0));
             app_style::button(ui, button);
-            let report = signal_report(button);
+            if button.right_clicked() {
+                *right_clicks += 1;
+            }
+            let report = format!("{} right_clicks={right_clicks}", signal_report(button));
             ui.label(&report);
         });
         signal_row
@@ -307,45 +513,198 @@ fn widget_page(ui: &mut IMUI, input: &mut String, text: &mut String, counter: &m
             .gap(ui, 8.0)
             .align(ui, MainAxisAlign::Start, CrossAxisAlign::Center);
 
+        // `clickable_row`: a MOUSE_CLICKABLE container with no DRAW_HOT_EFFECTS
+        // styling of its own — exercises the DOM backend's pointer-events
+        // gating fix (a clickable box that isn't a `<button>`-styled hot
+        // element must still be a native hit-test target). The hit count is
+        // a separate label built *after* `row.clicked()` is checked, not a
+        // child of the row itself — a child's text is built before the row
+        // handle (and thus `.clicked()`) is available, which would leave
+        // the displayed count one interaction stale.
+        let row = ui.clickable_row("###clickable_row_demo", |ui| {
+            let label = ui.label("Click anywhere in this row");
+            app_style::muted(ui, label).width(ui, UISize::Fill);
+        });
+        let surface_bg = ui.theme().surface_bg;
+        row.width(ui, UISize::ParentPct(1.0))
+            .height(ui, UISize::Pixels(32.0))
+            .padding_all(ui, 6.0)
+            .background(ui, surface_bg)
+            .corner_radius(ui, ui.theme().radius)
+            .align(ui, MainAxisAlign::Start, CrossAxisAlign::Center);
+        if row.clicked() {
+            *clickable_row_hits += 1;
+        }
+        ui.label(&format!("Row hits: {clickable_row_hits}"));
+
         section_title(ui, "Text Input");
         ui.line_edit("###demo_line_edit", input, false)
             .height(ui, UISize::Pixels(34.0));
 
         ui.textarea("###demo_textarea", text)
-            .height(ui, UISize::Fill);
+            .height(ui, UISize::Pixels(120.0));
+
+        // Short-seeded plain textarea — see `short_text`'s doc comment.
+        ui.textarea("###demo_short_textarea", short_text)
+            .height(ui, UISize::Pixels(60.0));
+
+        // Rendered-markdown textarea (`MarkdownMode::Rendered` by default,
+        // toggled below) — in that mode the DOM backend hosts this as a
+        // `RICH_TEXT_HOST` `<div contenteditable>` instead of a plain
+        // `<textarea>` (see `paint_dom.rs`). Exercises that path for
+        // `tests/testkit_driver.rs`'s CDP-driven scenarios the same way
+        // `###demo_textarea` above exercises the plain one.
+        let markdown_mode_label = if *markdown_rendered {
+            "Markdown: Rendered###markdown_mode_toggle"
+        } else {
+            "Markdown: Source###markdown_mode_toggle"
+        };
+        if ui.button(markdown_mode_label, None).clicked() {
+            *markdown_rendered = !*markdown_rendered;
+        }
+        ui.markdown_textarea_with_options(
+            "###demo_markdown_textarea",
+            markdown_text,
+            TextAreaOptions::default(),
+        )
+        .height(ui, UISize::Pixels(120.0));
+
+        section_title(ui, "Icons");
+        let icon_row = ui.row(|ui| {
+            for (glyph, id, tooltip) in [
+                (ICON_INFO, "icon_info", "Info"),
+                (ICON_WARNING, "icon_warning", "Warning"),
+                (ICON_DANGER, "icon_danger", "Danger"),
+                (ICON_CLOSE, "icon_close", "Close"),
+                (ICON_FOLDER, "icon_folder", "Folder"),
+            ] {
+                ui.button_icon(&format!("{glyph}##{id}"), Some(tooltip));
+            }
+            // A non-interactive icon glyph, larger and tinted, alongside the
+            // clickable ones above.
+            let accent = ui.theme().accent;
+            ui.icon_label(ICON_INFO)
+                .width(ui, UISize::Pixels(40.0))
+                .height(ui, UISize::Pixels(40.0))
+                .font_size(ui, 32.0)
+                .text_color(ui, accent);
+        });
+        icon_row
+            .height(ui, UISize::Pixels(40.0))
+            .gap(ui, 8.0)
+            .align(ui, MainAxisAlign::Start, CrossAxisAlign::Center);
+
+        section_title(ui, "Image");
+        ensure_demo_image(ui);
+        ui.image("###demo_image", DEMO_IMAGE_KEY)
+            .width(ui, UISize::Pixels(96.0))
+            .height(ui, UISize::Pixels(96.0));
     });
     let surface_bg = ui.theme().surface_bg;
     body.width(ui, UISize::ParentPct(1.0))
-        .height(ui, UISize::Fill)
+        .height(ui, UISize::ChildrenSum)
         .background(ui, surface_bg);
     app_style::panel(ui, body);
 }
 
-fn render_page(ui: &mut IMUI) {
+fn scroll_section(ui: &mut IMUI) {
+    let body = ui.named_column("###scroll_section_body", |ui| {
+        section_title(ui, "Vertical list (scroll wheel or drag the scrollbar)");
+        let list = ui.named_column("###vertical_scroll_list", |ui| {
+            for i in 0..40 {
+                let row = ui.row(|ui| {
+                    let label = ui.label(&format!("Row {i}"));
+                    app_style::muted(ui, label).width(ui, UISize::Fill);
+                    if i % 7 == 0 {
+                        ui.icon_label(ICON_INFO)
+                            .width(ui, UISize::Pixels(20.0))
+                            .height(ui, UISize::Pixels(20.0));
+                    }
+                });
+                row.width(ui, UISize::Fill)
+                    .height(ui, UISize::Pixels(28.0))
+                    .align(ui, MainAxisAlign::Start, CrossAxisAlign::Center);
+            }
+        });
+        let surface_bg = ui.theme().surface_bg;
+        list.width(ui, UISize::ParentPct(1.0))
+            .height(ui, UISize::Pixels(180.0))
+            .background(ui, surface_bg)
+            .scroll_y(ui, true)
+            .clip(ui, true);
+        app_style::panel(ui, list);
+
+        // Alt (not Shift) is what `scroll.rs::absorb_pending_scroll_for_box`
+        // reroutes a vertical wheel into a horizontal scroll with — see
+        // `has_flag(ev.flags, OSEventFlag::Alt)`.
+        section_title(ui, "Horizontal strip (alt+wheel or drag the scrollbar)");
+        // Enough cards to overflow the strip even on a very wide/large
+        // display, so the scrolling behavior stays demonstrable regardless
+        // of window size.
+        let strip = ui.named_row("###horizontal_scroll_strip", |ui| {
+            for i in 0..80 {
+                let card = ui.column(|ui| {
+                    let label = ui.label(&format!("Card {i}"));
+                    app_style::accent_text(ui, label);
+                });
+                let surface_bg = ui.theme().surface_active;
+                card.width(ui, UISize::Pixels(96.0))
+                    .height(ui, UISize::ParentPct(1.0))
+                    .background(ui, surface_bg)
+                    .corner_radius(ui, ui.theme().radius)
+                    .padding_all(ui, 10.0);
+            }
+        });
+        let surface_bg = ui.theme().surface_bg;
+        strip
+            .width(ui, UISize::ParentPct(1.0))
+            .height(ui, UISize::Pixels(120.0))
+            .gap(ui, 8.0)
+            .background(ui, surface_bg)
+            .scroll_x(ui, true)
+            .clip(ui, true);
+        app_style::panel(ui, strip);
+    });
+    let surface_bg = ui.theme().surface_bg;
+    body.width(ui, UISize::ParentPct(1.0))
+        .height(ui, UISize::ChildrenSum)
+        .gap(ui, 12.0)
+        .background(ui, surface_bg);
+    app_style::panel(ui, body);
+}
+
+fn render_section(ui: &mut IMUI) {
     let body = ui.column(|ui| {
         section_title(ui, "Draw Layer");
         ui.label("The UI tree emits rectangles, borders, and text through the draw layer before the renderer backend consumes batches.");
 
         let swatches = ui.row(|ui| {
-            for (idx, color) in ["#d76f6f", "#d7b56f", "#75b878", "#6fa8d7", "#b074d7"]
-                .iter()
-                .enumerate()
-            {
-                ui.label(&format!("##swatch_{idx}"))
+            for color in ["#d76f6f", "#d7b56f", "#75b878", "#6fa8d7", "#b074d7"] {
+                ui.label("")
                     .width(ui, UISize::Fill)
                     .height(ui, UISize::Pixels(84.0))
                     .background(ui, Color::new(color));
             }
         });
         swatches
+            .width(ui, UISize::ParentPct(1.0))
             .height(ui, UISize::Pixels(92.0))
             .gap(ui, 8.0);
     });
     let surface_bg = ui.theme().surface_bg;
     body.width(ui, UISize::ParentPct(1.0))
-        .height(ui, UISize::Fill)
+        .height(ui, UISize::ChildrenSum)
         .background(ui, surface_bg);
     app_style::panel(ui, body);
+}
+
+/// A top-level section header (Layout/Widgets/Render/Scroll) — bigger than
+/// [`section_title`], which marks sub-sections within one.
+fn section_heading(ui: &mut IMUI, text: &str) -> UIBoxHandle {
+    let label = ui.label(text);
+    app_style::title(ui, label)
+        .height(ui, UISize::Pixels(40.0))
+        .font_size(ui, 22.0)
 }
 
 fn section_title(ui: &mut IMUI, text: &str) -> UIBoxHandle {
@@ -353,22 +712,8 @@ fn section_title(ui: &mut IMUI, text: &str) -> UIBoxHandle {
     app_style::title(ui, label).height(ui, UISize::Pixels(30.0))
 }
 
-fn metric_row(ui: &mut IMUI, name: &str, value: &str) {
-    let row = ui.row(|ui| {
-        let name_label = ui.label(name);
-        app_style::accent_text(ui, name_label)
-            .width(ui, UISize::Pixels(120.0))
-            .height(ui, UISize::Pixels(24.0));
-
-        let value_label = ui.label(value);
-        app_style::muted(ui, value_label).width(ui, UISize::Fill);
-    });
-    row.height(ui, UISize::Pixels(30.0))
-        .align(ui, MainAxisAlign::Start, CrossAxisAlign::Center);
-}
-
 fn signal_report(handle: UIBoxHandle) -> String {
-    let signal: UiSignal = handle.signal();
+    let signal: UISignal = handle.signal();
     format!(
         "pressed={} clicked={} dragging={} hover={}",
         signal.pressed(),

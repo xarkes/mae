@@ -13,12 +13,13 @@ compile_error!("Support for targeted OS is not implemented!",);
 mod os_impl;
 
 extern crate gl;
+use super::{Backend, RenderBackend, RendererError};
 use crate::os::Window;
 use gl::types::{GLchar, GLenum, GLint, GLuint};
 use log;
 use std::ffi::CString;
 
-use super::{Rect2DInst, TextureFormat};
+use super::{Rect2DInst, TextureFormat, V4f32};
 
 static ATTRIBS: [(u32, i32, u32, &str); 7] = [
     (0, 4, gl::FLOAT, "c2v_dst_rect"),
@@ -44,12 +45,13 @@ pub struct GLContext {
     vbo: u32,
 }
 
-// XXX(xarkes): I just allocate a 4MB buffer at the moment and that's not right :)
+// Keep a single static instance buffer. On macOS, resizing/orphaning this buffer
+// dynamically can cost more driver memory than the unused capacity saves.
 const GL_BUFFER_SIZE: isize = 4 * 1024 * 1024;
 
 impl GLContext {
-    pub fn new(win: &Window) -> Self {
-        let ctx = os_impl::ogl_create_context(win);
+    pub fn new(win: &Window) -> Result<Box<dyn RenderBackend>, RendererError> {
+        let ctx = os_impl::ogl_create_context(win)?;
         // SAFETY(xarkes): The pointers come back from OpenGL library.
         // We also assume the GetString function was resolved earlier, if not it will simply result in a null deref.
         // log::debug!("Context: {:?}", ctx.egl.get_current_context());
@@ -67,8 +69,13 @@ impl GLContext {
                     versionstr,
                     rendererstr
                 );
+                println!(
+                    "OpenGL vendor: {} - version: {} - renderer: {}",
+                    vendorstr, versionstr, rendererstr
+                );
             } else {
                 log::info!("Could not retrieve OpenGL vendor and version!");
+                println!("Could not retrieve OpenGL vendor and version!");
             }
         }
 
@@ -117,14 +124,14 @@ impl GLContext {
 
         let (width, height) = win.get_size();
 
-        GLContext {
+        Ok(Box::new(GLContext {
             width,
             height,
             ctx,
             program,
             vao,
             vbo,
-        }
+        }))
     }
 
     pub fn create_texture(&mut self, width: usize, height: usize, format: TextureFormat) -> u32 {
@@ -136,6 +143,7 @@ impl GLContext {
             gl::BindTexture(gl::TEXTURE_2D, texture);
             let (internal_format, source_format) = match format {
                 TextureFormat::R8 => (gl::RED as i32, gl::RED),
+                TextureFormat::Rgba8 => (gl::RGBA as i32, gl::RGBA),
             };
             gl::TexImage2D(
                 gl::TEXTURE_2D,
@@ -165,7 +173,12 @@ impl GLContext {
         width: usize,
         height: usize,
         data: &[u8],
+        format: TextureFormat,
     ) {
+        let source_format = match format {
+            TextureFormat::R8 => gl::RED,
+            TextureFormat::Rgba8 => gl::RGBA,
+        };
         unsafe {
             gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
             gl::BindTexture(gl::TEXTURE_2D, id);
@@ -176,7 +189,7 @@ impl GLContext {
                 y as i32,
                 width as i32,
                 height as i32,
-                gl::RED,
+                source_format,
                 gl::UNSIGNED_BYTE,
                 data.as_ptr() as *const _,
             );
@@ -201,6 +214,7 @@ impl GLContext {
             let mut width = self.width;
             let mut height = self.height;
             gl::Clear(gl::COLOR_BUFFER_BIT);
+            gl::UseProgram(self.program);
             gl::Uniform2f(
                 gl::GetUniformLocation(
                     self.program,
@@ -217,7 +231,6 @@ impl GLContext {
                 height *= 2.0;
             }
             gl::Viewport(0, 0, width as i32, height as i32);
-            gl::UseProgram(self.program);
         }
     }
 
@@ -300,7 +313,7 @@ impl GLContext {
     }
 }
 
-impl super::RenderBackend for GLContext {
+impl RenderBackend for GLContext {
     fn create_texture(&mut self, width: usize, height: usize, format: TextureFormat) -> u32 {
         GLContext::create_texture(self, width, height, format)
     }
@@ -313,8 +326,9 @@ impl super::RenderBackend for GLContext {
         width: usize,
         height: usize,
         data: &[u8],
+        format: TextureFormat,
     ) {
-        GLContext::update_texture_region(self, id, x, y, width, height, data)
+        GLContext::update_texture_region(self, id, x, y, width, height, data, format)
     }
 
     fn remove_texture(&mut self, id: u32) {
@@ -325,6 +339,10 @@ impl super::RenderBackend for GLContext {
 
     fn resize(&mut self, w: f32, h: f32) {
         GLContext::resize(self, w, h)
+    }
+
+    fn set_clear_color(&mut self, color: V4f32) {
+        unsafe { gl::ClearColor(color.r, color.g, color.b, color.a) };
     }
 
     fn begin_frame(&mut self) {
@@ -341,6 +359,37 @@ impl super::RenderBackend for GLContext {
 
     fn vsync(&mut self, enable: bool) {
         GLContext::vsync(self, enable)
+    }
+
+    fn backend(&self) -> Backend {
+        Backend::OpenGL
+    }
+
+    #[cfg(feature = "png_capture")]
+    fn capture_framebuffer(&mut self) -> (Vec<u8>, usize, usize) {
+        let w = self.width as usize;
+        let h = self.height as usize;
+        let mut pixels = vec![0u8; w * h * 4];
+        unsafe {
+            gl::ReadPixels(
+                0,
+                0,
+                w as i32,
+                h as i32,
+                gl::RGBA,
+                gl::UNSIGNED_BYTE,
+                pixels.as_mut_ptr() as *mut _,
+            );
+        }
+        // OpenGL returns rows bottom-to-top; flip to top-to-bottom.
+        let row = w * 4;
+        for y in 0..h / 2 {
+            let (top, bot) = (y * row, (h - 1 - y) * row);
+            for x in 0..row {
+                pixels.swap(top + x, bot + x);
+            }
+        }
+        (pixels, w, h)
     }
 }
 

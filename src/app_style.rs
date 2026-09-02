@@ -10,18 +10,6 @@ pub fn app_root(ui: &mut IMUI, handle: UIBoxHandle) -> UIBoxHandle {
         .background(ui, theme.app_bg)
 }
 
-pub fn sidebar(ui: &mut IMUI, handle: UIBoxHandle) -> UIBoxHandle {
-    let theme = *ui.theme();
-    handle
-        .width(ui, UISize::Pixels(theme.sidebar_w))
-        .height(ui, UISize::ParentPct(1.0))
-        .padding_all(ui, theme.pad_lg)
-        .gap(ui, theme.gap_sm)
-        .background(ui, theme.sidebar_bg)
-        .border_color(ui, theme.border_muted)
-        .corner_radius(ui, theme.radius)
-}
-
 pub fn content(ui: &mut IMUI, handle: UIBoxHandle) -> UIBoxHandle {
     let theme = *ui.theme();
     handle
@@ -97,21 +85,6 @@ pub fn toggle(ui: &mut IMUI, handle: UIBoxHandle, enabled: bool) -> UIBoxHandle 
             theme.surface_bg
         },
     )
-}
-
-pub fn nav_item(ui: &mut IMUI, handle: UIBoxHandle, selected: bool) -> UIBoxHandle {
-    let theme = *ui.theme();
-    button(ui, handle)
-        .width(ui, UISize::ParentPct(1.0))
-        .height(ui, UISize::Pixels(34.0))
-        .background(
-            ui,
-            if selected {
-                theme.accent
-            } else {
-                theme.surface_bg
-            },
-        )
 }
 
 pub fn popover(ui: &mut IMUI, handle: UIBoxHandle) -> UIBoxHandle {

@@ -4,28 +4,144 @@ version = "0.0.1"
 edition = "2024"
 
 [features]
-default = ["opengl", "cpu", "fontdue", "freetype"]
+default = ["opengl", "cpu"]
 opengl = ["dep:gl"]
-fontdue = ["dep:fontdue"]
-freetype = ["dep:freetype-rs"]
 cpu = []
+# DOM render backend (wasm32 web target): reconciles the box tree into real
+# DOM elements instead of GL draw calls. See src/imui/paint_dom.rs.
+dom = []
 testkit = []
+png_capture = []
+# `testkit::cdp::CdpDriver`: drives a real page in a locally installed
+# headless Chromium over the DevTools Protocol, implementing the same
+# `UiDriver` trait `NativeDriver` does — see src/testkit/cdp.rs. Test/dev
+# tooling only; never enabled for a wasm32 build (a browser can't launch
+# another browser).
+cdp = ["testkit", "dep:tungstenite", "dep:serde_json"]
 
 [dependencies]
-fontdue = { version = "0.9.3", optional = true }
 gl = { version = "*", optional = true }
+harfrust = "0.10"
+read-fonts = "0.40"
+skrifa = "0.43"
+zeno = "0.3"
+png = "0.17"
+unicode-segmentation = "1"
+unicode-bidi = "0.3"
+rustc-hash = "2"
 log = "0.4"
 
-[target.'cfg(target_os = "linux")'.dependencies]
-freetype-rs = { version = "0.38", optional = true }
+# Enable the `testkit` feature automatically for `cargo test`. A self dev-dependency
+# turns the feature on (via feature unification) for unit + integration tests, so the
+# `#![cfg(feature = "testkit")]` integration tests actually run without extra flags.
+# `default-features = false` here matters for `cargo test --no-default-features
+# --features dom --target wasm32-unknown-unknown`: without it, this edge would pull
+# `opengl`/`cpu` back in via feature unification regardless of the outer command's
+# flags (a dependency edge's own feature request isn't affected by the top-level
+# package's `--no-default-features`), which doesn't compile for wasm32 at all.
+[dev-dependencies]
+mae = { path = ".", default-features = false, features = ["testkit"] }
+
+# `testkit::cdp::CdpDriver` only (feature = "cdp") — a raw, blocking
+# JSON-RPC-over-WebSocket client to a local Chromium's DevTools Protocol
+# endpoint, and JSON encoding for the handful of messages it sends/parses.
+# Native-only: this drives a browser from the *outside*, so it can never run
+# on wasm32 itself.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tungstenite = { version = "0.26", optional = true }
+serde_json = { version = "1", optional = true }
 
 [target.'cfg(target_os="linux")'.dependencies]
 x11 = { version = "2.21.0", features = ["xlib", "glx"] }
 
 [target.'cfg(target_os="macos")'.dependencies]
 objc2 = "*"
-objc2-app-kit = "*"
-objc2-foundation = "*"
+objc2-app-kit = { version = "*", features = [
+  "NSImage",
+  "NSPasteboard",
+  "NSResponder",
+  "NSTextInputClient",
+  "NSTextInputContext",
+  "NSEvent",
+] }
+objc2-foundation = { version = "*", features = ["NSData", "NSArray", "NSAttributedString", "NSValue", "NSRange"] }
+objc2-core-text = "0.3"
+objc2-core-foundation = "0.3"
+
+# The `#[implement]` macro (used for the DirectWrite text-analysis source in the
+# font-fallback locator) expands to absolute `::windows_core` paths, so the crate
+# must be present under that name even though we otherwise reach it via `windows::core`.
+[target.'cfg(target_os="windows")'.dependencies]
+windows-core = "*"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+console_error_panic_hook = "0.1"
+web-sys = { version = "0.3", features = [
+  "Window",
+  "Document",
+  "Element",
+  "DomTokenList",
+  "HtmlElement",
+  "HtmlInputElement",
+  "HtmlTextAreaElement",
+  "CssStyleDeclaration",
+  "Node",
+  "DomRect",
+  "Event",
+  "PointerEvent",
+  "KeyboardEvent",
+  "WheelEvent",
+  "InputEvent",
+  # `InputEvent::data_transfer()` — where a paste's actual content lives
+  # (`data()` is null for `insertFromPaste`), see `attach_richtext_listeners`.
+  "DataTransfer",
+  # Image paste: `ClipboardEvent::clipboard_data()` carries the pasted
+  # file, read to bytes with a `FileReader` (see `attach_richtext_listeners`).
+  "ClipboardEvent",
+  "File",
+  "FileList",
+  "FileReader",
+  "CompositionEvent",
+  "EventTarget",
+  # Rich-text host (`paint_dom.rs`'s `RICH_TEXT_HOST`): `beforeinput`'s
+  # `getTargetRanges()` returns `StaticRange`s (needs its `AbstractRange`
+  # base for start/end container+offset); `Selection`/`Range` restore the
+  # caret after every DOM rebuild; `Text` distinguishes a Range endpoint
+  # landing in a span's text node from landing on an element/container.
+  "StaticRange",
+  "AbstractRange",
+  "Selection",
+  "Range",
+  "Text",
+  "NodeList",
+  "ResizeObserver",
+  "ResizeObserverEntry",
+  "ResizeObserverBoxOptions",
+  "Performance",
+  "console",
+  "Blob",
+  "BlobPropertyBag",
+  "Url",
+  "HtmlImageElement",
+  # `navigator.platform`, the browser's answer to a question `target_os`
+  # cannot answer on wasm32 — see `os/wasm.rs`'s `is_apple_platform`.
+  "Navigator",
+  # `Range::getClientRects()` — one rect per visual line a remote
+  # collaborator's selection spans, see `paint_remote_carets`.
+  "DomRectList",
+  # `window.visualViewport` — the only thing that moves when an on-screen
+  # keyboard opens on iOS, see `os/wasm.rs`'s `visual_viewport_height`.
+  "VisualViewport",
+] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+# Runs the existing `#[test]` suite (src/imui/tests.rs, tests/testkit.rs) in a
+# real browser via `wasm-bindgen-test-runner` + chromedriver — see the `use
+# wasm_bindgen_test::wasm_bindgen_test as test;` shadowing trick at the top of
+# each test module, which needs no per-function attribute changes.
+wasm-bindgen-test = "0.3"
 
 [target.'cfg(target_os="windows")'.dependencies.windows]
 version = "*"
@@ -33,8 +149,13 @@ features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
   "Win32_Graphics_OpenGL",
+  "Win32_Graphics_DirectWrite",
+  "Win32_System_DataExchange",
   "Win32_System_LibraryLoader",
+  "Win32_System_Memory",
   "Win32_System_Performance",
+  "Win32_UI_Input_Ime",
+  "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_WindowsAndMessaging",
 ]
 
@@ -42,3 +163,8 @@ features = [
 lto = true
 strip = true
 panic = "abort"
+# Optimise for size: `"s"` trims ~1.5 MiB off the binary vs the default
+# opt-level 3, and a single codegen unit lets LTO dedup across the whole graph.
+# This is a GUI text editor, not a throughput-bound workload, so the marginal
+# perf cost is irrelevant while the smaller binary is a clear win.
+opt-level = "s"

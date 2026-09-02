@@ -9,10 +9,25 @@ use crate::{
     render::{self, RectCoords, V4f32},
 };
 
+mod input;
+mod layout;
+mod lifecycle;
+mod paint;
+#[cfg(feature = "dom")]
+mod paint_dom;
+mod scroll;
+#[cfg(test)]
+mod tests;
+mod text_edit;
+mod toast;
+mod widgets;
+
+pub use toast::ToastLevel;
+
 pub mod uibox {
     pub use super::{
         Color, Padding, ThemeKind, UIBox, UIBoxFlags as UIBoxFlag, UIBoxHandle, UIBoxParams,
-        UIBoxStyle, UITheme, UiSignal as UIBoxSignal, u64_hash_from_string,
+        UIBoxStyle, UISignal as UIBoxSignal, UITheme, u64_hash_from_string,
     };
 }
 
@@ -194,6 +209,20 @@ struct ScrollbarDrag {
     thumb_grab_offset: f32,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct ScrollbarHitArea {
+    key: UiKey,
+    rect: RectCoords,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct TextClickStreak {
+    key: UiKey,
+    pos: Point,
+    time: f64,
+    count: u8,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum UISize {
     Pixels(f32),
@@ -245,7 +274,7 @@ pub enum CrossAxisAlign {
     Stretch,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Padding {
     pub top: f32,
     pub right: f32,
@@ -306,7 +335,7 @@ impl UiKey {
 pub struct UIBoxHandle {
     idx: usize,
     key: UiKey,
-    signal: UiSignal,
+    signal: UISignal,
 }
 
 impl UIBoxHandle {
@@ -314,7 +343,7 @@ impl UIBoxHandle {
         self.key
     }
 
-    pub fn signal(&self) -> UiSignal {
+    pub fn signal(&self) -> UISignal {
         self.signal
     }
 
@@ -328,6 +357,10 @@ impl UIBoxHandle {
 
     pub fn clicked(&self) -> bool {
         self.signal.clicked()
+    }
+
+    pub fn right_clicked(&self) -> bool {
+        self.signal.right_clicked()
     }
 
     pub fn dragging(&self) -> bool {
@@ -372,6 +405,11 @@ impl UIBoxHandle {
         self
     }
 
+    pub fn font_size(self, ui: &mut IMUI, size: f32) -> Self {
+        ui.font_size(self, size);
+        self
+    }
+
     pub fn border_color(self, ui: &mut IMUI, color: Color) -> Self {
         ui.border_color(self, color);
         self
@@ -382,13 +420,44 @@ impl UIBoxHandle {
         self
     }
 
+    /// Per-side padding, in CSS order (top, right, bottom, left).
+    pub fn padding(self, ui: &mut IMUI, top: f32, right: f32, bottom: f32, left: f32) -> Self {
+        ui.padding(self, top, right, bottom, left);
+        self
+    }
+
     pub fn gap(self, ui: &mut IMUI, value: f32) -> Self {
         ui.gap(self, value);
         self
     }
 
+    /// Scale this box's painted alpha (and every descendant's) by `opacity`,
+    /// clamped to `[0, 1]`. Compose an app-driven fade with it — hold the
+    /// animated value in app state and step it with [`IMUI::dt`] +
+    /// [`animate_scalar`]. Floating panes additionally fade themselves in on
+    /// appearance; the two multiply.
+    pub fn opacity(self, ui: &mut IMUI, opacity: f32) -> Self {
+        ui.opacity(self, opacity);
+        self
+    }
+
     pub fn corner_radius(self, ui: &mut IMUI, radius: f32) -> Self {
         ui.corner_radius(self, radius);
+        self
+    }
+
+    /// Override the box's text/content margin (default `2.0`). Set to `0.0` for
+    /// inline text segments that must butt up against each other seamlessly.
+    pub fn margin(self, ui: &mut IMUI, margin: f32) -> Self {
+        ui.margin(self, margin);
+        self
+    }
+
+    /// Paint a highlight rectangle (in `color`) behind each given byte range of
+    /// this box's text — e.g. to highlight search matches inside one continuous
+    /// label without splitting it into separately-clipped segments.
+    pub fn text_highlights(self, ui: &mut IMUI, ranges: Vec<(usize, usize)>, color: Color) -> Self {
+        ui.text_highlights(self, ranges, color);
         self
     }
 
@@ -421,17 +490,24 @@ impl UIBoxHandle {
         ui.align(self, main, cross);
         self
     }
+
+    /// Center this box's own text within its content area (see
+    /// [`UIBoxStyle::text_align_center`]).
+    pub fn text_center(self, ui: &mut IMUI, center: bool) -> Self {
+        ui.text_center(self, center);
+        self
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub struct UiSignal {
+pub struct UISignal {
     pub flags: u32,
     pub scroll_x: f32,
     pub scroll_y: f32,
     pub left_press_pos: Option<Point>,
 }
 
-impl UiSignal {
+impl UISignal {
     pub const LEFT_PRESSED: u32 = 1 << 0;
     pub const LEFT_DRAGGING: u32 = 1 << 1;
     pub const LEFT_RELEASED: u32 = 1 << 2;
@@ -439,6 +515,7 @@ impl UiSignal {
     pub const HOVERING: u32 = 1 << 4;
     pub const MOUSE_OVER: u32 = 1 << 5;
     pub const COMMIT: u32 = 1 << 6;
+    pub const RIGHT_CLICKED: u32 = 1 << 7;
 
     pub fn pressed(self) -> bool {
         self.flags & Self::LEFT_PRESSED != 0
@@ -450,6 +527,10 @@ impl UiSignal {
 
     pub fn clicked(self) -> bool {
         self.flags & Self::LEFT_CLICKED != 0
+    }
+
+    pub fn right_clicked(self) -> bool {
+        self.flags & Self::RIGHT_CLICKED != 0
     }
 
     pub fn dragging(self) -> bool {
@@ -487,12 +568,49 @@ impl TextSelection {
     }
 }
 
+/// A point-in-time text-edit state that undo/redo can restore to.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct UndoSnapshot {
+    pub text: String,
+    pub cursor: usize,
+}
+
+/// What kind of edit produced an undo entry. Consecutive same-kind edits with no
+/// intervening cursor move or selection are coalesced into a single undo step, so a
+/// typed word (or a backspace run) undoes in one go rather than character by character.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EditKind {
+    /// A single typed character — coalesces with an adjacent typing run.
+    Insert,
+    /// A typed whitespace character — joins the current word run but closes it, so the
+    /// next word becomes a separate undo step.
+    InsertBreak,
+    /// A single-character backspace/forward-delete — coalesces with an adjacent run.
+    Delete,
+    /// Paste, cut, newline, etc. — always its own undo step and breaks any run.
+    Boundary,
+}
+
+/// Bounded undo/redo history for one textarea. Entries hold the state *before* an edit
+/// (undo) and *before* an undo (redo).
+#[derive(Clone, Debug, Default)]
+pub struct UndoHistory {
+    undo: Vec<UndoSnapshot>,
+    redo: Vec<UndoSnapshot>,
+    /// The kind of the in-progress coalescing run, if the last change can still absorb
+    /// the next one. Cleared by cursor moves and undo/redo to break the run.
+    coalescing: Option<EditKind>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TextEditState {
     pub cursor: usize,
     pub selection: Option<TextSelection>,
     pub desired_column: Option<usize>,
     pub last_interaction_time: f64,
+    /// Cursor position the last time caret-follow scrolling ran. Used to only follow
+    /// the caret when it actually moves, so manual scrolling away from the caret sticks.
+    pub scroll_follow_cursor: Option<usize>,
 }
 
 impl TextEditState {
@@ -509,7 +627,7 @@ impl TextEditState {
 pub struct UIBoxFlags(u64);
 
 impl UIBoxFlags {
-    // Interaction capability flags. These are still box flags by design, like RAD:
+    // Interaction capability flags. These are still box flags by design:
     // widget helpers compose behavior by applying capabilities to retained boxes.
     pub const NONE: Self = Self(0);
     pub const MOUSE_CLICKABLE: Self = Self(1 << 0);
@@ -533,6 +651,35 @@ impl UIBoxFlags {
 
     // Text editing capability.
     pub const TEXT_INPUT: Self = Self(1 << 21);
+    pub const NO_WRAP_X: Self = Self(1 << 22);
+    /// Identity bit marking a multi-line text area. Used to tell textareas apart from
+    /// line edits when drawing the caret/selection, independent of styling flags like
+    /// `DRAW_BORDER` (which a chromeless editor omits).
+    pub const MULTILINE: Self = Self(1 << 23);
+    /// Marks a box that paints arbitrary geometry via a deferred callback (see
+    /// [`IMUI::canvas`]). The callback runs in the paint pass, after this box's
+    /// background/border and before its children, clipped to the box.
+    pub const CUSTOM_DRAW: Self = Self(1 << 24);
+
+    /// Paints an inline image: the box's `display_string` is the image link key
+    /// (`./blob/<name>`), resolved against the [`IMUI`] image registry.
+    pub const DRAW_IMAGE: Self = Self(1 << 25);
+
+    /// Word-wraps a `DRAW_TEXT` box's text to its resolved content width across
+    /// multiple lines. Its `TextContent` height then follows the wrapped line
+    /// count (layout solves width before height, so the width is known). See
+    /// [`IMUI::wrapping_label`].
+    pub const TEXT_WRAP: Self = Self(1 << 26);
+
+    /// A `MULTILINE` box in `TextAreaLineStyle::Markdown` +
+    /// `MarkdownMode::Rendered` (set by `textarea_impl`). DOM-backend-only:
+    /// tells `paint_dom.rs` to host this box as a `contenteditable` `<div>`
+    /// that paints its real rich-span children (bold/headers/hidden markers/
+    /// inline images), instead of a plain `<textarea>` showing raw text —
+    /// see `paint_dom.rs`'s `paint_richtext_host`. Native ignores this flag
+    /// entirely (`paint.rs` always renders a `MULTILINE` box's children the
+    /// same way regardless).
+    pub const RICH_TEXT_HOST: Self = Self(1 << 27);
 
     pub const CLICKABLE: Self = Self(Self::MOUSE_CLICKABLE.0 | Self::KEYBOARD_CLICKABLE.0);
     pub const SCROLL: Self = Self(Self::SCROLL_X.0 | Self::SCROLL_Y.0);
@@ -556,9 +703,9 @@ impl UIBoxFlags {
             | Self::CLICK_TO_FOCUS.0
             | Self::TEXT_INPUT.0
             | Self::DRAW_BACKGROUND.0
-            | Self::DRAW_BORDER.0
             | Self::SCROLL_Y.0
-            | Self::CLIP.0,
+            | Self::CLIP.0
+            | Self::MULTILINE.0,
     );
 
     pub fn contains(self, other: Self) -> bool {
@@ -614,6 +761,14 @@ pub struct UIBoxStyle {
     pub border_color: Color,
     pub font_icon: bool,
     pub corner_radius: f32,
+    /// Center the single-line text within the content box (both axes) instead of
+    /// the default top-left placement. Used by buttons so labels stay centered
+    /// when the box is wider/taller than its text.
+    pub text_align_center: bool,
+    /// Multiplies this box's painted alpha, and every descendant's — the tree
+    /// walk in `box_opacity` folds it in alongside the floating-pane appear
+    /// animation. 1.0 = fully opaque. Set via [`UIBoxHandle::opacity`].
+    pub opacity: f32,
 }
 
 impl Default for UIBoxStyle {
@@ -627,6 +782,8 @@ impl Default for UIBoxStyle {
             border_color: Color::new("#55595f"),
             font_icon: false,
             corner_radius: 0.0,
+            text_align_center: false,
+            opacity: 1.0,
         }
     }
 }
@@ -639,10 +796,42 @@ pub struct UIBoxParams {
 }
 
 #[derive(Clone, Copy, Debug)]
+struct MeasuredText {
+    font_size: f32,
+    font_icon: bool,
+    size: Size,
+}
+
+/// Cached line breaks for a `TEXT_WRAP` box: `lines` are byte ranges into the
+/// box's `display_string`. Recomputed only when the font, wrap width or text
+/// changes (so wrapping is not per-frame work).
+#[derive(Clone, Debug)]
+struct WrappedText {
+    font_size: f32,
+    font_icon: bool,
+    max_width: f32,
+    lines: Vec<std::ops::Range<usize>>,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct TextAreaOptions {
     pub wrap_x: bool,
     pub scroll_x: bool,
     pub scroll_y: bool,
+    /// Allow focus, selection, navigation and copy without mutating the buffer.
+    pub read_only: bool,
+    /// Font size to use while emitting wrapped visual lines.
+    pub font_size: Option<f32>,
+    /// Padding to use while emitting wrapped visual lines.
+    pub padding: Option<Padding>,
+    /// Draw the input border (and its focus ring). Disable for a chromeless editor.
+    pub border: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TextAreaLineStyle {
+    Plain,
+    Markdown,
 }
 
 impl Default for TextAreaOptions {
@@ -651,6 +840,10 @@ impl Default for TextAreaOptions {
             wrap_x: true,
             scroll_x: false,
             scroll_y: true,
+            read_only: false,
+            font_size: None,
+            padding: None,
+            border: true,
         }
     }
 }
@@ -673,6 +866,949 @@ impl TextAreaOptions {
     pub fn scroll_y(mut self, scroll_y: bool) -> Self {
         self.scroll_y = scroll_y;
         self
+    }
+
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
+    }
+
+    pub fn font_size(mut self, font_size: f32) -> Self {
+        self.font_size = Some(font_size.max(1.0));
+        self
+    }
+
+    pub fn padding(mut self, padding: Padding) -> Self {
+        self.padding = Some(padding);
+        self
+    }
+
+    pub fn border(mut self, border: bool) -> Self {
+        self.border = border;
+        self
+    }
+}
+
+/// How markdown syntax is presented inside an editable text area.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MarkdownMode {
+    /// Keep the literal syntax markers visible but styled (Obsidian "source" view).
+    Source,
+    /// Hide the syntax markers and show only the rendered result.
+    Rendered,
+}
+
+/// One contiguous run of identically-styled glyphs on a visual line — or,
+/// when `hidden`, one contiguous run of hidden markdown markers (`**`, `#`,
+/// …) in `MarkdownMode::Rendered`: `text` then holds one placeholder char
+/// per hidden raw char (not the literal markers — see `make_layout_line`),
+/// used only so the span has the *right length*. Native never draws these
+/// (`emit_layout_line` skips creating a box for them there at all — same
+/// zero cost as before this field existed); the DOM backend still needs a
+/// real (`font-size: 0`, effectively invisible) DOM text node at the right
+/// raw offset for a hidden run, or the browser has nowhere to land a caret
+/// that belongs *inside* it — landing one raw char short/long instead (this
+/// was a real, confirmed bug: navigating onto a markdown line for the first
+/// time could never place the caret exactly before/after a still-hidden
+/// marker, only on the nearest already-visible text).
+#[derive(Clone)]
+struct LayoutSpan {
+    text: String,
+    color: Color,
+    /// Raw-buffer char offset of this span's first character. Spans on a
+    /// line are not generally contiguous in raw offset even discounting
+    /// `hidden` ones (word-wrap splits a line into several `LayoutLine`s,
+    /// each restarting its own spans) — each needs its own start rather than
+    /// being inferable from the previous span's length. Used by the DOM
+    /// backend to map a browser selection/edit position back to a raw offset
+    /// (see `paint_dom.rs`'s rich-text host); native ignores it.
+    raw_start: usize,
+    hidden: bool,
+}
+
+/// A single visual (post-wrap) line of the editor.
+#[derive(Clone)]
+struct LayoutLine {
+    /// Inclusive char offset (into the raw buffer) of this visual line's first char.
+    raw_start: usize,
+    /// Exclusive char offset of the last char (the trailing newline is excluded).
+    raw_end: usize,
+    font_size: f32,
+    height: f32,
+    /// Cumulative pixel x for each raw-char boundary; `cum_x.len() == raw_end - raw_start + 1`.
+    /// Hidden marker chars contribute a zero-width step so cursor offsets still map cleanly.
+    cum_x: Vec<f32>,
+    /// Visible, drawable spans in left-to-right order.
+    spans: Vec<LayoutSpan>,
+    padding: Padding,
+    /// Set when this line is a standalone inline image (`![alt](./blob/...)`):
+    /// it is painted as a texture instead of text and reserves `height`.
+    image: Option<ImageLine>,
+}
+
+/// Which dimension an image link pins (`?h=` or `?w=`); the other is derived
+/// from the intrinsic aspect ratio. `h` is the default for new images.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SizeAxis {
+    Width,
+    Height,
+}
+
+/// An image-only visual line, resolved from `![alt](./blob/<name>?h=NNN)`.
+#[derive(Clone)]
+struct ImageLine {
+    /// `./blob/<name>` resolve key (link target minus the query).
+    key: String,
+    /// Display width in logical px (derived or pinned; clamped to content width).
+    width: f32,
+    /// Display height in logical px (derived or pinned).
+    height: f32,
+    /// Which dimension the link pins — the one a resize rewrites.
+    control: SizeAxis,
+}
+
+/// A resize result produced by a corner drag: the new value for the pinned
+/// dimension. The host rewrites the matching `?h=`/`?w=` in the link.
+#[derive(Clone, Copy, Debug)]
+pub enum ImageResize {
+    Width(f32),
+    Height(f32),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MarkdownBlockKind {
+    Quote,
+    Code,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LayoutBlock {
+    kind: MarkdownBlockKind,
+    first_visual_line: usize,
+    last_visual_line: usize,
+    padding: Padding,
+    bg_color: Color,
+    corner_radius: f32,
+    label: Option<&'static str>,
+    label_width: f32,
+}
+
+/// Cached, fully-resolved layout for a single text area. Recomputed only when the
+/// content, wrap width, font, line style, or markdown mode actually changes — never
+/// per frame for unchanged text.
+struct EditorLayout {
+    hash: u64,
+    char_len: usize,
+    width_key: u32,
+    font_key: u32,
+    line_style: TextAreaLineStyle,
+    md_mode: MarkdownMode,
+    reveal_line_start: Option<usize>,
+    /// `IMUI::images_rev` at build time; a change recomputes image line heights.
+    images_rev: u64,
+    lines: Vec<LayoutLine>,
+    blocks: Vec<LayoutBlock>,
+}
+
+struct BuiltEditorLayout {
+    lines: Vec<LayoutLine>,
+    blocks: Vec<LayoutBlock>,
+}
+
+/// One raw char and how it should be presented: `display == None` means the char is a
+/// hidden marker (zero advance); otherwise `Some(ch)` is the glyph to draw (which may
+/// differ from the raw char, e.g. a rendered bullet).
+type StyledChar = (Option<char>, Color);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CodeBlockExit {
+    insert_newline_at: Option<usize>,
+    cursor: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CodeLanguage {
+    Generic,
+    Rust,
+    JavaScript,
+    TypeScript,
+    Python,
+    Shell,
+    Json,
+    Toml,
+}
+
+fn colors_eq(a: Color, b: Color) -> bool {
+    a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a
+}
+
+fn find_char(chars: &[char], from: usize, target: char) -> Option<usize> {
+    (from..chars.len()).find(|&i| chars[i] == target)
+}
+
+fn find_double(chars: &[char], from: usize, target: char) -> Option<usize> {
+    let mut i = from;
+    while i + 1 < chars.len() {
+        if chars[i] == target && chars[i + 1] == target {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+fn push_marker(out: &mut Vec<StyledChar>, ch: char, hidden: bool, color: Color) {
+    out.push((if hidden { None } else { Some(ch) }, color));
+}
+
+fn code_fence_language(raw_line: &str) -> Option<CodeLanguage> {
+    let trimmed = raw_line.trim_start_matches(|c| c == ' ' || c == '\t');
+    let rest = trimmed.strip_prefix("```")?;
+    let language = rest
+        .trim_start()
+        .split(|c: char| c.is_whitespace() || c == '{' || c == ',' || c == '}')
+        .next()
+        .unwrap_or("");
+    Some(code_language_from_info(language))
+}
+
+fn code_language_from_info(language: &str) -> CodeLanguage {
+    if language.eq_ignore_ascii_case("rs") || language.eq_ignore_ascii_case("rust") {
+        CodeLanguage::Rust
+    } else if matches_ignore_ascii(language, &["js", "jsx", "javascript", "mjs", "cjs"]) {
+        CodeLanguage::JavaScript
+    } else if matches_ignore_ascii(language, &["ts", "tsx", "typescript"]) {
+        CodeLanguage::TypeScript
+    } else if matches_ignore_ascii(language, &["py", "python", "python3"]) {
+        CodeLanguage::Python
+    } else if matches_ignore_ascii(language, &["sh", "bash", "zsh", "shell"]) {
+        CodeLanguage::Shell
+    } else if language.eq_ignore_ascii_case("json") {
+        CodeLanguage::Json
+    } else if language.eq_ignore_ascii_case("toml") {
+        CodeLanguage::Toml
+    } else {
+        CodeLanguage::Generic
+    }
+}
+
+impl CodeLanguage {
+    fn label(self) -> &'static str {
+        match self {
+            CodeLanguage::Generic => "Plain text",
+            CodeLanguage::Rust => "Rust",
+            CodeLanguage::JavaScript => "JavaScript",
+            CodeLanguage::TypeScript => "TypeScript",
+            CodeLanguage::Python => "Python",
+            CodeLanguage::Shell => "Shell",
+            CodeLanguage::Json => "JSON",
+            CodeLanguage::Toml => "TOML",
+        }
+    }
+}
+
+fn matches_ignore_ascii(value: &str, candidates: &[&str]) -> bool {
+    candidates
+        .iter()
+        .any(|candidate| value.eq_ignore_ascii_case(candidate))
+}
+
+fn style_code_fence_line(raw_line: &str, visible: bool, marker_color: Color) -> Vec<StyledChar> {
+    raw_line
+        .chars()
+        .map(|ch| (if visible { Some(ch) } else { None }, marker_color))
+        .collect()
+}
+
+fn code_block_padding() -> Padding {
+    Padding {
+        top: 3.0,
+        right: 8.0,
+        bottom: 3.0,
+        left: 8.0,
+    }
+}
+
+fn quote_block_padding() -> Padding {
+    Padding {
+        top: 2.0,
+        right: 8.0,
+        bottom: 2.0,
+        left: 8.0,
+    }
+}
+
+fn horizontal_padding(mut padding: Padding) -> Padding {
+    padding.top = 0.0;
+    padding.bottom = 0.0;
+    padding
+}
+
+fn code_block_bg(theme: &UITheme) -> Color {
+    match theme.kind {
+        ThemeKind::Dark => Color::new("#20242bee"),
+        ThemeKind::Light => Color::new("#eef1f4ee"),
+    }
+}
+
+fn quote_block_bg(theme: &UITheme) -> Color {
+    let mut color = theme.surface_hover;
+    color.a *= 0.55;
+    color
+}
+
+fn is_markdown_quote_line(raw_line: &str) -> bool {
+    raw_line
+        .trim_start_matches(|c| c == ' ' || c == '\t')
+        .starts_with("> ")
+}
+
+fn raw_line_start_for_cursor(text: &str, cursor: usize) -> usize {
+    let mut line_start = 0;
+    for (idx, ch) in text.chars().enumerate() {
+        if idx >= cursor {
+            break;
+        }
+        if ch == '\n' {
+            line_start = idx + 1;
+        }
+    }
+    line_start
+}
+
+fn markdown_code_block_start_for_line_start(text: &str, line_start: usize) -> Option<usize> {
+    let mut code_block_start = None;
+    let mut offset = 0usize;
+    let mut raw_lines = text.split('\n').peekable();
+    while let Some(raw_line) = raw_lines.next() {
+        if offset == line_start {
+            return if code_fence_language(raw_line).is_some() {
+                Some(code_block_start.unwrap_or(offset))
+            } else {
+                code_block_start
+            };
+        }
+        if offset > line_start {
+            break;
+        }
+        if code_fence_language(raw_line).is_some() {
+            if code_block_start.is_some() {
+                code_block_start = None;
+            } else {
+                code_block_start = Some(offset);
+            }
+        }
+        offset += raw_line.chars().count() + usize::from(raw_lines.peek().is_some());
+    }
+    None
+}
+
+fn markdown_code_fence_enter_insert(text: &str, cursor: usize) -> Option<(String, usize)> {
+    let cursor = cursor.min(char_count(text));
+    if cursor != line_end(text, cursor) {
+        return None;
+    }
+    let line_start = line_home(text, cursor);
+    let line = substring_chars(text, (line_start, cursor));
+    code_fence_language(&line)?;
+    if markdown_in_code_block_before_line(text, line_start) {
+        return None;
+    }
+
+    let indent_len = line
+        .chars()
+        .take_while(|ch| *ch == ' ' || *ch == '\t')
+        .count();
+    let indent = substring_chars(&line, (0, indent_len));
+    let insert = format!("\n{indent}\n{indent}```");
+    let caret_delta = 1 + indent_len;
+    Some((insert, caret_delta))
+}
+
+fn markdown_in_code_block_before_line(text: &str, line_start: usize) -> bool {
+    let mut in_code = false;
+    let mut offset = 0;
+    for raw_line in text.split('\n') {
+        if offset >= line_start {
+            break;
+        }
+        if code_fence_language(raw_line).is_some() {
+            in_code = !in_code;
+        }
+        offset += raw_line.chars().count() + 1;
+    }
+    in_code
+}
+
+fn markdown_exit_code_block_after_current_line(text: &str, cursor: usize) -> Option<CodeBlockExit> {
+    let cursor = cursor.min(char_count(text));
+    let current_start = line_home(text, cursor);
+    let current_end = line_end(text, cursor);
+    let in_code = markdown_in_code_block_before_line(text, current_start);
+    if !in_code {
+        return None;
+    }
+
+    let closing_start =
+        if code_fence_language(&substring_chars(text, (current_start, current_end))).is_some() {
+            current_start
+        } else if current_end < char_count(text) {
+            current_end + 1
+        } else {
+            return None;
+        };
+    let closing_end = line_end(text, closing_start);
+    let closing_line = substring_chars(text, (closing_start, closing_end));
+    code_fence_language(&closing_line)?;
+
+    if closing_end < char_count(text) {
+        Some(CodeBlockExit {
+            insert_newline_at: None,
+            cursor: closing_end + 1,
+        })
+    } else {
+        Some(CodeBlockExit {
+            insert_newline_at: Some(closing_end),
+            cursor: closing_end + 1,
+        })
+    }
+}
+
+fn push_layout_line(
+    lines: &mut Vec<LayoutLine>,
+    blocks: &mut Vec<LayoutBlock>,
+    line: LayoutLine,
+    block: Option<(
+        MarkdownBlockKind,
+        Padding,
+        Color,
+        f32,
+        Option<&'static str>,
+        f32,
+    )>,
+) {
+    let visual_line = lines.len();
+    if let Some((kind, padding, bg_color, corner_radius, label, label_width)) = block {
+        if let Some(last) = blocks.last_mut()
+            && last.kind == kind
+            && last.last_visual_line + 1 == visual_line
+            && last.padding == padding
+            && colors_eq(last.bg_color, bg_color)
+            && (last.corner_radius - corner_radius).abs() < 0.001
+            && last.label == label
+        {
+            last.last_visual_line = visual_line;
+        } else {
+            blocks.push(LayoutBlock {
+                kind,
+                first_visual_line: visual_line,
+                last_visual_line: visual_line,
+                padding,
+                bg_color,
+                corner_radius,
+                label,
+                label_width,
+            });
+        }
+    }
+    lines.push(line);
+}
+
+fn style_code_line(raw_line: &str, language: CodeLanguage, theme: &UITheme) -> Vec<StyledChar> {
+    let chars: Vec<char> = raw_line.chars().collect();
+    let mut out = Vec::with_capacity(chars.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if code_line_comment_starts(&chars, i, language) {
+            for &ch in &chars[i..] {
+                out.push((Some(ch), theme.text_muted));
+            }
+            break;
+        }
+
+        let ch = chars[i];
+        if code_string_quote(ch, language) {
+            let start = i;
+            i += 1;
+            let mut escaped = false;
+            while i < chars.len() {
+                let current = chars[i];
+                i += 1;
+                if escaped {
+                    escaped = false;
+                } else if current == '\\' {
+                    escaped = true;
+                } else if current == ch {
+                    break;
+                }
+            }
+            for &string_ch in &chars[start..i] {
+                out.push((Some(string_ch), theme.accent_active));
+            }
+        } else if ch.is_ascii_digit() {
+            let start = i;
+            i += 1;
+            while i < chars.len() && is_code_number_char(chars[i]) {
+                i += 1;
+            }
+            for &number_ch in &chars[start..i] {
+                out.push((Some(number_ch), theme.text_accent));
+            }
+        } else if is_code_ident_start(ch) {
+            let start = i;
+            i += 1;
+            while i < chars.len() && is_code_ident_continue(chars[i]) {
+                i += 1;
+            }
+            let color = if code_keyword(language, &chars[start..i]) {
+                theme.accent
+            } else {
+                theme.text
+            };
+            for &ident_ch in &chars[start..i] {
+                out.push((Some(ident_ch), color));
+            }
+        } else {
+            out.push((Some(ch), theme.text));
+            i += 1;
+        }
+    }
+    out
+}
+
+fn code_line_comment_starts(chars: &[char], i: usize, language: CodeLanguage) -> bool {
+    match language {
+        CodeLanguage::Rust | CodeLanguage::JavaScript | CodeLanguage::TypeScript => {
+            chars.get(i) == Some(&'/') && chars.get(i + 1) == Some(&'/')
+        }
+        CodeLanguage::Python | CodeLanguage::Shell | CodeLanguage::Toml => {
+            chars.get(i) == Some(&'#')
+        }
+        CodeLanguage::Generic | CodeLanguage::Json => false,
+    }
+}
+
+fn code_string_quote(ch: char, language: CodeLanguage) -> bool {
+    ch == '"'
+        || ch == '\''
+        || (ch == '`'
+            && matches!(
+                language,
+                CodeLanguage::JavaScript | CodeLanguage::TypeScript | CodeLanguage::Shell
+            ))
+}
+
+fn is_code_number_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '.' || ch == '_'
+}
+
+fn is_code_ident_start(ch: char) -> bool {
+    ch.is_ascii_alphabetic() || ch == '_'
+}
+
+fn is_code_ident_continue(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
+}
+
+fn code_keyword(language: CodeLanguage, token: &[char]) -> bool {
+    let table = match language {
+        CodeLanguage::Rust => RUST_KEYWORDS,
+        CodeLanguage::JavaScript => JS_KEYWORDS,
+        CodeLanguage::TypeScript => TS_KEYWORDS,
+        CodeLanguage::Python => PYTHON_KEYWORDS,
+        CodeLanguage::Shell => SHELL_KEYWORDS,
+        CodeLanguage::Json => JSON_KEYWORDS,
+        CodeLanguage::Toml => TOML_KEYWORDS,
+        CodeLanguage::Generic => GENERIC_CODE_KEYWORDS,
+    };
+    table
+        .iter()
+        .any(|keyword| char_slice_eq_str(token, keyword))
+}
+
+fn char_slice_eq_str(chars: &[char], text: &str) -> bool {
+    chars.len() == text.len()
+        && chars
+            .iter()
+            .zip(text.bytes())
+            .all(|(&ch, byte)| ch as u8 == byte)
+}
+
+const RUST_KEYWORDS: &[&str] = &[
+    "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern",
+    "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub",
+    "ref", "return", "self", "Self", "static", "struct", "super", "trait", "true", "type",
+    "unsafe", "use", "where", "while",
+];
+
+const JS_KEYWORDS: &[&str] = &[
+    "async",
+    "await",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "default",
+    "delete",
+    "else",
+    "export",
+    "extends",
+    "false",
+    "finally",
+    "for",
+    "from",
+    "function",
+    "if",
+    "import",
+    "in",
+    "let",
+    "new",
+    "null",
+    "return",
+    "switch",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "typeof",
+    "undefined",
+    "var",
+    "void",
+    "while",
+    "yield",
+];
+
+const TS_KEYWORDS: &[&str] = &[
+    "any",
+    "as",
+    "async",
+    "await",
+    "boolean",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "default",
+    "delete",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "false",
+    "finally",
+    "for",
+    "from",
+    "function",
+    "if",
+    "implements",
+    "import",
+    "in",
+    "interface",
+    "keyof",
+    "let",
+    "namespace",
+    "never",
+    "new",
+    "null",
+    "number",
+    "private",
+    "protected",
+    "public",
+    "readonly",
+    "return",
+    "string",
+    "switch",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "type",
+    "typeof",
+    "undefined",
+    "unknown",
+    "var",
+    "void",
+    "while",
+    "yield",
+];
+
+const PYTHON_KEYWORDS: &[&str] = &[
+    "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue",
+    "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import",
+    "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while",
+    "with", "yield",
+];
+
+const SHELL_KEYWORDS: &[&str] = &[
+    "case", "do", "done", "elif", "else", "esac", "fi", "for", "function", "if", "in", "then",
+    "until", "while",
+];
+
+const JSON_KEYWORDS: &[&str] = &["false", "null", "true"];
+const TOML_KEYWORDS: &[&str] = &["false", "true"];
+const GENERIC_CODE_KEYWORDS: &[&str] = &[
+    "class", "const", "def", "else", "false", "fn", "for", "function", "if", "let", "null",
+    "return", "true", "var", "while",
+];
+
+/// Inline markdown scan (bold/italic/code/link) over already-de-blocked content chars.
+/// Appends one [`StyledChar`] per raw char so offset math stays exact.
+fn scan_inline(
+    content: &[char],
+    base_color: Color,
+    marker_color: Color,
+    hidden: bool,
+    theme: &UITheme,
+    out: &mut Vec<StyledChar>,
+) {
+    let n = content.len();
+    let mut i = 0;
+    while i < n {
+        let c = content[i];
+
+        // Inline code: `code` — no nested formatting inside.
+        if c == '`' {
+            if let Some(close) = find_char(content, i + 1, '`') {
+                push_marker(out, '`', hidden, marker_color);
+                for &cc in &content[i + 1..close] {
+                    out.push((Some(cc), theme.accent_active));
+                }
+                push_marker(out, '`', hidden, marker_color);
+                i = close + 1;
+                continue;
+            }
+        }
+
+        // Bold: **text** or __text__ (allows nested emphasis).
+        if (c == '*' || c == '_') && content.get(i + 1) == Some(&c) {
+            if let Some(close) = find_double(content, i + 2, c) {
+                push_marker(out, c, hidden, marker_color);
+                push_marker(out, c, hidden, marker_color);
+                scan_inline(
+                    &content[i + 2..close],
+                    theme.text_accent,
+                    marker_color,
+                    hidden,
+                    theme,
+                    out,
+                );
+                push_marker(out, c, hidden, marker_color);
+                push_marker(out, c, hidden, marker_color);
+                i = close + 2;
+                continue;
+            }
+        }
+
+        // Italic: *text* or _text_.
+        if c == '*' || c == '_' {
+            if let Some(close) = find_char(content, i + 1, c) {
+                if close > i + 1 {
+                    push_marker(out, c, hidden, marker_color);
+                    for &cc in &content[i + 1..close] {
+                        out.push((Some(cc), theme.accent));
+                    }
+                    push_marker(out, c, hidden, marker_color);
+                    i = close + 1;
+                    continue;
+                }
+            }
+        }
+
+        // Link: [text](url) — show text, hide the URL machinery in rendered mode.
+        if c == '[' {
+            if let Some(rbr) = find_char(content, i + 1, ']') {
+                if content.get(rbr + 1) == Some(&'(') {
+                    if let Some(rpar) = find_char(content, rbr + 2, ')') {
+                        push_marker(out, '[', hidden, marker_color);
+                        for &cc in &content[i + 1..rbr] {
+                            out.push((Some(cc), theme.accent));
+                        }
+                        push_marker(out, ']', hidden, marker_color);
+                        push_marker(out, '(', hidden, marker_color);
+                        for &cc in &content[rbr + 2..rpar] {
+                            push_marker(out, cc, hidden, marker_color);
+                        }
+                        push_marker(out, ')', hidden, marker_color);
+                        i = rpar + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        out.push((Some(c), base_color));
+        i += 1;
+    }
+}
+
+/// Resolve a single raw buffer line into styled chars plus its block font size/height.
+fn style_raw_line(
+    raw_line: &str,
+    base_font: f32,
+    line_style: TextAreaLineStyle,
+    md_mode: MarkdownMode,
+    is_focused_line: bool,
+    theme: &UITheme,
+) -> (Vec<StyledChar>, f32, f32) {
+    let chars: Vec<char> = raw_line.chars().collect();
+    let mut font_size = base_font;
+    let mut height = base_font + 4.0;
+
+    if line_style != TextAreaLineStyle::Markdown {
+        let out = chars.iter().map(|&c| (Some(c), theme.text)).collect();
+        return (out, font_size, height);
+    }
+
+    let marker_color = theme.text_muted;
+    // Markers stay visible on the line the caret is currently on — same
+    // reveal-on-focus treatment `reveal_code_block_start` already gives code
+    // fences (see `build_editor_layout_revealing_line`). Without this, a line
+    // that is *only* markers (e.g. "# " before any title text is typed) has
+    // every char hidden, which collapses to no `LayoutLine` at all and the
+    // rich-text host loses its DOM anchor for that raw range mid-edit.
+    let hidden = md_mode == MarkdownMode::Rendered && !is_focused_line;
+    let mut base_color = theme.text;
+
+    let indent = chars
+        .iter()
+        .take_while(|c| **c == ' ' || **c == '\t')
+        .count();
+    let mut out: Vec<StyledChar> = Vec::with_capacity(chars.len());
+    for &c in &chars[..indent] {
+        out.push((Some(c), base_color));
+    }
+    let rest = &chars[indent..];
+
+    let hashes = rest.iter().take_while(|c| **c == '#').count();
+    let content_start;
+    if (1..=6).contains(&hashes) && rest.get(hashes) == Some(&' ') {
+        // Size is a *rendered* affordance only. In source view the markers are
+        // part of the text being edited, and scaling the line reflows it under
+        // the caret as the `#`s are typed or deleted — the line jumps size
+        // mid-keystroke and every column offset on it moves with it. Colour
+        // still distinguishes a heading, which is all the source view needs.
+        if md_mode == MarkdownMode::Rendered {
+            font_size = match hashes {
+                1 => base_font * 1.85,
+                2 => base_font * 1.55,
+                3 => base_font * 1.32,
+                _ => base_font * 1.16,
+            };
+            height = font_size + 10.0;
+        }
+        base_color = if hashes == 1 {
+            theme.text_accent
+        } else {
+            theme.text
+        };
+        for &c in &rest[..hashes] {
+            push_marker(&mut out, c, hidden, marker_color);
+        }
+        push_marker(&mut out, ' ', hidden, marker_color);
+        content_start = hashes + 1;
+    } else if rest.first() == Some(&'>') && rest.get(1) == Some(&' ') {
+        base_color = theme.text_muted;
+        height = base_font + 8.0;
+        push_marker(&mut out, '>', false, marker_color);
+        push_marker(&mut out, ' ', false, marker_color);
+        content_start = 2;
+    } else if matches!(rest.first(), Some('-') | Some('*') | Some('+')) && rest.get(1) == Some(&' ')
+    {
+        height = base_font + 6.0;
+        let disp = if hidden { '\u{2022}' } else { rest[0] };
+        out.push((Some(disp), theme.accent));
+        out.push((Some(' '), base_color));
+        content_start = 2;
+    } else {
+        content_start = 0;
+    }
+
+    scan_inline(
+        &rest[content_start..],
+        base_color,
+        marker_color,
+        hidden,
+        theme,
+        &mut out,
+    );
+    (out, font_size, height)
+}
+
+/// Zero-width placeholder for a hidden markdown marker char (see
+/// `LayoutSpan`'s doc comment) — any single `char` would do since it's never
+/// drawn at a real size; U+200B reads as "intentionally invisible" if ever
+/// inspected in a DOM dump.
+const HIDDEN_MARKER_PLACEHOLDER: char = '\u{200B}';
+
+/// Assemble one visual line (cum_x + drawable spans) from a styled-char slice.
+fn make_layout_line(
+    styled: &[StyledChar],
+    advances: &[f32],
+    start: usize,
+    end: usize,
+    char_offset: usize,
+    font_size: f32,
+    height: f32,
+    padding: Padding,
+) -> LayoutLine {
+    let mut cum_x = Vec::with_capacity(end - start + 1);
+    cum_x.push(0.0);
+    let mut x = 0.0;
+    let mut spans: Vec<LayoutSpan> = Vec::new();
+    for k in start..end {
+        x += advances[k];
+        cum_x.push(x);
+        let (ch, color, hidden) = match styled[k] {
+            (Some(ch), color) => (ch, color, false),
+            (None, color) => (HIDDEN_MARKER_PLACEHOLDER, color, true),
+        };
+        if let Some(last) = spans.last_mut() {
+            if last.hidden == hidden && colors_eq(last.color, color) {
+                last.text.push(ch);
+                continue;
+            }
+        }
+        spans.push(LayoutSpan {
+            text: ch.to_string(),
+            color,
+            raw_start: char_offset + k,
+            hidden,
+        });
+    }
+    LayoutLine {
+        raw_start: char_offset + start,
+        raw_end: char_offset + end,
+        font_size,
+        height,
+        cum_x,
+        spans,
+        padding,
+        image: None,
+    }
+}
+
+pub trait TextEditBuffer {
+    fn text(&self) -> String;
+    fn insert_text(&mut self, index: usize, text: &str);
+    fn delete_range(&mut self, range: (usize, usize));
+}
+
+impl TextEditBuffer for String {
+    fn text(&self) -> String {
+        self.clone()
+    }
+
+    fn insert_text(&mut self, index: usize, text: &str) {
+        let byte = char_to_byte(self, index);
+        self.insert_str(byte, text);
+    }
+
+    fn delete_range(&mut self, range: (usize, usize)) {
+        delete_char_range(self, range);
     }
 }
 
@@ -697,12 +1833,78 @@ impl UIBoxParams {
     }
 }
 
+/// A deferred paint callback for [`UIBoxFlags::CUSTOM_DRAW`] boxes, registered
+/// via [`IMUI::canvas`]. Called once during the paint pass with `(drawer,
+/// content_rect, clip_rect)`: `content_rect` is the box's full logical rect (use
+/// it to map your geometry), `clip_rect` is the visible region after scroll/clip
+/// (intersect your draws with it, since `Drawer::draw_rect` does not clip).
+///
+/// Stored in a per-frame arena on [`IMUI`], so it must be `'static`: capture
+/// owned/`Copy`/`Arc` data (e.g. an `Arc` waveform peak cache), never borrows
+/// from the per-frame build closure.
+pub type CanvasPaint = Box<dyn FnMut(&mut Drawer, RectCoords, RectCoords)>;
+
+/// A decoded inline image. Owned by [`IMUI::images`]. The GPU upload is deferred
+/// to the paint pass (like font atlases) — uploading during the build pass can
+/// hit a renderer/context state where texture creation silently fails.
+struct ImageEntry {
+    width: u32,
+    height: u32,
+    /// GPU texture id once uploaded (0 until then). Always 0 for an
+    /// `encoded_mime` entry — the DOM backend never uploads a GPU texture.
+    tex_id: u32,
+    /// Awaiting upload during paint (native) or a DOM `<img>` Blob (web);
+    /// taken once uploaded natively. Interpreted per `encoded_mime` below.
+    pending: Option<Vec<u8>>,
+    /// `None`: `pending` is raw RGBA8, as native decode produces (see
+    /// [`IMUI::provide_image`]). `Some(mime)`: `pending` is already-encoded
+    /// image bytes (PNG/JPEG/…) in this MIME type, as the DOM backend
+    /// receives it (see [`IMUI::provide_image_encoded`]) — the browser
+    /// decodes those bytes itself via a `<img src="blob:...">`, so they're
+    /// never turned into pixels on the Rust side at all. Only ever read by
+    /// the DOM paint path (`image_dom_bytes`); native never sets or reads it.
+    #[cfg_attr(not(feature = "dom"), allow(dead_code))]
+    encoded_mime: Option<&'static str>,
+}
+
+/// Live drag state while resizing an inline image by its bottom-right corner.
+struct ImageDrag {
+    key: String,
+    /// Which dimension is being resized (matches the link's pinned axis).
+    control: SizeAxis,
+    /// Pinned dimension's value when the drag began, so it tracks the cursor
+    /// rather than running away as the link is rewritten each frame.
+    start: f32,
+    press_pos: Point,
+}
+
+/// Minimum displayed size (either axis) an image can be resized to, in px.
+const MIN_IMAGE_SIZE: f32 = 48.0;
+
 #[derive(Clone, Debug)]
 pub struct UIBox {
     pub key: UiKey,
     parent: Option<usize>,
     children: Vec<usize>,
     debug_label: Option<String>,
+    /// The `###`-suffix half of the widget's label — the part that seeds
+    /// [`UiKey`] and therefore stays put when the visible text changes. Retained
+    /// so tests and the DOM backend can address a widget by its stable id
+    /// instead of its display text; `alloc_box` already builds this string every
+    /// frame, so keeping it costs no extra allocation.
+    ///
+    /// Only read by the test snapshot (`feature = "testkit"`) and the DOM
+    /// backend's `data-mae-key` (`feature = "dom"`), so a plain build sees it
+    /// as dead — it is still cheaper to always retain than to cfg the field
+    /// through every constructor.
+    #[cfg_attr(
+        not(any(feature = "testkit", feature = "dom")),
+        allow(
+            dead_code,
+            reason = "read only by the testkit snapshot and the DOM backend"
+        )
+    )]
+    key_id: Option<String>,
     string: Option<String>,
     display_string: Option<String>,
     flags: UIBoxFlags,
@@ -712,9 +1914,13 @@ pub struct UIBox {
     scroll_target: Point,
     scroll_max: Point,
     content_size: Size,
+    measured_text: Option<MeasuredText>,
+    /// Cached wrap layout for a `TEXT_WRAP` box (see [`WrappedText`]).
+    wrapped: Option<WrappedText>,
     fixed_position: Point,
     computed_size: Size,
     rect: RectCoords,
+    previous_clip_rect: RectCoords,
     cursor: Option<OSCursor>,
     hit_padding: Padding,
     child_layout_axis: Axis,
@@ -723,6 +1929,10 @@ pub struct UIBox {
     main_axis_align: MainAxisAlign,
     cross_axis_align: CrossAxisAlign,
     style: UIBoxStyle,
+    /// Byte ranges within `display_string` to paint a highlight rect behind
+    /// (e.g. search-match highlighting). Reset every frame.
+    text_highlights: Vec<(usize, usize)>,
+    highlight_color: Color,
     bg_color_animated: Color,
     border_color_animated: Color,
     hot_t: f32,
@@ -732,18 +1942,34 @@ pub struct UIBox {
     scrollbar_x_t: f32,
     scrollbar_y_t: f32,
     // Per-frame interaction result for the retained box.
-    signal: UiSignal,
+    signal: UISignal,
+    /// Index into `IMUI::canvas_paints` for a `CUSTOM_DRAW` box; set fresh each
+    /// frame by `canvas()` and cleared (to `None`) on reset.
+    canvas_paint: Option<usize>,
     visible: bool,
     first_touched_frame: u64,
     last_touched_frame: u64,
+    /// `(raw_start, raw_end)` for a row/span/image child of a `RICH_TEXT_HOST`
+    /// textarea (set by `emit_layout_line`), `None` for every other box. The
+    /// DOM backend stamps these as `data-raw-start`/`data-raw-end` attributes
+    /// so a browser Selection/Range can be translated back to a raw buffer
+    /// offset (see `paint_dom.rs`'s rich-text host); native ignores it.
+    richtext_span: Option<(usize, usize)>,
 }
 
 impl UIBox {
-    fn new(key: UiKey, flags: UIBoxFlags, string: Option<String>, theme: &UITheme) -> Self {
+    fn new(
+        key: UiKey,
+        flags: UIBoxFlags,
+        string: Option<String>,
+        key_id: Option<String>,
+        theme: &UITheme,
+    ) -> Self {
         Self {
             key,
             parent: None,
             children: Vec::new(),
+            key_id,
             debug_label: string.clone(),
             string: string.clone(),
             display_string: string,
@@ -754,9 +1980,12 @@ impl UIBox {
             scroll_target: Point::default(),
             scroll_max: Point::default(),
             content_size: Size::default(),
+            measured_text: None,
+            wrapped: None,
             fixed_position: Point::default(),
             computed_size: Size::default(),
             rect: RectCoords::from_size(0.0, 0.0, 0.0, 0.0),
+            previous_clip_rect: RectCoords::from_size(0.0, 0.0, 0.0, 0.0),
             cursor: None,
             hit_padding: Padding::default(),
             child_layout_axis: Axis::Y,
@@ -770,6 +1999,8 @@ impl UIBox {
                 text_color: theme.color_text,
                 ..UIBoxStyle::default()
             },
+            text_highlights: Vec::new(),
+            highlight_color: Color::transparent(),
             bg_color_animated: theme.color_bg_popup,
             border_color_animated: theme.border,
             hot_t: 0.0,
@@ -778,10 +2009,12 @@ impl UIBox {
             appear_t: 0.0,
             scrollbar_x_t: 0.0,
             scrollbar_y_t: 0.0,
-            signal: UiSignal::default(),
+            signal: UISignal::default(),
+            canvas_paint: None,
             visible: true,
             first_touched_frame: 0,
             last_touched_frame: 0,
+            richtext_span: None,
         }
     }
 
@@ -794,14 +2027,23 @@ impl UIBox {
         key: UiKey,
         flags: UIBoxFlags,
         string: Option<String>,
+        key_id: Option<String>,
         theme: &UITheme,
     ) {
         let rect = self.rect;
         let computed_size = self.computed_size;
+        let previous_clip_rect = self.previous_clip_rect;
         let scroll = self.scroll;
         let scroll_target = self.scroll_target;
         let scroll_max = self.scroll_max;
         let content_size = self.content_size;
+        let keep_text = self.display_string == string;
+        let measured_text = if keep_text { self.measured_text } else { None };
+        let wrapped = if keep_text {
+            std::mem::take(&mut self.wrapped)
+        } else {
+            None
+        };
         let bg_color_animated = self.bg_color_animated;
         let border_color_animated = self.border_color_animated;
         let hot_t = self.hot_t;
@@ -813,14 +2055,17 @@ impl UIBox {
         let first_touched_frame = self.first_touched_frame;
         let last_touched_frame = self.last_touched_frame;
 
-        *self = Self::new(key, flags, string, theme);
+        *self = Self::new(key, flags, string, key_id, theme);
         self.debug_label = self.display_string.clone();
         self.rect = rect;
         self.computed_size = computed_size;
+        self.previous_clip_rect = previous_clip_rect;
         self.scroll = scroll;
         self.scroll_target = scroll_target;
         self.scroll_max = scroll_max;
         self.content_size = content_size;
+        self.measured_text = measured_text;
+        self.wrapped = wrapped;
         self.bg_color_animated = bg_color_animated;
         self.border_color_animated = border_color_animated;
         self.hot_t = hot_t;
@@ -832,6 +2077,21 @@ impl UIBox {
         self.first_touched_frame = first_touched_frame;
         self.last_touched_frame = last_touched_frame;
     }
+}
+
+/// Preferred side for an [`IMUI::anchored_pane`], relative to its anchor rect.
+/// The pane flips to the opposite side when the preferred one would overflow
+/// the window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PopoverSide {
+    /// Below the anchor, left edges aligned — dropdowns, the space switcher.
+    Below,
+    /// Above the anchor, left edges aligned.
+    Above,
+    /// To the anchor's right, top edges aligned — submenus.
+    Right,
+    /// To the anchor's left, top edges aligned.
+    Left,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -888,6 +2148,10 @@ pub struct UITheme {
     pub accent: Color,
     pub accent_hover: Color,
     pub accent_active: Color,
+    /// Semantic status colours (toasts, badges, validation).
+    pub info: Color,
+    pub warning: Color,
+    pub danger: Color,
     pub selection: Color,
     pub scrollbar: Color,
     pub size_text: f32,
@@ -934,6 +2198,9 @@ impl UITheme {
             accent: Color::new("#3f9f95"),
             accent_hover: Color::new("#51b7ac"),
             accent_active: Color::new("#2d776f"),
+            info: Color::new("#5aa9ff"),
+            warning: Color::new("#f2b13c"),
+            danger: Color::new("#f0645f"),
             selection: Color::new("#285f73"),
             scrollbar: Color::new("#7f8a9655"),
             size_text: 14.0,
@@ -974,6 +2241,9 @@ impl UITheme {
             accent: Color::new("#247f78"),
             accent_hover: Color::new("#2f968e"),
             accent_active: Color::new("#1d655f"),
+            info: Color::new("#2f7fe0"),
+            warning: Color::new("#c9821b"),
+            danger: Color::new("#d63d3d"),
             selection: Color::new("#b9e3e0"),
             scrollbar: Color::new("#8392a655"),
             size_text: 14.0,
@@ -999,6 +2269,76 @@ impl UITheme {
     }
 }
 
+/// A remote collaborator's caret inside a textarea: a colored bar at a char
+/// index, with a small initial-letter badge above it and an optional
+/// translucent selection highlight.
+#[derive(Clone, Debug)]
+pub struct RemoteCaret {
+    /// Caret position as a char index into the textarea's text.
+    pub cursor: usize,
+    /// Selected char range (normalized, start < end), highlighted in a
+    /// translucent version of `color`.
+    pub selection: Option<(usize, usize)>,
+    pub color: Color,
+    /// Collaborator label; only the first char is drawn in the badge.
+    pub label: String,
+}
+
+/// Shared slot holding whatever the active `run_dom` loop needs to actually
+/// schedule its next `requestAnimationFrame` tick — set once `run_dom` starts
+/// (empty before that, since a `wake()` before the loop exists has nothing
+/// useful to do). Boxed `Fn()` rather than a generic so `RepaintWaker` stays a
+/// plain, unparameterized type usable from `os/wasm.rs`'s listener closures.
+#[cfg(target_arch = "wasm32")]
+pub(super) type TickScheduler = std::rc::Rc<std::cell::RefCell<Option<Box<dyn Fn()>>>>;
+
+/// Handle that wakes the event loop so it rebuilds the UI (e.g. when a sync
+/// engine receives a remote update while the app is idle). On native
+/// platforms this is a Send + Sync flag honored on the next loop iteration
+/// (`eventloop_with_shutdown` polls it every pass, including cross-thread).
+/// On wasm32, `run_dom` ticks only in direct response to a real trigger rather
+/// than polling forever (see its doc comment): every path that can make new work available — DOM
+/// pointer/edit listeners (`paint_dom.rs`), the container-level input
+/// listeners (`os/wasm.rs`), and any other holder of a `RepaintWaker` — goes
+/// through this same type, and both its methods drive the exact same
+/// underlying [`TickScheduler`], so there is exactly one place responsible
+/// for actually scheduling a tick.
+///
+/// The two methods differ only in whether they *force* the next tick to
+/// rebuild:
+/// - [`wake`](Self::wake) also sets the cross-thread repaint flag, so the
+///   next tick rebuilds unconditionally — right for a discrete, already-
+///   meaningful event (a DOM click/edit, a background update) that should
+///   always produce a new frame.
+/// - [`schedule_tick`](Self::schedule_tick) only ensures a tick runs soon,
+///   leaving whether it *rebuilds* to `run_dom`'s own per-event-type check
+///   (`has_actionable_event`) — right for raw input where a pure mousemove
+///   with no button held shouldn't force a rebuild (hover feedback there is
+///   CSS-driven; see `os/wasm.rs`), but the queue still needs draining soon
+///   rather than sitting unprocessed until something else happens to wake.
+#[derive(Clone)]
+pub struct RepaintWaker {
+    flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(target_arch = "wasm32")]
+    scheduler: TickScheduler,
+}
+
+impl RepaintWaker {
+    pub fn wake(&self) {
+        self.flag.store(true, std::sync::atomic::Ordering::Release);
+        self.schedule_tick();
+    }
+
+    /// See the type doc comment for how this differs from [`wake`](Self::wake).
+    /// A no-op on native, where there's no separate tick to schedule.
+    pub fn schedule_tick(&self) {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(schedule) = self.scheduler.borrow().as_ref() {
+            schedule();
+        }
+    }
+}
+
 pub struct IMUI {
     drawer: Option<Drawer>,
     size: Size,
@@ -1007,27 +2347,84 @@ pub struct IMUI {
     left_mouse_down: bool,
     right_mouse_down: bool,
     hot_key: Option<UiKey>,
+    /// Hover winner (`hot_key`) from the previous frame. Compared at the end of
+    /// each frame so a hover change can request a repaint even when nothing else
+    /// is animating.
+    prev_hot_key: Option<UiKey>,
+    pointer_blacklist_rects: Vec<RectCoords>,
+    scrollbar_hit_areas: Vec<ScrollbarHitArea>,
     active_left_key: Option<UiKey>,
     active_right_key: Option<UiKey>,
     drag_start_mouse: Option<Point>,
+    text_click_streak: TextClickStreak,
     active_scrollbar: Option<ScrollbarDrag>,
     focus_key: Option<UiKey>,
     next_focus_key: Option<UiKey>,
+    /// Active IME preedit (composing) string from the OS, rendered inline at the
+    /// focused editor's caret. Refreshed each frame; not part of any buffer.
+    ime_preedit: Option<String>,
     cursor: OSCursor,
     text_edit_states: HashMap<UiKey, TextEditState>,
+    editor_layouts: HashMap<UiKey, EditorLayout>,
+    /// Per-textarea undo/redo history, keyed like [`Self::text_edit_states`].
+    undo_states: HashMap<UiKey, UndoHistory>,
+    markdown_mode: MarkdownMode,
     clipboard: String,
+    /// Inline-document images, keyed by their `./blob/<name>` link target. The
+    /// host feeds decoded RGBA via [`IMUI::provide_image`]; values hold the
+    /// uploaded GPU texture id + intrinsic size for layout/paint.
+    images: HashMap<String, ImageEntry>,
+    /// Link names referenced this frame but not yet in `images`. The host drains
+    /// it via [`IMUI::take_requested_images`], decodes, and calls `provide_image`.
+    requested_images: std::collections::HashSet<String>,
+    /// Bumped whenever the image registry changes (provide/drop). Cached editor
+    /// layouts include it so an image arriving recomputes line heights once.
+    images_rev: u64,
+    /// Encoded image bytes pasted into a multiline editor this frame, awaiting
+    /// the host to upload + insert a link (drained via [`IMUI::take_pasted_image`]).
+    pasted_image: Option<Vec<u8>>,
+    /// GPU image textures awaiting deletion (freed during paint, where the
+    /// renderer context is in a valid state).
+    images_to_free: Vec<u32>,
+    /// In-progress inline-image corner drag (stable start width + press point).
+    image_drag: Option<ImageDrag>,
+    /// A resize result `(link_key, new_size)` for the host to write back into
+    /// the `?h=`/`?w=` of the image link this frame (via `take_image_resize`).
+    image_resize_out: Option<(String, ImageResize)>,
+    /// Inline-image keys the host has flagged as not-yet-synced (e.g. an upload
+    /// that failed): a warning badge is drawn on the image. Set each frame via
+    /// [`IMUI::mark_image_unsynced`]; cleared at `begin_frame`.
+    image_unsynced: std::collections::HashSet<String>,
+    /// Cross-thread repaint requests (see [`IMUI::repaint_waker`]). Checked
+    /// once per event-loop iteration; cleared when honored.
+    external_repaint: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Remote collaborator carets per textarea, set during build, drawn during
+    /// paint, cleared at the next `begin_frame`.
+    remote_carets: HashMap<UiKey, Vec<RemoteCaret>>,
 
     boxes: Vec<UIBox>,
     box_table: HashMap<UiKey, usize>,
     free_boxes: Vec<usize>,
     frame_boxes: Vec<usize>,
+    /// Per-frame arena of deferred paint callbacks for `CUSTOM_DRAW` boxes.
+    /// Cleared each frame in `begin_frame`; boxes hold indices into this.
+    canvas_paints: Vec<CanvasPaint>,
     root: usize,
     overlay_root: usize,
     parent_stack: Vec<usize>,
     build_index: u64,
     render_continuously: bool,
     vsync_enabled: bool,
+    cap_fps_to_refresh_rate: bool,
+    refresh_rate_hz: f32,
     repaint_requested: bool,
+    // GLX (and similar double-buffered backends) reallocate the window back
+    // buffer lazily inside the buffer swap, so the first frame drawn after a
+    // resize lands in the old, stale-sized buffer. Force a few extra redraws
+    // after a resize so a correctly-sized frame gets presented even when the
+    // app is otherwise idle (e.g. a single resize from a tiling WM).
+    pending_resize_redraws: u32,
+    quit_requested: bool,
     timer_frequency: f64,
     last_frame_time: f64,
     animation_dt: f32,
@@ -1035,2747 +2432,25 @@ pub struct IMUI {
     fps_frame_count: u32,
     fps: f32,
 
+    /// Live corner notifications, retained across frames (see `toast.rs`).
+    toasts: Vec<toast::Toast>,
+    next_toast_id: u64,
+
     pub theme: UITheme,
-}
 
-impl IMUI {
-    #[cfg(not(target_os = "android"))]
-    pub fn new(w: u32, h: u32) -> Self {
-        let window = os::Window::new(w, h);
-        Self::new_body(window)
-    }
-
-    #[cfg(target_os = "android")]
-    pub fn android(app: AndroidApp) -> Self {
-        let win = os::Window::new(app);
-        win.wait_for_native_window();
-        Self::new_body(win)
-    }
-
-    fn new_body(window: os::Window) -> Self {
-        let renderer = render::Renderer::new(window);
-        let drawer = Drawer::new(renderer);
-        Self::with_drawer(Some(drawer), Size::default())
-    }
-
-    #[cfg(any(test, feature = "testkit"))]
-    pub(crate) fn new_for_test(w: f32, h: f32) -> Self {
-        Self::with_drawer(
-            None,
-            Size {
-                width: w,
-                height: h,
-            },
-        )
-    }
-
-    fn with_drawer(drawer: Option<Drawer>, size: Size) -> Self {
-        let theme = UITheme::default();
-        let mut ui = Self {
-            drawer,
-            size,
-            events: Vec::new(),
-            mouse: None,
-            left_mouse_down: false,
-            right_mouse_down: false,
-            hot_key: None,
-            active_left_key: None,
-            active_right_key: None,
-            drag_start_mouse: None,
-            active_scrollbar: None,
-            focus_key: None,
-            next_focus_key: None,
-            cursor: OSCursor::Arrow,
-            text_edit_states: HashMap::new(),
-            clipboard: String::new(),
-            boxes: Vec::new(),
-            box_table: HashMap::new(),
-            free_boxes: Vec::new(),
-            frame_boxes: Vec::new(),
-            root: 0,
-            overlay_root: 0,
-            parent_stack: Vec::new(),
-            build_index: 0,
-            render_continuously: false,
-            vsync_enabled: true,
-            repaint_requested: true,
-            timer_frequency: os::timer_init(),
-            last_frame_time: 0.0,
-            animation_dt: 1.0 / 60.0,
-            fps_window_start: 0.0,
-            fps_frame_count: 0,
-            fps: 0.0,
-            theme,
-        };
-        if let Some(drawer) = ui.drawer.as_mut() {
-            drawer.renderer.vsync(ui.vsync_enabled);
-        }
-        let now = ui.now_seconds();
-        ui.last_frame_time = now;
-        ui.fps_window_start = now;
-        ui.begin_frame();
-        ui
-    }
-
-    pub fn eventloop(&mut self, mut build_ui_func: impl FnMut(&mut IMUI)) {
-        loop {
-            self.pull_consume_events();
-            let had_events = !self.events.is_empty();
-            let mut resized = false;
-            if let Some(drawer) = self.drawer.as_mut() {
-                let maybe_new_size = drawer.renderer.win.get_size();
-                if maybe_new_size.0 != self.size.width || maybe_new_size.1 != self.size.height {
-                    self.resize();
-                    resized = true;
-                }
-            }
-
-            if had_events || resized {
-                self.repaint_requested = true;
-            }
-
-            if !self.render_continuously && !self.repaint_requested {
-                std::thread::sleep(core::time::Duration::from_millis(16));
-                continue;
-            }
-
-            self.repaint_requested = false;
-            self.begin_frame();
-            build_ui_func(self);
-            self.end_frame();
-            self.update_fps();
-        }
-    }
-
-    pub(crate) fn begin_frame(&mut self) {
-        let now = self.now_seconds();
-        self.animation_dt = (now - self.last_frame_time).clamp(1.0 / 240.0, 1.0 / 15.0) as f32;
-        self.last_frame_time = now;
-        self.build_index += 1;
-        self.frame_boxes.clear();
-        self.parent_stack.clear();
-        self.cursor = OSCursor::Arrow;
-        self.hot_key = None;
-        self.focus_key = self.next_focus_key.take().or(self.focus_key);
-
-        let root = self.alloc_box(Some("#root"), UIBoxFlags::NONE);
-        self.root = root.idx;
-        self.parent_stack.push(root.idx);
-        self.boxes[root.idx].pref_size = [
-            UISize::Pixels(self.size.width),
-            UISize::Pixels(self.size.height),
-        ];
-        self.boxes[root.idx].computed_size = self.size;
-        self.boxes[root.idx].rect =
-            RectCoords::from_size(0.0, 0.0, self.size.width, self.size.height);
-        self.boxes[root.idx].child_layout_axis = Axis::X;
-
-        let overlay_root = self.alloc_box(Some("###overlay_root"), UIBoxFlags::NONE);
-        self.overlay_root = overlay_root.idx;
-        self.boxes[overlay_root.idx].flags |= UIBoxFlags::FLOATING_X | UIBoxFlags::FLOATING_Y;
-        self.boxes[overlay_root.idx].fixed_position = Point::new(0.0, 0.0);
-        self.boxes[overlay_root.idx].pref_size = [
-            UISize::Pixels(self.size.width),
-            UISize::Pixels(self.size.height),
-        ];
-        self.boxes[overlay_root.idx].computed_size = self.size;
-        self.boxes[overlay_root.idx].rect =
-            RectCoords::from_size(0.0, 0.0, self.size.width, self.size.height);
-        self.boxes[overlay_root.idx].child_layout_axis = Axis::Y;
-    }
-
-    pub(crate) fn end_frame(&mut self) {
-        self.animate_scroll_offsets();
-        self.layout_root(self.root);
-        self.refresh_passive_signals();
-        self.animate_visual_state();
-        self.draw_ui_all();
-
-        if let Some(drawer) = self.drawer.as_mut() {
-            drawer.renderer.render_frame();
-            drawer.renderer.win.set_cursor(self.cursor);
-        }
-
-        self.prune_boxes();
-    }
-
-    #[cfg(feature = "testkit")]
-    pub(crate) fn end_test_frame(&mut self) -> crate::testkit::UiSnapshot {
-        self.animate_scroll_offsets();
-        self.layout_root(self.root);
-        self.refresh_passive_signals();
-        self.animate_visual_state();
-        self.draw_ui_all();
-        let snapshot = self.snapshot();
-        self.prune_boxes();
-        snapshot
-    }
-
-    fn now_seconds(&self) -> f64 {
-        os::timer_value() as f64 / self.timer_frequency
-    }
-
-    fn update_fps(&mut self) {
-        self.fps_frame_count += 1;
-        let now = self.now_seconds();
-        let elapsed = now - self.fps_window_start;
-        if elapsed >= 0.5 {
-            self.fps = self.fps_frame_count as f32 / elapsed as f32;
-            self.fps_frame_count = 0;
-            self.fps_window_start = now;
-        }
-    }
-
-    pub fn pull_consume_events(&mut self) {
-        if let Some(drawer) = self.drawer.as_mut() {
-            self.events = drawer.renderer.win.get_events();
-        }
-
-        for ev in self.events.clone() {
-            self.apply_event_side_effects(&ev);
-        }
-    }
-
-    fn apply_event_side_effects(&mut self, ev: &OSEvent) {
-        if let Some(pos) = ev.pos {
-            self.mouse = Some(pos);
-        }
-        if ev.key == OSKey::LeftMouseButton {
-            match ev.ty {
-                OSEventType::Press => self.left_mouse_down = true,
-                OSEventType::Release => self.left_mouse_down = false,
-                _ => {}
-            }
-        }
-        if ev.key == OSKey::RightMouseButton {
-            match ev.ty {
-                OSEventType::Press => self.right_mouse_down = true,
-                OSEventType::Release => self.right_mouse_down = false,
-                _ => {}
-            }
-        }
-        if ev.ty == OSEventType::Press && ev.key == OSKey::Keyboard(OSKeyCode::KeyEscape) {
-            self.focus_key = None;
-            self.next_focus_key = None;
-        }
-    }
-
-    #[cfg(feature = "testkit")]
-    pub(crate) fn push_test_event(&mut self, ev: OSEvent) {
-        self.apply_event_side_effects(&ev);
-        self.events.push(ev);
-    }
-
-    pub(crate) fn resize(&mut self) -> Size {
-        if let Some(drawer) = self.drawer.as_mut() {
-            self.size = Size::from(drawer.renderer.win.get_size());
-            let render_size = drawer.renderer.win.get_render_size();
-            drawer.renderer.resize(render_size.0, render_size.1);
-        }
-        self.size
-    }
-
-    pub fn input(&mut self, key: OSKey, flags: Option<OSEventFlag>) -> bool {
-        let mut handled = false;
-        self.events.retain(|ev| {
-            if ev.ty == OSEventType::Press && ev.key == key && flags_match(flags, ev.flags) {
-                handled = true;
-                false
-            } else {
-                true
-            }
-        });
-        handled
-    }
-
-    pub fn mouse_position(&self) -> Option<Point> {
-        self.mouse
-    }
-
-    pub fn mouse_down(&self) -> bool {
-        self.left_mouse_down
-    }
-
-    pub fn fps(&self) -> f32 {
-        self.fps
-    }
-
-    pub fn render_continuously(&self) -> bool {
-        self.render_continuously
-    }
-
-    pub fn set_render_continuously(&mut self, enabled: bool) {
-        if self.render_continuously != enabled {
-            self.render_continuously = enabled;
-            self.request_repaint();
-        }
-    }
-
-    pub fn renderer_backend(&self) -> render::Backend {
-        self.drawer
-            .as_ref()
-            .map(|drawer| drawer.renderer.backend())
-            .unwrap_or_else(render::Backend::default_backend)
-    }
-
-    pub fn set_renderer_backend(&mut self, backend: render::Backend) {
-        if let Some(drawer) = self.drawer.as_mut() {
-            drawer.renderer.set_backend(backend);
-            drawer.renderer.vsync(self.vsync_enabled);
-        }
-        self.request_repaint();
-    }
-
-    pub fn vsync_enabled(&self) -> bool {
-        self.vsync_enabled
-    }
-
-    pub fn set_vsync_enabled(&mut self, enabled: bool) {
-        if self.vsync_enabled != enabled {
-            self.vsync_enabled = enabled;
-            if let Some(drawer) = self.drawer.as_mut() {
-                drawer.renderer.vsync(enabled);
-            }
-            self.request_repaint();
-        }
-    }
-
-    pub fn request_repaint(&mut self) {
-        self.repaint_requested = true;
-    }
-
-    pub fn theme(&self) -> &UITheme {
-        &self.theme
-    }
-
-    pub fn set_theme(&mut self, theme: UITheme) {
-        let changed = self.theme.kind != theme.kind;
-        self.theme = theme;
-        if changed {
-            self.request_repaint();
-        }
-    }
-
-    pub fn reset_text_input_state(&mut self) {
-        self.focus_key = None;
-        self.next_focus_key = None;
-    }
-
-    pub fn set_focus_active(&mut self, id: &str) {
-        let seed = self.boxes.get(self.root).map(|b| b.key).unwrap_or_default();
-        self.next_focus_key = Some(UiKey(u64_hash_from_string(seed.0, id)));
-    }
-
-    pub fn bounds(&self, handle: UIBoxHandle) -> RectCoords {
-        self.boxes
-            .get(handle.idx)
-            .map(|b| b.rect)
-            .unwrap_or_else(|| RectCoords::from_size(0.0, 0.0, 0.0, 0.0))
-    }
-
-    #[cfg(feature = "testkit")]
-    pub fn snapshot(&self) -> crate::testkit::UiSnapshot {
-        let nodes = self
-            .frame_boxes
-            .iter()
-            .filter_map(|idx| self.boxes.get(*idx).map(|node| (*idx, node)))
-            .map(|(idx, node)| crate::testkit::UiNodeSnapshot {
-                key: node.key,
-                label: node.debug_label.clone(),
-                text: node.string.clone(),
-                bounds: node.rect,
-                computed_size: node.computed_size,
-                scroll: node.scroll,
-                scroll_max: node.scroll_max,
-                content_size: node.content_size,
-                clip_rect: self.clipped_rect(idx),
-                signal: node.signal,
-                visible: node.visible,
-                focused: self.focus_key == Some(node.key),
-                mouse_clickable: node.flags.is_mouse_clickable(),
-                text_input: node.flags.accepts_text_input(),
-                scroll_x: node.flags.scrolls_x(),
-                scroll_y: node.flags.scrolls_y(),
-                text_edit: self.text_edit_states.get(&node.key).cloned(),
-            })
-            .collect();
-        crate::testkit::UiSnapshot { nodes }
-    }
-
-    pub fn row(&mut self, children: impl FnOnce(&mut IMUI)) -> UIBoxHandle {
-        self.container(None, Axis::X, UIBoxFlags::NONE, children)
-    }
-
-    pub fn column(&mut self, children: impl FnOnce(&mut IMUI)) -> UIBoxHandle {
-        self.container(None, Axis::Y, UIBoxFlags::NONE, children)
-    }
-
-    pub fn named_row(&mut self, id: &str, children: impl FnOnce(&mut IMUI)) -> UIBoxHandle {
-        self.container(Some(id), Axis::X, UIBoxFlags::NONE, children)
-    }
-
-    pub fn named_column(&mut self, id: &str, children: impl FnOnce(&mut IMUI)) -> UIBoxHandle {
-        self.container(Some(id), Axis::Y, UIBoxFlags::NONE, children)
-    }
-
-    fn container(
-        &mut self,
-        label: Option<&str>,
-        axis: Axis,
-        flags: UIBoxFlags,
-        children: impl FnOnce(&mut IMUI),
-    ) -> UIBoxHandle {
-        let handle = self.alloc_box(label, flags);
-        self.boxes[handle.idx].child_layout_axis = axis;
-        self.boxes[handle.idx].pref_size = [UISize::ParentPct(1.0), UISize::ChildrenSum];
-        if axis == Axis::X {
-            self.boxes[handle.idx].pref_size = [UISize::ChildrenSum, UISize::ParentPct(1.0)];
-        }
-        self.parent_stack.push(handle.idx);
-        children(self);
-        self.parent_stack.pop();
-        handle
-    }
-
-    pub fn label(&mut self, label: &str) -> UIBoxHandle {
-        let handle = self.alloc_box(None, UIBoxFlags::DRAW_TEXT);
-        self.boxes[handle.idx].string = Some(label.to_string());
-        self.boxes[handle.idx].display_string = Some(label.to_string());
-        self.boxes[handle.idx].pref_size = [UISize::TextContent(0.0), UISize::TextContent(0.0)];
-        handle
-    }
-
-    pub fn button(&mut self, label: &str, tooltip_text: Option<&str>) -> UIBoxHandle {
-        let handle = self.alloc_box(Some(label), UIBoxFlags::BUTTON);
-        self.configure_button_box(handle);
-        self.show_tooltip_for_hover(handle, tooltip_text);
-        handle
-    }
-
-    pub fn button_icon(&mut self, label: &str, tooltip_text: Option<&str>) -> UIBoxHandle {
-        let handle = self.button(label, tooltip_text);
-        self.boxes[handle.idx].style.font_icon = true;
-        self.boxes[handle.idx].style.font_size = 24.0;
-        self.width(handle, UISize::Pixels(32.0));
-        self.height(handle, UISize::Pixels(32.0));
-        handle
-    }
-
-    pub fn button_icon_plain(&mut self, label: &str, tooltip_text: Option<&str>) -> UIBoxHandle {
-        let handle = self.alloc_box(Some(label), UIBoxFlags::CLICKABLE | UIBoxFlags::DRAW_TEXT);
-        self.boxes[handle.idx].style.font_icon = true;
-        self.boxes[handle.idx].style.font_size = 24.0;
-        self.boxes[handle.idx].style.text_color = if handle.dragging() || handle.pressed() {
-            self.theme.accent_active
-        } else if handle.hover() {
-            self.theme.accent_hover
-        } else {
-            self.theme.text_muted
-        };
-        self.boxes[handle.idx].padding = Padding::all(2.0);
-        self.width(handle, UISize::Pixels(32.0));
-        self.height(handle, UISize::Pixels(32.0));
-        self.show_tooltip_for_hover(handle, tooltip_text);
-        handle
-    }
-
-    pub fn line_edit(&mut self, id: &str, buffer: &mut String, masked: bool) -> UIBoxHandle {
-        let handle = self.alloc_box(Some(id), UIBoxFlags::LINE_EDIT);
-        self.boxes[handle.idx].pref_size = [UISize::ParentPct(1.0), UISize::Pixels(32.0)];
-        self.boxes[handle.idx].padding = Padding::all(7.0);
-        self.boxes[handle.idx].style.bg_color = self.theme.input_bg;
-        self.boxes[handle.idx].style.border_color = self.theme.border;
-        self.boxes[handle.idx].style.corner_radius = self.theme.radius;
-        self.apply_click_to_focus(handle);
-        self.apply_line_edit_mouse_selection(handle, buffer);
-        if self.box_is_focused(handle) {
-            self.apply_text_input(handle, buffer, false);
-            self.boxes[handle.idx].style.border_color = self.theme.accent;
-        }
-        self.set_edit_display_text(handle, buffer, masked);
-        handle
-    }
-
-    pub fn textarea(&mut self, id: &str, buffer: &mut String) -> UIBoxHandle {
-        self.textarea_with_options(id, buffer, TextAreaOptions::default())
-    }
-
-    pub fn textarea_with_options(
-        &mut self,
-        id: &str,
-        buffer: &mut String,
-        options: TextAreaOptions,
-    ) -> UIBoxHandle {
-        let mut flags = UIBoxFlags::MOUSE_CLICKABLE
-            | UIBoxFlags::CLICK_TO_FOCUS
-            | UIBoxFlags::TEXT_INPUT
-            | UIBoxFlags::DRAW_BACKGROUND
-            | UIBoxFlags::DRAW_BORDER
-            | UIBoxFlags::CLIP;
-        if options.scroll_x {
-            flags |= UIBoxFlags::SCROLL_X;
-        }
-        if options.scroll_y {
-            flags |= UIBoxFlags::SCROLL_Y;
-        }
-        let handle = self.alloc_box(Some(id), flags);
-        self.boxes[handle.idx].child_layout_axis = Axis::Y;
-        self.boxes[handle.idx].pref_size = [UISize::ParentPct(1.0), UISize::ParentPct(1.0)];
-        self.boxes[handle.idx].padding = Padding::all(10.0);
-        self.boxes[handle.idx].style.bg_color = self.theme.input_bg;
-        self.boxes[handle.idx].style.border_color = self.theme.border;
-        self.boxes[handle.idx].style.corner_radius = self.theme.radius;
-        self.boxes[handle.idx].child_gap = 2.0;
-        self.apply_click_to_focus(handle);
-        self.apply_textarea_mouse_selection(handle, buffer);
-        if self.box_is_focused(handle) {
-            self.apply_text_input(handle, buffer, true);
-            self.boxes[handle.idx].style.border_color = self.theme.accent;
-        }
-        self.boxes[handle.idx].string = Some(buffer.clone());
-
-        let content_width = (self.boxes[handle.idx].rect.x1
-            - self.boxes[handle.idx].rect.x0
-            - self.boxes[handle.idx].padding.horizontal()
-            - self.boxes[handle.idx].style.margin * 2.0)
-            .max(0.0);
-
-        self.parent_stack.push(handle.idx);
-        let wrapped_lines = if options.wrap_x {
-            self.wrap_text_lines(
-                buffer,
-                content_width,
-                self.boxes[handle.idx].style.font_size,
-            )
-        } else {
-            buffer.lines().map(str::to_string).collect()
-        };
-        if wrapped_lines.is_empty() {
-            let empty = self.label("");
-            self.height(empty, UISize::Pixels(self.theme.size_text + 4.0));
-        } else {
-            for (idx, line) in wrapped_lines.iter().enumerate() {
-                let line_id = format!("{line}###textarea_line_{idx}");
-                let row = self.alloc_box(Some(&line_id), UIBoxFlags::DRAW_TEXT);
-                self.boxes[row.idx].string = Some(line.clone());
-                self.boxes[row.idx].display_string = Some(line.clone());
-                self.boxes[row.idx].pref_size =
-                    [UISize::TextContent(0.0), UISize::TextContent(0.0)];
-                self.height(row, UISize::Pixels(self.theme.size_text + 4.0));
-            }
-        }
-        self.parent_stack.pop();
-        handle
-    }
-
-    fn wrap_text_lines(&mut self, text: &str, max_width: f32, font_size: f32) -> Vec<String> {
-        if max_width <= 0.0 {
-            return text.lines().map(str::to_string).collect();
-        }
-        let mut out = Vec::new();
-        for raw_line in text.lines() {
-            if raw_line.is_empty() {
-                out.push(String::new());
-                continue;
-            }
-            let mut current = String::new();
-            for ch in raw_line.chars() {
-                let mut next = current.clone();
-                next.push(ch);
-                let w = self.text_size(font_size, &next).0;
-                if !current.is_empty() && w > max_width {
-                    out.push(current);
-                    current = ch.to_string();
-                } else {
-                    current = next;
-                }
-            }
-            out.push(current);
-        }
-        out
-    }
-
-    fn compute_visual_line_ranges(
-        &mut self,
-        text: &str,
-        max_width: f32,
-        font_size: f32,
-    ) -> Vec<(usize, usize)> {
-        if text.is_empty() {
-            return vec![(0, 0)];
-        }
-        let mut ranges = Vec::new();
-        let mut line_char_start = 0;
-
-        for raw_line in text.lines() {
-            let raw_line_len = raw_line.chars().count();
-            if raw_line_len == 0 {
-                ranges.push((line_char_start, line_char_start));
-                line_char_start += 1;
-                continue;
-            }
-            if max_width <= 0.0 {
-                ranges.push((line_char_start, line_char_start + raw_line_len));
-                line_char_start += raw_line_len + 1;
-                continue;
-            }
-            let mut current_start = line_char_start;
-            let mut current = String::new();
-            for ch in raw_line.chars() {
-                let mut next = current.clone();
-                next.push(ch);
-                let w = self.text_size(font_size, &next).0;
-                if !current.is_empty() && w > max_width {
-                    ranges.push((current_start, current_start + current.chars().count()));
-                    current_start = line_char_start + current.chars().count();
-                    current = ch.to_string();
-                } else {
-                    current = next;
-                }
-            }
-            ranges.push((current_start, current_start + current.chars().count()));
-            line_char_start += raw_line_len + 1;
-        }
-        ranges
-    }
-
-    fn visual_line_col_from_cursor_with_ranges(
-        &self,
-        ranges: &[(usize, usize)],
-        cursor: usize,
-    ) -> (usize, usize) {
-        for (line_idx, &(start, end)) in ranges.iter().enumerate() {
-            if start == end && cursor == start {
-                return (line_idx, 0);
-            }
-            if cursor >= start && cursor < end {
-                return (line_idx, cursor - start);
-            }
-            if cursor == end {
-                return (line_idx, end - start);
-            }
-        }
-        if let Some(&(start, end)) = ranges.last() {
-            let col = cursor.saturating_sub(start);
-            if end > start {
-                (ranges.len() - 1, col.min(end - start))
-            } else {
-                (ranges.len() - 1, 0)
-            }
-        } else {
-            (0, 0)
-        }
-    }
-
-    fn cursor_from_visual_line_col_with_ranges(
-        &self,
-        ranges: &[(usize, usize)],
-        visual_line: usize,
-        col: usize,
-    ) -> usize {
-        if visual_line >= ranges.len() {
-            ranges.last().map(|&(_, end)| end).unwrap_or(0)
-        } else {
-            let (start, end) = ranges[visual_line];
-            (start + col).min(end)
-        }
-    }
-
-    pub fn floating_pane_at(
-        &mut self,
-        pos: Point,
-        id: Option<&str>,
-        children: impl FnOnce(&mut IMUI),
-    ) -> UIBoxHandle {
-        self.parent_stack.push(self.overlay_root);
-        let handle = self.alloc_box(id, UIBoxFlags::DRAW_BACKGROUND | UIBoxFlags::DRAW_BORDER);
-        self.boxes[handle.idx].fixed_position = pos;
-        self.boxes[handle.idx].flags |= UIBoxFlags::FLOATING_X | UIBoxFlags::FLOATING_Y;
-        self.boxes[handle.idx].child_layout_axis = Axis::Y;
-        self.boxes[handle.idx].pref_size = [UISize::ChildrenSum, UISize::ChildrenSum];
-        self.parent_stack.push(handle.idx);
-        children(self);
-        self.parent_stack.pop();
-        self.parent_stack.pop();
-        handle
-    }
-
-    fn width(&mut self, handle: UIBoxHandle, width: UISize) -> &mut Self {
-        self.boxes[handle.idx].pref_size[axis_idx(Axis::X)] = width;
-        self
-    }
-
-    fn height(&mut self, handle: UIBoxHandle, height: UISize) -> &mut Self {
-        self.boxes[handle.idx].pref_size[axis_idx(Axis::Y)] = height;
-        self
-    }
-
-    fn min_width(&mut self, handle: UIBoxHandle, width: f32) -> &mut Self {
-        self.boxes[handle.idx].min_size.width = width;
-        self
-    }
-
-    fn min_height(&mut self, handle: UIBoxHandle, height: f32) -> &mut Self {
-        self.boxes[handle.idx].min_size.height = height;
-        self
-    }
-
-    fn background(&mut self, handle: UIBoxHandle, color: Color) -> &mut Self {
-        self.boxes[handle.idx].flags |= UIBoxFlags::DRAW_BACKGROUND;
-        self.boxes[handle.idx].style.bg_color = color;
-        self
-    }
-
-    fn text_color(&mut self, handle: UIBoxHandle, color: Color) -> &mut Self {
-        self.boxes[handle.idx].style.text_color = color;
-        self
-    }
-
-    fn border_color(&mut self, handle: UIBoxHandle, color: Color) -> &mut Self {
-        self.boxes[handle.idx].flags |= UIBoxFlags::DRAW_BORDER;
-        self.boxes[handle.idx].style.border_color = color;
-        self
-    }
-
-    fn corner_radius(&mut self, handle: UIBoxHandle, radius: f32) -> &mut Self {
-        self.boxes[handle.idx].style.corner_radius = radius.max(0.0);
-        self
-    }
-
-    fn cursor(&mut self, handle: UIBoxHandle, cursor: OSCursor) -> &mut Self {
-        self.boxes[handle.idx].cursor = Some(cursor);
-        self
-    }
-
-    fn hit_padding_x(&mut self, handle: UIBoxHandle, value: f32) -> &mut Self {
-        let value = value.max(0.0);
-        self.boxes[handle.idx].hit_padding.left = value;
-        self.boxes[handle.idx].hit_padding.right = value;
-        self
-    }
-
-    fn padding_all(&mut self, handle: UIBoxHandle, value: f32) -> &mut Self {
-        self.boxes[handle.idx].padding = Padding::all(value);
-        self
-    }
-
-    fn gap(&mut self, handle: UIBoxHandle, value: f32) -> &mut Self {
-        self.boxes[handle.idx].child_gap = value;
-        self
-    }
-
-    fn scroll_x(&mut self, handle: UIBoxHandle, enabled: bool) -> &mut Self {
-        if enabled {
-            self.boxes[handle.idx].flags |= UIBoxFlags::SCROLL_X;
-            self.absorb_pending_scroll_for_box(handle.idx);
-            let key = self.boxes[handle.idx].key;
-            let flags = self.boxes[handle.idx].flags;
-            self.apply_scrollbar_events(handle.idx, key, flags);
-        } else {
-            self.boxes[handle.idx].flags.0 &= !UIBoxFlags::SCROLL_X.0;
-        }
-        self
-    }
-
-    fn scroll_y(&mut self, handle: UIBoxHandle, enabled: bool) -> &mut Self {
-        if enabled {
-            self.boxes[handle.idx].flags |= UIBoxFlags::SCROLL_Y;
-            self.absorb_pending_scroll_for_box(handle.idx);
-            let key = self.boxes[handle.idx].key;
-            let flags = self.boxes[handle.idx].flags;
-            self.apply_scrollbar_events(handle.idx, key, flags);
-        } else {
-            self.boxes[handle.idx].flags.0 &= !UIBoxFlags::SCROLL_Y.0;
-        }
-        self
-    }
-
-    fn absorb_pending_scroll_for_box(&mut self, idx: usize) {
-        let flags = self.boxes[idx].flags;
-        if !flags.scrolls_x() && !flags.scrolls_y() {
-            return;
-        }
-
-        let rect = self.boxes[idx].rect;
-        let mut signal = UiSignal::default();
-        let mut ev_idx = 0;
-        while ev_idx < self.events.len() {
-            let ev = self.events[ev_idx];
-            if ev.ty != OSEventType::Scroll || !point_in_rect(&rect, ev.pos.or(self.mouse)) {
-                ev_idx += 1;
-                continue;
-            }
-
-            let mut taken = false;
-            if flags.scrolls_y() {
-                signal.scroll_y += ev.delta;
-                taken = true;
-            }
-            if flags.scrolls_x() {
-                signal.scroll_x += ev.delta;
-                taken = true;
-            }
-
-            if taken {
-                self.events.remove(ev_idx);
-            } else {
-                ev_idx += 1;
-            }
-        }
-
-        if signal.scroll_x != 0.0 || signal.scroll_y != 0.0 {
-            self.boxes[idx].signal.scroll_x += signal.scroll_x;
-            self.boxes[idx].signal.scroll_y += signal.scroll_y;
-            self.apply_scroll_signal(idx);
-        }
-    }
-
-    fn clip(&mut self, handle: UIBoxHandle, enabled: bool) -> &mut Self {
-        if enabled {
-            self.boxes[handle.idx].flags |= UIBoxFlags::CLIP;
-        } else {
-            self.boxes[handle.idx].flags.0 &= !UIBoxFlags::CLIP.0;
-        }
-        self
-    }
-
-    fn align(
-        &mut self,
-        handle: UIBoxHandle,
-        main: MainAxisAlign,
-        cross: CrossAxisAlign,
-    ) -> &mut Self {
-        self.boxes[handle.idx].main_axis_align = main;
-        self.boxes[handle.idx].cross_axis_align = cross;
-        self
-    }
-
-    fn configure_button_box(&mut self, handle: UIBoxHandle) {
-        self.boxes[handle.idx].pref_size = [UISize::TextContent(16.0), UISize::TextContent(10.0)];
-        self.boxes[handle.idx].padding = Padding {
-            top: 5.0,
-            right: 8.0,
-            bottom: 5.0,
-            left: 8.0,
-        };
-        self.boxes[handle.idx].style.bg_color = self.theme.surface_bg;
-        self.boxes[handle.idx].style.border_color = self.theme.border;
-        self.boxes[handle.idx].style.corner_radius = self.theme.radius;
-    }
-
-    fn show_tooltip_for_hover(&mut self, handle: UIBoxHandle, tooltip_text: Option<&str>) {
-        let (Some(text), Some(mouse)) = (tooltip_text, self.mouse) else {
-            return;
-        };
-        if !handle.hover() {
-            return;
-        }
-
-        let tooltip = self.floating_pane_at(
-            Point::new(mouse.x + 12.0, mouse.y + 12.0),
-            Some("#tooltip"),
-            |ui| {
-                let label = ui.label(text);
-                ui.padding_all(label, 5.0);
-            },
-        );
-        self.background(tooltip, self.theme.popover_bg);
-        self.border_color(tooltip, self.theme.border);
-        self.corner_radius(tooltip, self.theme.radius);
-        self.padding_all(tooltip, 4.0);
-    }
-
-    fn apply_click_to_focus(&mut self, handle: UIBoxHandle) {
-        if self.boxes[handle.idx].flags.click_to_focus() && (handle.pressed() || handle.clicked()) {
-            self.focus_key = Some(handle.key);
-        }
-    }
-
-    fn box_is_focused(&self, handle: UIBoxHandle) -> bool {
-        self.focus_key == Some(handle.key)
-    }
-
-    fn set_edit_display_text(&mut self, handle: UIBoxHandle, buffer: &str, masked: bool) {
-        let display = if masked {
-            "*".repeat(buffer.chars().count())
-        } else {
-            buffer.to_string()
-        };
-        self.boxes[handle.idx].string = Some(display.clone());
-        self.boxes[handle.idx].display_string = Some(display);
-    }
-
-    fn apply_text_input(&mut self, handle: UIBoxHandle, buffer: &mut String, multiline: bool) {
-        let key = handle.key;
-        self.ensure_text_state(key, buffer);
-        let mut ev_idx = 0;
-        while ev_idx < self.events.len() {
-            let ev = self.events[ev_idx];
-            if ev.ty != OSEventType::Press {
-                ev_idx += 1;
-                continue;
-            }
-            let taken = self.apply_text_event(key, buffer, multiline, ev);
-            if taken {
-                self.events.remove(ev_idx);
-            } else {
-                ev_idx += 1;
-            }
-        }
-    }
-
-    fn ensure_text_state(&mut self, key: UiKey, buffer: &str) {
-        let len = char_count(buffer);
-        let state = self.text_edit_states.entry(key).or_default();
-        state.cursor = state.cursor.min(len);
-        if let Some(selection) = state.selection.as_mut() {
-            selection.anchor = selection.anchor.min(len);
-            selection.cursor = selection.cursor.min(len);
-            if selection.anchor == selection.cursor {
-                state.selection = None;
-            }
-        }
-    }
-
-    fn apply_text_event(
-        &mut self,
-        key: UiKey,
-        buffer: &mut String,
-        multiline: bool,
-        ev: OSEvent,
-    ) -> bool {
-        let OSKey::Keyboard(key_code) = ev.key else {
-            return false;
-        };
-        let shift = has_flag(ev.flags, OSEventFlag::Shift);
-        let primary = primary_modifier(ev.flags);
-
-        if primary {
-            match key_code {
-                OSKeyCode::KeyA => {
-                    let len = char_count(buffer);
-                    let state = self.text_edit_states.entry(key).or_default();
-                    state.cursor = len;
-                    state.selection = Some(TextSelection {
-                        anchor: 0,
-                        cursor: len,
-                    });
-                    self.reset_caret_blink(key);
-                    return true;
-                }
-                OSKeyCode::KeyC => {
-                    if let Some(text) = selected_text(
-                        buffer,
-                        self.text_edit_states
-                            .get(&key)
-                            .and_then(TextEditState::selection_range),
-                    ) {
-                        self.clipboard = text;
-                    }
-                    return true;
-                }
-                OSKeyCode::KeyX => {
-                    let range = self
-                        .text_edit_states
-                        .get(&key)
-                        .and_then(TextEditState::selection_range);
-                    if let Some(text) = selected_text(buffer, range) {
-                        self.clipboard = text;
-                        delete_char_range(buffer, range.unwrap());
-                        let state = self.text_edit_states.entry(key).or_default();
-                        state.cursor = range.unwrap().0;
-                        state.clear_selection();
-                    }
-                    self.reset_caret_blink(key);
-                    return true;
-                }
-                OSKeyCode::KeyV => {
-                    let text = self.clipboard.clone();
-                    self.replace_selection_or_insert(key, buffer, &text);
-                    self.reset_caret_blink(key);
-                    return true;
-                }
-                _ => {}
-            }
-        }
-
-        match key_code {
-            OSKeyCode::KeyBackspace => {
-                if !self.delete_selection(key, buffer) {
-                    let state = self.text_edit_states.entry(key).or_default();
-                    if state.cursor > 0 {
-                        let pos = state.cursor;
-                        delete_char_range(buffer, (pos - 1, pos));
-                        state.cursor -= 1;
-                    }
-                }
-                self.reset_caret_blink(key);
-                true
-            }
-            OSKeyCode::KeyDelete => {
-                if !self.delete_selection(key, buffer) {
-                    let state = self.text_edit_states.entry(key).or_default();
-                    let len = char_count(buffer);
-                    if state.cursor < len {
-                        let pos = state.cursor;
-                        delete_char_range(buffer, (pos, pos + 1));
-                    }
-                }
-                self.reset_caret_blink(key);
-                true
-            }
-            OSKeyCode::KeyEnter if multiline => {
-                self.replace_selection_or_insert(key, buffer, "\n");
-                self.reset_caret_blink(key);
-                true
-            }
-            OSKeyCode::KeyEscape => {
-                self.focus_key = None;
-                true
-            }
-            OSKeyCode::KeyLeftArrow => {
-                self.move_text_cursor(
-                    key,
-                    buffer,
-                    cursor_left(buffer, self.text_cursor(key)),
-                    shift,
-                );
-                self.reset_caret_blink(key);
-                true
-            }
-            OSKeyCode::KeyRightArrow => {
-                self.move_text_cursor(
-                    key,
-                    buffer,
-                    cursor_right(buffer, self.text_cursor(key)),
-                    shift,
-                );
-                self.reset_caret_blink(key);
-                true
-            }
-            OSKeyCode::KeyHome => {
-                self.move_text_cursor(key, buffer, line_home(buffer, self.text_cursor(key)), shift);
-                self.reset_caret_blink(key);
-                true
-            }
-            OSKeyCode::KeyEnd => {
-                self.move_text_cursor(key, buffer, line_end(buffer, self.text_cursor(key)), shift);
-                self.reset_caret_blink(key);
-                true
-            }
-            OSKeyCode::KeyUpArrow if multiline => {
-                self.move_vertical(key, buffer, -1, shift);
-                self.reset_caret_blink(key);
-                true
-            }
-            OSKeyCode::KeyDownArrow if multiline => {
-                self.move_vertical(key, buffer, 1, shift);
-                self.reset_caret_blink(key);
-                true
-            }
-            OSKeyCode::KeyPageUp => {
-                self.move_text_cursor(key, buffer, 0, shift);
-                self.reset_caret_blink(key);
-                true
-            }
-            OSKeyCode::KeyPageDown => {
-                self.move_text_cursor(key, buffer, char_count(buffer), shift);
-                self.reset_caret_blink(key);
-                true
-            }
-            _ => {
-                if let Some(c) = ev.chars {
-                    if !c.is_ascii_control() {
-                        let mut s = String::new();
-                        s.push(c);
-                        self.replace_selection_or_insert(key, buffer, &s);
-                        self.reset_caret_blink(key);
-                        return true;
-                    }
-                }
-                false
-            }
-        }
-    }
-
-    fn text_cursor(&self, key: UiKey) -> usize {
-        self.text_edit_states
-            .get(&key)
-            .map(|state| state.cursor)
-            .unwrap_or(0)
-    }
-
-    fn reset_caret_blink(&mut self, key: UiKey) {
-        let now = self.now_seconds();
-        let state = self.text_edit_states.entry(key).or_default();
-        state.last_interaction_time = now;
-    }
-
-    fn set_text_cursor(&mut self, key: UiKey, cursor: usize, extend_selection: bool) {
-        let state = self.text_edit_states.entry(key).or_default();
-        if extend_selection {
-            let anchor = state.selection.map(|s| s.anchor).unwrap_or(state.cursor);
-            state.selection = Some(TextSelection { anchor, cursor });
-        } else {
-            state.selection = None;
-        }
-        state.cursor = cursor;
-        state.desired_column = None;
-    }
-
-    fn move_text_cursor(
-        &mut self,
-        key: UiKey,
-        buffer: &str,
-        cursor: usize,
-        extend_selection: bool,
-    ) {
-        self.set_text_cursor(key, cursor.min(char_count(buffer)), extend_selection);
-    }
-
-    fn move_vertical(&mut self, key: UiKey, buffer: &str, delta: isize, extend_selection: bool) {
-        let cursor = self.text_cursor(key);
-        let Some(idx) = self.box_from_key(key) else {
-            return;
-        };
-        let rect = self.boxes[idx].rect;
-        let padding = self.boxes[idx].padding;
-        let style = self.boxes[idx].style;
-        let content_width =
-            (rect.x1 - rect.x0 - padding.horizontal() - style.margin * 2.0).max(0.0);
-        let ranges = self.compute_visual_line_ranges(buffer, content_width, style.font_size);
-        let (visual_line, col) = self.visual_line_col_from_cursor_with_ranges(&ranges, cursor);
-        let state = self.text_edit_states.entry(key).or_default();
-        let desired_col = state.desired_column.unwrap_or(col);
-        state.desired_column = Some(desired_col);
-        let line_count = ranges.len().max(1);
-        let next_line = (visual_line as isize + delta).clamp(0, line_count as isize - 1) as usize;
-        let next_cursor =
-            self.cursor_from_visual_line_col_with_ranges(&ranges, next_line, desired_col);
-        self.move_text_cursor(key, buffer, next_cursor, extend_selection);
-        if let Some(state) = self.text_edit_states.get_mut(&key) {
-            state.desired_column = Some(desired_col);
-        }
-    }
-
-    fn replace_selection_or_insert(&mut self, key: UiKey, buffer: &mut String, text: &str) {
-        self.delete_selection(key, buffer);
-        let state = self.text_edit_states.entry(key).or_default();
-        let cursor = state.cursor.min(char_count(buffer));
-        let byte = char_to_byte(buffer, cursor);
-        buffer.insert_str(byte, text);
-        state.cursor = cursor + char_count(text);
-        state.clear_selection();
-        state.desired_column = None;
-    }
-
-    fn delete_selection(&mut self, key: UiKey, buffer: &mut String) -> bool {
-        let range = self
-            .text_edit_states
-            .get(&key)
-            .and_then(TextEditState::selection_range);
-        let Some(range) = range else {
-            return false;
-        };
-        delete_char_range(buffer, range);
-        let state = self.text_edit_states.entry(key).or_default();
-        state.cursor = range.0;
-        state.clear_selection();
-        state.desired_column = None;
-        true
-    }
-
-    fn apply_line_edit_mouse_selection(&mut self, handle: UIBoxHandle, buffer: &str) {
-        if handle.pressed() {
-            let cursor =
-                self.cursor_from_line_edit_point(handle, buffer, handle.signal.left_press_pos);
-            self.set_text_cursor(handle.key, cursor, false);
-            self.reset_caret_blink(handle.key);
-        }
-        if handle.dragging() {
-            let cursor = self.cursor_from_line_edit_point(handle, buffer, self.mouse);
-            self.set_text_cursor(handle.key, cursor, true);
-            self.reset_caret_blink(handle.key);
-        }
-    }
-
-    fn apply_textarea_mouse_selection(&mut self, handle: UIBoxHandle, buffer: &str) {
-        if handle.pressed() {
-            let cursor =
-                self.cursor_from_textarea_point(handle, buffer, handle.signal.left_press_pos);
-            self.set_text_cursor(handle.key, cursor, false);
-            self.reset_caret_blink(handle.key);
-        }
-        if handle.dragging() {
-            let cursor = self.cursor_from_textarea_point(handle, buffer, self.mouse);
-            self.set_text_cursor(handle.key, cursor, true);
-            self.reset_caret_blink(handle.key);
-        }
-    }
-
-    fn cursor_from_line_edit_point(
-        &mut self,
-        handle: UIBoxHandle,
-        buffer: &str,
-        point: Option<Point>,
-    ) -> usize {
-        let Some(point) = point else {
-            return char_count(buffer);
-        };
-        let rect = self.boxes[handle.idx].rect;
-        let padding = self.boxes[handle.idx].padding;
-        let style = self.boxes[handle.idx].style;
-        let local_x = (point.x - rect.x0 - padding.left - style.margin).max(0.0);
-        self.cursor_from_x(buffer, style.font_size, local_x)
-    }
-
-    fn cursor_from_textarea_point(
-        &mut self,
-        handle: UIBoxHandle,
-        buffer: &str,
-        point: Option<Point>,
-    ) -> usize {
-        let Some(point) = point else {
-            return char_count(buffer);
-        };
-        let rect = self.boxes[handle.idx].rect;
-        let padding = self.boxes[handle.idx].padding;
-        let style = self.boxes[handle.idx].style;
-        let line_h = self.theme.size_text + 6.0;
-        let visual_line = ((point.y - rect.y0 - padding.top + self.boxes[handle.idx].scroll.y)
-            / line_h)
-            .floor()
-            .max(0.0) as usize;
-        let content_width =
-            (rect.x1 - rect.x0 - padding.horizontal() - style.margin * 2.0).max(0.0);
-        let ranges = self.compute_visual_line_ranges(buffer, content_width, style.font_size);
-        let (line_start, line_end) = if visual_line < ranges.len() {
-            ranges[visual_line]
-        } else {
-            ranges.last().copied().unwrap_or((0, char_count(buffer)))
-        };
-        let line_text = substring_chars(buffer, (line_start, line_end));
-        let local_x = (point.x - rect.x0 - padding.left - style.margin).max(0.0);
-        line_start + self.cursor_from_x(&line_text, style.font_size, local_x)
-    }
-
-    fn cursor_from_x(&mut self, text: &str, font_size: f32, x: f32) -> usize {
-        let mut last = 0;
-        for idx in 0..=char_count(text) {
-            let prefix = substring_chars(text, (0, idx));
-            let width = self.text_size(font_size, &prefix).0;
-            if width > x {
-                return if idx == 0 { 0 } else { last };
-            }
-            last = idx;
-        }
-        last
-    }
-
-    fn box_from_key(&self, key: UiKey) -> Option<usize> {
-        if key.is_zero() {
-            None
-        } else {
-            self.box_table.get(&key).copied()
-        }
-    }
-
-    fn allocate_box_storage(
-        &mut self,
-        key: UiKey,
-        flags: UIBoxFlags,
-        display_string: Option<String>,
-    ) -> usize {
-        if let Some(idx) = self.free_boxes.pop() {
-            self.boxes[idx] = UIBox::new(key, flags, display_string, &self.theme);
-            idx
-        } else {
-            let idx = self.boxes.len();
-            self.boxes
-                .push(UIBox::new(key, flags, display_string, &self.theme));
-            idx
-        }
-    }
-
-    fn alloc_box(&mut self, label: Option<&str>, flags: UIBoxFlags) -> UIBoxHandle {
-        let parent_idx = self.parent_stack.last().copied();
-        let seed = parent_idx.map(|idx| self.boxes[idx].key.0).unwrap_or(0);
-        let key_string = label.map(hash_part_from_key_string);
-        let mut key = key_string
-            .as_ref()
-            .filter(|s| !s.is_empty())
-            .map(|s| UiKey(u64_hash_from_string(seed, s)))
-            .unwrap_or_default();
-        let display_string = label
-            .map(display_part_from_key_string)
-            .filter(|s| !s.is_empty());
-        let mut existing_idx = self.box_from_key(key);
-        if let Some(idx) = existing_idx {
-            if self.boxes[idx].last_touched_frame == self.build_index {
-                key = UiKey::default();
-                existing_idx = None;
-            }
-        }
-
-        let signal = self.signal_from_key_and_flags(key, flags, existing_idx);
-        let idx = if let Some(idx) = existing_idx {
-            self.boxes[idx].reset_for_frame(key, flags, display_string.clone(), &self.theme);
-            idx
-        } else {
-            self.allocate_box_storage(key, flags, display_string.clone())
-        };
-
-        if !key.is_zero() && existing_idx.is_none() {
-            self.box_table.insert(key, idx);
-            self.boxes[idx].first_touched_frame = self.build_index;
-        }
-
-        self.boxes[idx].parent = parent_idx;
-        self.boxes[idx].signal = signal;
-        self.boxes[idx].last_touched_frame = self.build_index;
-        self.apply_scroll_signal(idx);
-
-        if let Some(parent_idx) = parent_idx {
-            self.boxes[parent_idx].children.push(idx);
-        }
-        self.frame_boxes.push(idx);
-        UIBoxHandle { idx, key, signal }
-    }
-
-    fn apply_scroll_signal(&mut self, idx: usize) {
-        let signal = self.boxes[idx].signal;
-        if self.boxes[idx].flags.scrolls_x() && signal.scroll_x != 0.0 {
-            self.boxes[idx].scroll_target.x -= signal.scroll_x * 16.0;
-        }
-        if self.boxes[idx].flags.scrolls_y() && signal.scroll_y != 0.0 {
-            self.boxes[idx].scroll_target.y -= signal.scroll_y * 16.0;
-        }
-    }
-
-    fn scrollbar_track_rect(&self, idx: usize, axis: Axis) -> Option<RectCoords> {
-        if !self.scrollbar_available(idx, axis) {
-            return None;
-        }
-        let rect = self.boxes[idx].rect;
-        let thickness = SCROLLBAR_HOVER_THICKNESS;
-        let inset = SCROLLBAR_EDGE_INSET;
-        Some(match axis {
-            Axis::X => RectCoords::from_size(
-                rect.x0,
-                rect.y1 - thickness - inset * 2.0,
-                rect.width(),
-                thickness + inset * 2.0,
-            ),
-            Axis::Y => RectCoords::from_size(
-                rect.x1 - thickness - inset * 2.0,
-                rect.y0,
-                thickness + inset * 2.0,
-                rect.height(),
-            ),
-        })
-    }
-
-    fn scrollbar_thumb_rect(&self, idx: usize, axis: Axis, thickness: f32) -> Option<RectCoords> {
-        if !self.scrollbar_available(idx, axis) {
-            return None;
-        }
-        let rect = self.boxes[idx].rect;
-        let content = self.boxes[idx].content_size;
-        let scroll = self.boxes[idx].scroll;
-        let scroll_max = self.boxes[idx].scroll_max;
-        let inset = SCROLLBAR_EDGE_INSET;
-
-        Some(match axis {
-            Axis::X => {
-                let track_w = rect.width().max(1.0);
-                let thumb_w = scrollbar_thumb_len(track_w, content.width)
-                    .max(12.0)
-                    .min(track_w);
-                let thumb_x =
-                    rect.x0 + (track_w - thumb_w) * (scroll.x / scroll_max.x).clamp(0.0, 1.0);
-                RectCoords::from_size(thumb_x, rect.y1 - thickness - inset, thumb_w, thickness)
-            }
-            Axis::Y => {
-                let track_h = rect.height().max(1.0);
-                let thumb_h = scrollbar_thumb_len(track_h, content.height)
-                    .max(12.0)
-                    .min(track_h);
-                let thumb_y =
-                    rect.y0 + (track_h - thumb_h) * (scroll.y / scroll_max.y).clamp(0.0, 1.0);
-                RectCoords::from_size(rect.x1 - thickness - inset, thumb_y, thickness, thumb_h)
-            }
-        })
-    }
-
-    fn scrollbar_available(&self, idx: usize, axis: Axis) -> bool {
-        let flags = self.boxes[idx].flags;
-        let scroll_max = self.boxes[idx].scroll_max;
-        let content = self.boxes[idx].content_size;
-        match axis {
-            Axis::X => flags.scrolls_x() && scroll_max.x > 0.0 && content.width > 0.0,
-            Axis::Y => flags.scrolls_y() && scroll_max.y > 0.0 && content.height > 0.0,
-        }
-    }
-
-    fn scrollbar_is_hot_or_active(&self, idx: usize, axis: Axis) -> bool {
-        let key = self.boxes[idx].key;
-        if self
-            .active_scrollbar
-            .is_some_and(|drag| drag.key == key && drag.axis == axis)
-        {
-            return true;
-        }
-        self.scrollbar_track_rect(idx, axis)
-            .is_some_and(|rect| point_in_rect(&rect, self.mouse))
-    }
-
-    fn scrollbar_thickness(&self, idx: usize, axis: Axis) -> f32 {
-        let t = match axis {
-            Axis::X => self.boxes[idx].scrollbar_x_t,
-            Axis::Y => self.boxes[idx].scrollbar_y_t,
-        }
-        .clamp(0.0, 1.0);
-        SCROLLBAR_THICKNESS + (SCROLLBAR_HOVER_THICKNESS - SCROLLBAR_THICKNESS) * t
-    }
-
-    fn apply_scrollbar_events(&mut self, idx: usize, key: UiKey, flags: UIBoxFlags) {
-        if key.is_zero() || (!flags.scrolls_x() && !flags.scrolls_y()) {
-            return;
-        }
-
-        let mut ev_idx = 0;
-        while ev_idx < self.events.len() {
-            let ev = self.events[ev_idx];
-            let mut taken = false;
-
-            match ev.ty {
-                OSEventType::Press if ev.key == OSKey::LeftMouseButton => {
-                    if let Some((axis, pos)) = self.scrollbar_hit(idx, ev.pos.or(self.mouse)) {
-                        self.begin_scrollbar_drag(idx, key, axis, pos);
-                        taken = true;
-                    }
-                }
-                OSEventType::MouseMove
-                    if self.active_scrollbar.is_some_and(|drag| drag.key == key)
-                        && self.left_mouse_down =>
-                {
-                    if let Some(pos) = ev.pos.or(self.mouse) {
-                        self.drag_scrollbar_to(idx, pos);
-                        taken = true;
-                    }
-                }
-                OSEventType::Release
-                    if ev.key == OSKey::LeftMouseButton
-                        && self.active_scrollbar.is_some_and(|drag| drag.key == key) =>
-                {
-                    if let Some(pos) = ev.pos.or(self.mouse) {
-                        self.drag_scrollbar_to(idx, pos);
-                    }
-                    self.active_scrollbar = None;
-                    taken = true;
-                }
-                _ => {}
-            }
-
-            if taken {
-                self.events.remove(ev_idx);
-            } else {
-                ev_idx += 1;
-            }
-        }
-    }
-
-    fn scrollbar_hit(&self, idx: usize, pos: Option<Point>) -> Option<(Axis, Point)> {
-        let pos = pos?;
-        for axis in [Axis::Y, Axis::X] {
-            if self
-                .scrollbar_track_rect(idx, axis)
-                .is_some_and(|rect| point_in_rect(&rect, Some(pos)))
-            {
-                return Some((axis, pos));
-            }
-        }
-        None
-    }
-
-    fn begin_scrollbar_drag(&mut self, idx: usize, key: UiKey, axis: Axis, pos: Point) {
-        let thumb = self.scrollbar_thumb_rect(idx, axis, SCROLLBAR_HOVER_THICKNESS);
-        let thumb_grab_offset = thumb
-            .filter(|thumb| point_in_rect(thumb, Some(pos)))
-            .map(|thumb| pos.axis(axis) - rect_min_axis(thumb, axis))
-            .unwrap_or_else(|| self.scrollbar_thumb_len(idx, axis) * 0.5);
-
-        self.active_scrollbar = Some(ScrollbarDrag {
-            key,
-            axis,
-            thumb_grab_offset,
-        });
-        self.drag_scrollbar_to(idx, pos);
-    }
-
-    fn drag_scrollbar_to(&mut self, idx: usize, pos: Point) {
-        let Some(drag) = self.active_scrollbar else {
-            return;
-        };
-        let rect = self.boxes[idx].rect;
-        let scroll_max = self.boxes[idx].scroll_max.axis(drag.axis);
-        if scroll_max <= 0.0 {
-            return;
-        }
-        let track_min = rect_min_axis(rect, drag.axis);
-        let track_len = rect_size_axis(rect, drag.axis).max(1.0);
-        let thumb_len = self.scrollbar_thumb_len(idx, drag.axis);
-        let movable = (track_len - thumb_len).max(1.0);
-        let thumb_min =
-            (pos.axis(drag.axis) - drag.thumb_grab_offset - track_min).clamp(0.0, movable);
-        let value = scroll_max * (thumb_min / movable);
-        self.boxes[idx].scroll.set_axis(drag.axis, value);
-        self.boxes[idx].scroll_target.set_axis(drag.axis, value);
-        self.request_repaint();
-    }
-
-    fn scrollbar_thumb_len(&self, idx: usize, axis: Axis) -> f32 {
-        let rect = self.boxes[idx].rect;
-        let content = self.boxes[idx].content_size;
-        let track_len = rect_size_axis(rect, axis).max(1.0);
-        scrollbar_thumb_len(track_len, content.axis(axis))
-            .max(12.0)
-            .min(track_len)
-    }
-
-    fn animate_scroll_offsets(&mut self) {
-        let rate = smooth_rate(self.theme.motion.scroll_rate, self.animation_dt);
-        let epsilon = 0.5;
-        let mut animating = false;
-        for idx in self.frame_boxes.clone() {
-            let box_ = &mut self.boxes[idx];
-            if box_.first_touched_frame == self.build_index {
-                box_.scroll = box_.scroll_target;
-                continue;
-            }
-            for axis in [Axis::X, Axis::Y] {
-                let current = box_.scroll.axis(axis);
-                let target = box_.scroll_target.axis(axis);
-                let next = current + (target - current) * rate;
-                if (target - next).abs() <= epsilon {
-                    box_.scroll.set_axis(axis, target);
-                } else {
-                    box_.scroll.set_axis(axis, next);
-                    animating = true;
-                }
-            }
-        }
-        if animating {
-            self.request_repaint();
-        }
-    }
-
-    fn animate_visual_state(&mut self) {
-        let hot_rate = smooth_rate(self.theme.motion.hot_rate, self.animation_dt);
-        let active_rate = smooth_rate(self.theme.motion.active_rate, self.animation_dt);
-        let focus_rate = smooth_rate(self.theme.motion.focus_rate, self.animation_dt);
-        let appear_rate = smooth_rate(self.theme.motion.menu_rate, self.animation_dt);
-        let color_rate = smooth_rate(30.0, self.animation_dt);
-        let epsilon = self.theme.motion.epsilon;
-        let mut animating = false;
-
-        for idx in self.frame_boxes.clone() {
-            let key = self.boxes[idx].key;
-            let is_hot = self.boxes[idx].signal.hovering();
-            let is_active = self.active_left_key == Some(key)
-                || self.active_right_key == Some(key)
-                || self.boxes[idx].signal.pressed();
-            let is_focused = self.focus_key == Some(key);
-            let is_floating = self.boxes[idx].flags.contains(UIBoxFlags::FLOATING_X)
-                || self.boxes[idx].flags.contains(UIBoxFlags::FLOATING_Y);
-            let draws_background = self.boxes[idx].flags.contains(UIBoxFlags::DRAW_BACKGROUND);
-            let draws_border = self.boxes[idx].flags.contains(UIBoxFlags::DRAW_BORDER);
-            let draws_text = self.boxes[idx].flags.contains(UIBoxFlags::DRAW_TEXT);
-            let animates_interaction =
-                self.boxes[idx].flags.contains(UIBoxFlags::DRAW_HOT_EFFECTS) || draws_border;
-            let animates_appearance =
-                is_floating && (draws_background || draws_border || draws_text);
-            let scrollbar_x_target = (self.scrollbar_available(idx, Axis::X)
-                && self.scrollbar_is_hot_or_active(idx, Axis::X))
-                as u8 as f32;
-            let scrollbar_y_target = (self.scrollbar_available(idx, Axis::Y)
-                && self.scrollbar_is_hot_or_active(idx, Axis::Y))
-                as u8 as f32;
-            let box_ = &mut self.boxes[idx];
-
-            if key.is_zero() {
-                box_.hot_t = is_hot as u8 as f32;
-                box_.active_t = is_active as u8 as f32;
-                box_.focus_t = is_focused as u8 as f32;
-                box_.appear_t = 1.0;
-                box_.scrollbar_x_t = scrollbar_x_target;
-                box_.scrollbar_y_t = scrollbar_y_target;
-                box_.bg_color_animated = box_.style.bg_color;
-                box_.border_color_animated = box_.style.border_color;
-                continue;
-            }
-
-            if box_.first_touched_frame == self.build_index {
-                box_.hot_t = is_hot as u8 as f32;
-                box_.active_t = is_active as u8 as f32;
-                box_.focus_t = is_focused as u8 as f32;
-                box_.appear_t = if animates_appearance {
-                    appear_rate
-                } else {
-                    1.0
-                };
-                box_.scrollbar_x_t = scrollbar_x_target;
-                box_.scrollbar_y_t = scrollbar_y_target;
-                box_.bg_color_animated = box_.style.bg_color;
-                box_.border_color_animated = box_.style.border_color;
-                if animates_appearance && box_.appear_t < 1.0 - epsilon {
-                    animating = true;
-                }
-                continue;
-            }
-
-            box_.hot_t = animate_scalar(box_.hot_t, is_hot as u8 as f32, hot_rate, epsilon);
-            box_.active_t =
-                animate_scalar(box_.active_t, is_active as u8 as f32, active_rate, epsilon);
-            box_.focus_t =
-                animate_scalar(box_.focus_t, is_focused as u8 as f32, focus_rate, epsilon);
-            box_.appear_t = if animates_appearance {
-                animate_scalar(box_.appear_t, 1.0, appear_rate, epsilon)
-            } else {
-                1.0
-            };
-            box_.scrollbar_x_t =
-                animate_scalar(box_.scrollbar_x_t, scrollbar_x_target, hot_rate, epsilon);
-            box_.scrollbar_y_t =
-                animate_scalar(box_.scrollbar_y_t, scrollbar_y_target, hot_rate, epsilon);
-
-            let mut target_bg = box_.style.bg_color;
-            if box_.flags.contains(UIBoxFlags::DRAW_HOT_EFFECTS) {
-                target_bg = color_mix(target_bg, self.theme.surface_hover, box_.hot_t * 0.55);
-                target_bg = color_mix(target_bg, self.theme.accent_active, box_.active_t * 0.35);
-            }
-            let target_border = color_mix(box_.style.border_color, self.theme.accent, box_.focus_t);
-            if draws_background {
-                box_.bg_color_animated = color_lerp(box_.bg_color_animated, target_bg, color_rate);
-            } else {
-                box_.bg_color_animated = box_.style.bg_color;
-            }
-            if draws_border {
-                box_.border_color_animated =
-                    color_lerp(box_.border_color_animated, target_border, color_rate);
-            } else {
-                box_.border_color_animated = box_.style.border_color;
-            }
-
-            animating = animating
-                || (animates_interaction
-                    && ((box_.hot_t - is_hot as u8 as f32).abs() > epsilon
-                        || (box_.active_t - is_active as u8 as f32).abs() > epsilon
-                        || (box_.focus_t - is_focused as u8 as f32).abs() > epsilon))
-                || (1.0 - box_.appear_t).abs() > epsilon
-                || (box_.scrollbar_x_t - scrollbar_x_target).abs() > epsilon
-                || (box_.scrollbar_y_t - scrollbar_y_target).abs() > epsilon
-                || (draws_background
-                    && color_distance(box_.bg_color_animated, target_bg) > epsilon)
-                || (draws_border
-                    && color_distance(box_.border_color_animated, target_border) > epsilon);
-        }
-
-        if animating {
-            self.request_repaint();
-        }
-    }
-
-    fn signal_from_key_and_flags(
-        &mut self,
-        key: UiKey,
-        flags: UIBoxFlags,
-        existing_idx: Option<usize>,
-    ) -> UiSignal {
-        let mut signal = UiSignal::default();
-        let rect = existing_idx
-            .map(|idx| expanded_rect(self.boxes[idx].rect, self.boxes[idx].hit_padding))
-            .unwrap_or_else(|| RectCoords::from_size(-10000.0, -10000.0, 0.0, 0.0));
-        let mouse_over = point_in_rect(&rect, self.mouse);
-        let focused = self.focus_key == Some(key);
-
-        if let Some(idx) = existing_idx {
-            self.apply_scrollbar_events(idx, key, flags);
-        }
-
-        let mut ev_idx = 0;
-        while ev_idx < self.events.len() {
-            let ev = self.events[ev_idx];
-            let in_bounds = point_in_rect(&rect, ev.pos.or(self.mouse));
-            let mut taken = false;
-
-            if flags.is_mouse_clickable() {
-                if let Some(button) = mouse_button_from_key(ev.key) {
-                    match ev.ty {
-                        OSEventType::Press if in_bounds => {
-                            self.hot_key = Some(key);
-                            self.set_active_key(button, Some(key));
-                            self.drag_start_mouse = ev.pos.or(self.mouse);
-                            if button == MouseButton::Left {
-                                signal.flags |= UiSignal::LEFT_PRESSED;
-                                signal.left_press_pos = ev.pos.or(self.mouse);
-                            }
-                            taken = true;
-                        }
-                        OSEventType::Release if self.active_key(button) == Some(key) => {
-                            self.set_active_key(button, None);
-                            if button == MouseButton::Left {
-                                signal.flags |= UiSignal::LEFT_RELEASED;
-                                if in_bounds {
-                                    signal.flags |= UiSignal::LEFT_CLICKED | UiSignal::COMMIT;
-                                }
-                            }
-                            if !in_bounds && self.hot_key == Some(key) {
-                                self.hot_key = None;
-                            }
-                            taken = true;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-
-            if !taken
-                && flags.is_keyboard_clickable()
-                && focused
-                && ev.ty == OSEventType::Press
-                && matches!(
-                    ev.key,
-                    OSKey::Keyboard(OSKeyCode::KeyEnter) | OSKey::Keyboard(OSKeyCode::KeySpace)
-                )
-            {
-                signal.flags |= UiSignal::COMMIT | UiSignal::LEFT_CLICKED;
-                taken = true;
-            }
-
-            if !taken && ev.ty == OSEventType::Scroll && in_bounds {
-                if flags.scrolls_y() {
-                    signal.scroll_y += ev.delta;
-                    taken = true;
-                }
-                if flags.scrolls_x() {
-                    signal.scroll_x += ev.delta;
-                    taken = true;
-                }
-            }
-
-            if taken {
-                self.events.remove(ev_idx);
-            } else {
-                ev_idx += 1;
-            }
-        }
-
-        if mouse_over {
-            signal.flags |= UiSignal::MOUSE_OVER;
-        }
-        if flags.is_mouse_clickable()
-            && mouse_over
-            && (self.hot_key.is_none() || self.hot_key == Some(key))
-            && (self.active_left_key.is_none() || self.active_left_key == Some(key))
-            && (self.active_right_key.is_none() || self.active_right_key == Some(key))
-        {
-            self.hot_key = Some(key);
-            signal.flags |= UiSignal::HOVERING;
-        }
-
-        if self.active_left_key == Some(key) && self.left_mouse_down {
-            signal.flags |= UiSignal::LEFT_DRAGGING;
-        }
-        signal
-    }
-
-    fn layout_root(&mut self, root: usize) {
-        for axis in [Axis::X, Axis::Y] {
-            self.calc_standalone(root, axis);
-            self.calc_upwards(root, axis);
-            self.calc_downwards(root, axis);
-            self.enforce_constraints(root, axis);
-            self.reconcile_overflow(root, axis);
-            self.clamp_scroll_offsets(root, axis);
-            self.position(root, axis);
-        }
-    }
-
-    fn clamp_scroll_offsets(&mut self, idx: usize, axis: Axis) {
-        let children = self.boxes[idx].children.clone();
-        if self.boxes[idx].child_layout_axis == axis {
-            let content_size = (self.boxes[idx].computed_size.axis(axis)
-                - self.boxes[idx].padding.axis(axis))
-            .max(0.0);
-            let used_size = self.total_children_size(idx, axis);
-            let max_scroll = (used_size - content_size).max(0.0);
-            self.boxes[idx].content_size.set_axis(axis, used_size);
-            self.boxes[idx].scroll_max.set_axis(axis, max_scroll);
-            match axis {
-                Axis::X => {
-                    self.boxes[idx].scroll.x = self.boxes[idx].scroll.x.clamp(0.0, max_scroll);
-                    self.boxes[idx].scroll_target.x =
-                        self.boxes[idx].scroll_target.x.clamp(0.0, max_scroll);
-                }
-                Axis::Y => {
-                    self.boxes[idx].scroll.y = self.boxes[idx].scroll.y.clamp(0.0, max_scroll);
-                    self.boxes[idx].scroll_target.y =
-                        self.boxes[idx].scroll_target.y.clamp(0.0, max_scroll);
-                }
-            }
-        }
-        for child in children {
-            self.clamp_scroll_offsets(child, axis);
-        }
-    }
-
-    fn reconcile_overflow(&mut self, idx: usize, axis: Axis) {
-        self.reconcile_container_overflow(idx, axis);
-        let children = self.boxes[idx].children.clone();
-        for child in children {
-            self.reconcile_overflow(child, axis);
-        }
-    }
-
-    fn reconcile_container_overflow(&mut self, parent: usize, axis: Axis) {
-        if self.boxes[parent].child_layout_axis != axis {
-            return;
-        }
-        if (axis == Axis::X && self.boxes[parent].flags.scrolls_x())
-            || (axis == Axis::Y && self.boxes[parent].flags.scrolls_y())
-        {
-            // Scroll containers keep child sizes and rely on scrolling instead of shrinking.
-            return;
-        }
-        let children: Vec<usize> = self.boxes[parent]
-            .children
-            .iter()
-            .copied()
-            .filter(|child| !self.box_is_out_of_flow(*child))
-            .collect();
-        if children.is_empty() {
-            return;
-        }
-
-        let content_size = (self.boxes[parent].computed_size.axis(axis)
-            - self.boxes[parent].padding.axis(axis))
-        .max(0.0);
-        let gaps = self.boxes[parent].child_gap * children.len().saturating_sub(1) as f32;
-        let sum_children: f32 = children
-            .iter()
-            .map(|child| self.boxes[*child].computed_size.axis(axis))
-            .sum();
-        let mut overflow = (sum_children + gaps - content_size).max(0.0);
-        if overflow <= 0.0 {
-            return;
-        }
-
-        overflow = self.shrink_group_to_fit(&children, axis, overflow, true);
-        if overflow > 0.0 {
-            overflow = self.shrink_group_to_fit(&children, axis, overflow, false);
-        }
-        if overflow > 0.0 {
-            // Hard fallback guarantee: shrink from tail down to zero.
-            for child in children.iter().rev() {
-                if overflow <= 0.0 {
-                    break;
-                }
-                let cur = self.boxes[*child].computed_size.axis(axis);
-                let take = cur.min(overflow);
-                self.boxes[*child].computed_size.set_axis(axis, cur - take);
-                overflow -= take;
-            }
-        }
-    }
-
-    fn shrink_group_to_fit(
-        &mut self,
-        children: &[usize],
-        axis: Axis,
-        mut overflow: f32,
-        fill_only: bool,
-    ) -> f32 {
-        if overflow <= 0.0 {
-            return 0.0;
-        }
-        let eligible: Vec<usize> = children
-            .iter()
-            .copied()
-            .filter(|idx| {
-                let is_fill = self.boxes[*idx].pref_size[axis_idx(axis)] == UISize::Fill;
-                if fill_only { is_fill } else { !is_fill }
-            })
-            .collect();
-        if eligible.is_empty() {
-            return overflow;
-        }
-
-        let capacities: Vec<(usize, f32)> = eligible
-            .iter()
-            .map(|idx| {
-                let cur = self.boxes[*idx].computed_size.axis(axis);
-                let min = self.boxes[*idx].min_size.axis(axis);
-                (*idx, (cur - min).max(0.0))
-            })
-            .collect();
-        let total_capacity: f32 = capacities.iter().map(|(_, c)| *c).sum();
-        if total_capacity <= 0.0 {
-            return overflow;
-        }
-
-        let target = overflow.min(total_capacity);
-        let mut taken_total = 0.0;
-        for (idx, cap) in &capacities {
-            if *cap <= 0.0 {
-                continue;
-            }
-            let take = (target * (*cap / total_capacity)).min(*cap);
-            let cur = self.boxes[*idx].computed_size.axis(axis);
-            self.boxes[*idx].computed_size.set_axis(axis, cur - take);
-            taken_total += take;
-        }
-
-        overflow -= taken_total;
-        overflow.max(0.0)
-    }
-
-    fn calc_standalone(&mut self, idx: usize, axis: Axis) {
-        let children = self.boxes[idx].children.clone();
-        for child in children {
-            self.calc_standalone(child, axis);
-        }
-        let pref = self.boxes[idx].pref_size[axis_idx(axis)];
-        let value = match pref {
-            UISize::Pixels(v) => v,
-            UISize::TextContent(padding) => {
-                let text = self.boxes[idx].display_string.clone().unwrap_or_default();
-                let font_size = self.boxes[idx].style.font_size;
-                let margin = self.boxes[idx].style.margin;
-                let (w, h) = self.text_size(font_size, &text);
-                match axis {
-                    Axis::X => w + padding + self.boxes[idx].padding.horizontal() + margin * 2.0,
-                    Axis::Y => {
-                        h.max(font_size)
-                            + padding
-                            + self.boxes[idx].padding.vertical()
-                            + margin * 2.0
-                    }
-                }
-            }
-            UISize::ParentPct(_) | UISize::ChildrenSum | UISize::Fill => {
-                self.boxes[idx].min_size.axis(axis)
-            }
-        };
-        self.boxes[idx].computed_size.set_axis(axis, value);
-    }
-
-    fn calc_upwards(&mut self, idx: usize, axis: Axis) {
-        let children = self.boxes[idx].children.clone();
-        for child in children {
-            self.calc_upwards(child, axis);
-        }
-        if self.boxes[idx].pref_size[axis_idx(axis)] != UISize::ChildrenSum {
-            return;
-        }
-        let child_axis = self.boxes[idx].child_layout_axis;
-        let mut size: f32 = 0.0;
-        if axis == child_axis {
-            for child in &self.boxes[idx].children {
-                if self.box_is_out_of_flow(*child) {
-                    continue;
-                }
-                size += self.boxes[*child].computed_size.axis(axis);
-            }
-            let child_count = self.in_flow_child_count(idx);
-            if child_count > 1 {
-                size += self.boxes[idx].child_gap * (child_count - 1) as f32;
-            }
-        } else {
-            for child in &self.boxes[idx].children {
-                if self.box_is_out_of_flow(*child) {
-                    continue;
-                }
-                size = size.max(self.boxes[*child].computed_size.axis(axis));
-            }
-        }
-        size += self.boxes[idx].padding.axis(axis);
-        self.boxes[idx].computed_size.set_axis(axis, size);
-    }
-
-    fn calc_downwards(&mut self, idx: usize, axis: Axis) {
-        let parent_content = if let Some(parent) = self.boxes[idx].parent {
-            (self.boxes[parent].computed_size.axis(axis) - self.boxes[parent].padding.axis(axis))
-                .max(0.0)
-        } else {
-            self.boxes[idx].computed_size.axis(axis)
-        };
-        self.apply_downward_size(idx, axis, parent_content);
-
-        // Resolve direct children on this axis before recursing so descendants
-        // observe the final parent size (especially for Fill children).
-        let children = self.boxes[idx].children.clone();
-        for child in &children {
-            if self.box_is_out_of_flow(*child) {
-                continue;
-            }
-            let content = (self.boxes[idx].computed_size.axis(axis)
-                - self.boxes[idx].padding.axis(axis))
-            .max(0.0);
-            self.apply_downward_size(*child, axis, content);
-        }
-        if self.boxes[idx].child_layout_axis == axis {
-            self.distribute_fill_children(idx, axis);
-        }
-
-        let children = self.boxes[idx].children.clone();
-        for child in children {
-            self.calc_downwards(child, axis);
-        }
-    }
-
-    fn apply_downward_size(&mut self, idx: usize, axis: Axis, parent_content: f32) {
-        match self.boxes[idx].pref_size[axis_idx(axis)] {
-            UISize::ParentPct(pct) => self.boxes[idx]
-                .computed_size
-                .set_axis(axis, (parent_content * pct).max(0.0)),
-            UISize::Fill => {
-                // On the parent's main axis, Fill is resolved by
-                // `distribute_fill_children`; don't overwrite that result here.
-                if let Some(parent) = self.boxes[idx].parent {
-                    if self.boxes[parent].child_layout_axis == axis {
-                        return;
-                    }
-                }
-                // On cross-axis, Fill behaves like ParentPct(1.0).
-                self.boxes[idx]
-                    .computed_size
-                    .set_axis(axis, parent_content.max(0.0));
-            }
-            _ => {}
-        }
-    }
-
-    fn enforce_constraints(&mut self, idx: usize, axis: Axis) {
-        let min = self.boxes[idx].min_size.axis(axis);
-        let size = self.boxes[idx].computed_size.axis(axis).max(min);
-        self.boxes[idx].computed_size.set_axis(axis, size);
-        let children = self.boxes[idx].children.clone();
-        for child in children {
-            self.enforce_constraints(child, axis);
-        }
-    }
-
-    fn position(&mut self, idx: usize, axis: Axis) {
-        let origin = if self.boxes[idx].flags.contains(match axis {
-            Axis::X => UIBoxFlags::FLOATING_X,
-            Axis::Y => UIBoxFlags::FLOATING_Y,
-        }) {
-            self.boxes[idx].fixed_position.axis(axis)
-        } else if let Some(parent) = self.boxes[idx].parent {
-            let parent_axis = self.boxes[parent].child_layout_axis;
-            if axis == parent_axis {
-                self.position_on_main_axis(idx, parent, axis)
-            } else {
-                self.position_on_cross_axis(idx, parent, axis)
-            }
-        } else {
-            0.0
-        };
-        self.set_rect_axis(idx, axis, origin, self.boxes[idx].computed_size.axis(axis));
-        let children = self.boxes[idx].children.clone();
-        self.distribute_fill_children(idx, axis);
-        for child in children {
-            self.position(child, axis);
-        }
-    }
-
-    fn position_on_main_axis(&self, idx: usize, parent: usize, axis: Axis) -> f32 {
-        if self.box_is_out_of_flow(idx) {
-            return self.boxes[idx].fixed_position.axis(axis);
-        }
-        let children: Vec<usize> = self.boxes[parent]
-            .children
-            .iter()
-            .copied()
-            .filter(|child| !self.box_is_out_of_flow(*child))
-            .collect();
-        let child_pos = children.iter().position(|child| *child == idx).unwrap_or(0);
-        let padding_start = self.boxes[parent].padding.min_axis(axis);
-        let padding_end = self.boxes[parent].padding.max_axis(axis);
-        let content_start = self.boxes[parent].rect_axis_min(axis) + padding_start;
-        let content_size =
-            (self.boxes[parent].computed_size.axis(axis) - padding_start - padding_end).max(0.0);
-        let total_children_size = self.total_children_size(parent, axis);
-        let extra = (content_size - total_children_size).max(0.0);
-        let mut start = content_start;
-        let mut gap = self.boxes[parent].child_gap;
-        match self.boxes[parent].main_axis_align {
-            MainAxisAlign::Start => {}
-            MainAxisAlign::Center => start += extra / 2.0,
-            MainAxisAlign::End => start += extra,
-            MainAxisAlign::SpaceBetween if children.len() > 1 => {
-                gap += extra / (children.len() - 1) as f32;
-            }
-            MainAxisAlign::SpaceAround if !children.is_empty() => {
-                gap += extra / children.len() as f32;
-                start += gap / 2.0;
-            }
-            MainAxisAlign::SpaceEvenly if !children.is_empty() => {
-                gap += extra / (children.len() + 1) as f32;
-                start += gap;
-            }
-            _ => {}
-        }
-        let mut pos = start;
-        for child in children.iter().take(child_pos) {
-            pos += self.boxes[*child].computed_size.axis(axis) + gap;
-        }
-        if self.boxes[parent].flags.scrolls_x() && axis == Axis::X {
-            pos -= self.boxes[parent].scroll.x;
-        }
-        if self.boxes[parent].flags.scrolls_y() && axis == Axis::Y {
-            pos -= self.boxes[parent].scroll.y;
-        }
-        pos
-    }
-
-    fn position_on_cross_axis(&self, idx: usize, parent: usize, axis: Axis) -> f32 {
-        let padding_start = self.boxes[parent].padding.min_axis(axis);
-        let padding_end = self.boxes[parent].padding.max_axis(axis);
-        let base = self.boxes[parent].rect_axis_min(axis) + padding_start;
-        let available =
-            (self.boxes[parent].computed_size.axis(axis) - padding_start - padding_end).max(0.0);
-        let child_size = self.boxes[idx].computed_size.axis(axis);
-        let pos = match self.boxes[parent].cross_axis_align {
-            CrossAxisAlign::Start | CrossAxisAlign::Stretch => base,
-            CrossAxisAlign::Center => base + (available - child_size).max(0.0) / 2.0,
-            CrossAxisAlign::End => base + (available - child_size).max(0.0),
-        };
-        let scroll = if axis == Axis::X && self.boxes[parent].flags.scrolls_x() {
-            self.boxes[parent].scroll.x
-        } else if axis == Axis::Y && self.boxes[parent].flags.scrolls_y() {
-            self.boxes[parent].scroll.y
-        } else {
-            0.0
-        };
-        pos - scroll
-    }
-
-    fn distribute_fill_children(&mut self, parent: usize, axis: Axis) {
-        if self.boxes[parent].child_layout_axis != axis {
-            return;
-        }
-        let fill_children: Vec<usize> = self.boxes[parent]
-            .children
-            .iter()
-            .copied()
-            .filter(|idx| {
-                !self.box_is_out_of_flow(*idx)
-                    && self.boxes[*idx].pref_size[axis_idx(axis)] == UISize::Fill
-            })
-            .collect();
-        if fill_children.is_empty() {
-            return;
-        }
-        let padding = self.boxes[parent].padding.axis(axis);
-        let child_count = self.in_flow_child_count(parent);
-        let gaps = self.boxes[parent].child_gap * child_count.saturating_sub(1) as f32;
-        let fixed: f32 = self.boxes[parent]
-            .children
-            .iter()
-            .filter(|idx| {
-                !self.box_is_out_of_flow(**idx)
-                    && self.boxes[**idx].pref_size[axis_idx(axis)] != UISize::Fill
-            })
-            .map(|idx| self.boxes[*idx].computed_size.axis(axis))
-            .sum();
-        let available =
-            (self.boxes[parent].computed_size.axis(axis) - padding - gaps - fixed).max(0.0);
-        let each = available / fill_children.len() as f32;
-        for child in fill_children {
-            self.boxes[child].computed_size.set_axis(axis, each);
-        }
-    }
-
-    fn total_children_size(&self, parent: usize, axis: Axis) -> f32 {
-        let children: Vec<usize> = self.boxes[parent]
-            .children
-            .iter()
-            .copied()
-            .filter(|child| !self.box_is_out_of_flow(*child))
-            .collect();
-        let mut total: f32 = children
-            .iter()
-            .map(|child| self.boxes[*child].computed_size.axis(axis))
-            .sum();
-        if children.len() > 1 {
-            total += self.boxes[parent].child_gap * (children.len() - 1) as f32;
-        }
-        total
-    }
-
-    fn box_is_out_of_flow(&self, idx: usize) -> bool {
-        self.boxes[idx].flags.contains(UIBoxFlags::FLOATING_X)
-            || self.boxes[idx].flags.contains(UIBoxFlags::FLOATING_Y)
-    }
-
-    fn in_flow_child_count(&self, parent: usize) -> usize {
-        self.boxes[parent]
-            .children
-            .iter()
-            .filter(|child| !self.box_is_out_of_flow(**child))
-            .count()
-    }
-
-    fn set_rect_axis(&mut self, idx: usize, axis: Axis, min: f32, size: f32) {
-        match axis {
-            Axis::X => {
-                self.boxes[idx].rect.x0 = min;
-                self.boxes[idx].rect.x1 = min + size;
-            }
-            Axis::Y => {
-                self.boxes[idx].rect.y0 = min;
-                self.boxes[idx].rect.y1 = min + size;
-            }
-        }
-    }
-
-    fn draw_ui_all(&mut self) {
-        if self.drawer.is_none() {
-            return;
-        }
-        let root_clip = self.boxes[self.root].rect;
-        self.draw_ui_root_skipping_clipped(self.root, Some(self.overlay_root), root_clip);
-        self.draw_ui_root_clipped(self.overlay_root, root_clip);
-    }
-
-    fn draw_ui_root_clipped(&mut self, idx: usize, clip: RectCoords) {
-        self.draw_ui_root_skipping_clipped(idx, None, clip);
-    }
-
-    fn draw_ui_root_skipping_clipped(
-        &mut self,
-        idx: usize,
-        skip_idx: Option<usize>,
-        clip: RectCoords,
-    ) {
-        if skip_idx == Some(idx) {
-            return;
-        }
-        if !self.boxes[idx].visible {
-            return;
-        }
-        let rect = self.boxes[idx].rect;
-        let draw_rect = intersect_rects(rect, clip);
-        if draw_rect.width() <= 0.0 || draw_rect.height() <= 0.0 {
-            return;
-        }
-        let flags = self.boxes[idx].flags;
-        let style = self.boxes[idx].style;
-        let opacity = self.box_opacity(idx);
-        let draw_bg = flags.contains(UIBoxFlags::DRAW_BACKGROUND);
-        let draw_border = flags.contains(UIBoxFlags::DRAW_BORDER);
-        let rounded_with_border = draw_bg && draw_border && style.corner_radius > 0.0;
-
-        if rounded_with_border {
-            // Rounded border: draw outer border shape then inset background shape.
-            self.drawer.as_mut().unwrap().draw_rect(
-                &draw_rect,
-                color_mul_alpha(self.boxes[idx].border_color_animated, opacity),
-                style.corner_radius,
-            );
-
-            let inset = style.border_size.max(0.0);
-            let inner_w = (draw_rect.width() - inset * 2.0).max(0.0);
-            let inner_h = (draw_rect.height() - inset * 2.0).max(0.0);
-            if inner_w > 0.0 && inner_h > 0.0 {
-                let inner = RectCoords::from_size(
-                    draw_rect.x0 + inset,
-                    draw_rect.y0 + inset,
-                    inner_w,
-                    inner_h,
-                );
-                let inner_radius = (style.corner_radius - inset).max(0.0);
-                self.drawer.as_mut().unwrap().draw_rect(
-                    &inner,
-                    color_mul_alpha(self.boxes[idx].bg_color_animated, opacity),
-                    inner_radius,
-                );
-            }
-        } else if draw_bg {
-            self.drawer.as_mut().unwrap().draw_rect(
-                &draw_rect,
-                color_mul_alpha(self.boxes[idx].bg_color_animated, opacity),
-                style.corner_radius,
-            );
-        }
-        if draw_border && !rounded_with_border {
-            self.drawer.as_mut().unwrap().draw_empty_rect(
-                &draw_rect,
-                color_mul_alpha(self.boxes[idx].border_color_animated, opacity),
-                style.border_size,
-            );
-        }
-        if flags.contains(UIBoxFlags::DRAW_TEXT)
-            && let Some(text) = self.boxes[idx].display_string.clone()
-        {
-            let padding = self.boxes[idx].padding;
-            self.drawer.as_mut().unwrap().draw_text(
-                rect.x0 + padding.left + style.margin,
-                rect.y0 + padding.top + style.margin,
-                style.font_size,
-                &text,
-                text.len(),
-                (rect.x1 - padding.right - style.margin).min(clip.x1),
-                (rect.y1 - padding.bottom - style.margin).min(clip.y1),
-                color_mul_alpha(style.text_color, opacity),
-                false,
-                style.font_icon,
-            );
-        }
-        let child_clip = if flags.contains(UIBoxFlags::CLIP) {
-            intersect_rects(clip, rect)
-        } else {
-            clip
-        };
-        let children = self.boxes[idx].children.clone();
-        for child in children {
-            self.draw_ui_root_skipping_clipped(child, skip_idx, child_clip);
-        }
-        self.draw_scrollbars(idx, clip);
-        self.draw_text_selection_if_focused(idx);
-        self.draw_text_caret_if_focused(idx);
-    }
-
-    fn box_opacity(&self, idx: usize) -> f32 {
-        let mut opacity = 1.0;
-        let mut current = Some(idx);
-        while let Some(idx) = current {
-            opacity *= self.boxes[idx].appear_t.clamp(0.0, 1.0);
-            current = self.boxes[idx].parent;
-        }
-        opacity
-    }
-
-    fn draw_scrollbars(&mut self, idx: usize, clip: RectCoords) {
-        if self.drawer.is_none() {
-            return;
-        }
-        let color = color_mul_alpha(self.theme.scrollbar, self.box_opacity(idx));
-        if self.scrollbar_available(idx, Axis::Y) {
-            let thickness = self.scrollbar_thickness(idx, Axis::Y);
-            let Some(bar) = self.scrollbar_thumb_rect(idx, Axis::Y, thickness) else {
-                return;
-            };
-            let bar = intersect_rects(bar, clip);
-            if bar.width() > 0.0 && bar.height() > 0.0 {
-                self.drawer
-                    .as_mut()
-                    .unwrap()
-                    .draw_rect(&bar, color, thickness * 0.5);
-            }
-        }
-        if self.scrollbar_available(idx, Axis::X) {
-            let thickness = self.scrollbar_thickness(idx, Axis::X);
-            let Some(bar) = self.scrollbar_thumb_rect(idx, Axis::X, thickness) else {
-                return;
-            };
-            let bar = intersect_rects(bar, clip);
-            if bar.width() > 0.0 && bar.height() > 0.0 {
-                self.drawer
-                    .as_mut()
-                    .unwrap()
-                    .draw_rect(&bar, color, thickness * 0.5);
-            }
-        }
-    }
-
-    fn draw_text_caret_if_focused(&mut self, idx: usize) {
-        if self.drawer.is_none() || self.focus_key != Some(self.boxes[idx].key) {
-            return;
-        }
-        if !self.boxes[idx].flags.accepts_text_input() {
-            return;
-        }
-        let now = self.now_seconds();
-        let state = self.text_edit_states.get(&self.boxes[idx].key);
-        let last_interaction = state.map(|s| s.last_interaction_time).unwrap_or(now);
-        let elapsed = now - last_interaction;
-        // Show caret for 0.5s after interaction, then blink at 2 Hz.
-        if elapsed > 0.5 && ((elapsed - 0.5) * 2.0) as i64 % 2 != 0 {
-            return;
-        }
-
-        if self.boxes[idx].flags.contains(UIBoxFlags::LINE_EDIT) {
-            self.draw_line_edit_caret(idx);
-        } else if self.boxes[idx].flags.contains(UIBoxFlags::TEXTAREA) {
-            self.draw_textarea_caret(idx);
-        }
-    }
-
-    fn draw_text_selection_if_focused(&mut self, idx: usize) {
-        if self.drawer.is_none() || self.focus_key != Some(self.boxes[idx].key) {
-            return;
-        }
-        if !self.boxes[idx].flags.accepts_text_input() {
-            return;
-        }
-        let Some(range) = self
-            .text_edit_states
-            .get(&self.boxes[idx].key)
-            .and_then(TextEditState::selection_range)
-        else {
-            return;
-        };
-        let mut color = self.theme.color_main;
-        color.a = 0.35;
-        if self.boxes[idx].flags.contains(UIBoxFlags::LINE_EDIT) {
-            self.draw_line_edit_selection(idx, range, color);
-        } else if self.boxes[idx].flags.contains(UIBoxFlags::TEXTAREA) {
-            self.draw_textarea_selection(idx, range, color);
-        }
-    }
-
-    fn draw_line_edit_selection(&mut self, idx: usize, range: (usize, usize), color: Color) {
-        let rect = self.boxes[idx].rect;
-        let padding = self.boxes[idx].padding;
-        let style = self.boxes[idx].style;
-        let text = self.boxes[idx].display_string.clone().unwrap_or_default();
-        let start_text = substring_chars(&text, (0, range.0.min(char_count(&text))));
-        let selected_text = substring_chars(&text, (range.0, range.1.min(char_count(&text))));
-        let start_w = self
-            .drawer
-            .as_ref()
-            .unwrap()
-            .get_text_size(style.font_size, &start_text, start_text.len())
-            .0;
-        let selected_w = self
-            .drawer
-            .as_ref()
-            .unwrap()
-            .get_text_size(style.font_size, &selected_text, selected_text.len())
-            .0;
-        let x = rect.x0 + padding.left + style.margin + start_w;
-        let y = rect.y0 + padding.top + style.margin;
-        let h = (rect.y1 - padding.bottom - style.margin - y).max(1.0);
-        let sel = RectCoords::from_size(x, y, selected_w, h);
-        let sel = intersect_rects(sel, rect);
-        if sel.width() > 0.0 && sel.height() > 0.0 {
-            self.drawer.as_mut().unwrap().draw_rect(&sel, color, 1.0);
-        }
-    }
-
-    fn draw_textarea_selection(&mut self, idx: usize, range: (usize, usize), color: Color) {
-        let rect = self.boxes[idx].rect;
-        let padding = self.boxes[idx].padding;
-        let style = self.boxes[idx].style;
-        let text = self.boxes[idx].string.clone().unwrap_or_default();
-        let line_h = self.theme.size_text + 6.0;
-        let content_width =
-            (rect.x1 - rect.x0 - padding.horizontal() - style.margin * 2.0).max(0.0);
-        let ranges = self.compute_visual_line_ranges(&text, content_width, style.font_size);
-        let (start_line, _) = self.visual_line_col_from_cursor_with_ranges(&ranges, range.0);
-        let (end_line, _) = self.visual_line_col_from_cursor_with_ranges(&ranges, range.1);
-        for line in start_line..=end_line {
-            let (line_start, line_end_idx) = ranges[line];
-            let start = if line == start_line {
-                range.0.max(line_start)
-            } else {
-                line_start
-            };
-            let end = if line == end_line {
-                range.1.min(line_end_idx)
-            } else {
-                line_end_idx
-            };
-            if start >= end {
-                continue;
-            }
-            let before = substring_chars(&text, (line_start, start));
-            let selected = substring_chars(&text, (start, end));
-            let start_w = self
-                .drawer
-                .as_ref()
-                .unwrap()
-                .get_text_size(style.font_size, &before, before.len())
-                .0;
-            let selected_w = self
-                .drawer
-                .as_ref()
-                .unwrap()
-                .get_text_size(style.font_size, &selected, selected.len())
-                .0;
-            let x = rect.x0 + padding.left + style.margin + start_w;
-            let y = rect.y0 + padding.top + style.margin + line as f32 * line_h
-                - self.boxes[idx].scroll.y;
-            let sel = RectCoords::from_size(x, y, selected_w, line_h);
-            let sel = intersect_rects(sel, rect);
-            if sel.width() > 0.0 && sel.height() > 0.0 {
-                self.drawer.as_mut().unwrap().draw_rect(&sel, color, 1.0);
-            }
-        }
-    }
-
-    fn draw_line_edit_caret(&mut self, idx: usize) {
-        let rect = self.boxes[idx].rect;
-        let padding = self.boxes[idx].padding;
-        let style = self.boxes[idx].style;
-        let text = self.boxes[idx].display_string.clone().unwrap_or_default();
-        let cursor = self
-            .text_edit_states
-            .get(&self.boxes[idx].key)
-            .map(|state| state.cursor)
-            .unwrap_or_else(|| char_count(&text))
-            .min(char_count(&text));
-        let prefix = substring_chars(&text, (0, cursor));
-        let text_width = self
-            .drawer
-            .as_ref()
-            .unwrap()
-            .get_text_size(style.font_size, &prefix, prefix.len())
-            .0;
-        let text_height = self
-            .drawer
-            .as_ref()
-            .unwrap()
-            .get_text_size(style.font_size, "M", 1)
-            .1;
-
-        let content_x0 = rect.x0 + padding.left + style.margin;
-        let content_y0 = rect.y0 + padding.top + style.margin;
-        let content_x1 = rect.x1 - padding.right - style.margin;
-        let content_y1 = rect.y1 - padding.bottom - style.margin;
-
-        let caret_x = (content_x0 + text_width).min(content_x1 - 1.0);
-        let caret_h = text_height.min((content_y1 - content_y0).max(1.0));
-        let caret_rect = RectCoords::from_size(caret_x, content_y0, 1.5, caret_h);
-        self.drawer
-            .as_mut()
-            .unwrap()
-            .draw_rect(&caret_rect, self.theme.color_text, 0.0);
-    }
-
-    fn draw_textarea_caret(&mut self, idx: usize) {
-        let style = self.boxes[idx].style;
-        let rect = self.boxes[idx].rect;
-        let padding = self.boxes[idx].padding;
-        let text = self.boxes[idx].string.clone().unwrap_or_default();
-        let cursor = self
-            .text_edit_states
-            .get(&self.boxes[idx].key)
-            .map(|state| state.cursor)
-            .unwrap_or_else(|| char_count(&text))
-            .min(char_count(&text));
-        let content_width =
-            (rect.x1 - rect.x0 - padding.horizontal() - style.margin * 2.0).max(0.0);
-        let ranges = self.compute_visual_line_ranges(&text, content_width, style.font_size);
-        let (visual_line, col) = self.visual_line_col_from_cursor_with_ranges(&ranges, cursor);
-        let (line_start, _) = ranges[visual_line.min(ranges.len() - 1)];
-        let line_prefix = substring_chars(&text, (line_start, line_start + col));
-        let content_x0 = rect.x0 + padding.left + style.margin;
-        let line_h = self.theme.size_text + 6.0;
-        let content_y0 = rect.y0 + padding.top + style.margin + visual_line as f32 * line_h
-            - self.boxes[idx].scroll.y;
-        let content_x1 = rect.x1 - padding.right - style.margin;
-        let content_y1 = (content_y0 + line_h).min(rect.y1 - padding.bottom - style.margin);
-
-        let text_width = self
-            .drawer
-            .as_ref()
-            .unwrap()
-            .get_text_size(style.font_size, &line_prefix, line_prefix.len())
-            .0;
-        let text_height = self
-            .drawer
-            .as_ref()
-            .unwrap()
-            .get_text_size(style.font_size, "M", 1)
-            .1;
-
-        let caret_x = (content_x0 + text_width).min(content_x1 - 1.0);
-        let caret_h = text_height.min((content_y1 - content_y0).max(1.0));
-        let caret_rect = RectCoords::from_size(caret_x, content_y0, 1.5, caret_h);
-        self.drawer
-            .as_mut()
-            .unwrap()
-            .draw_rect(&caret_rect, self.theme.color_text, 0.0);
-    }
-
-    fn text_size(&mut self, font_size: f32, text: &str) -> (f32, f32) {
-        if let Some(drawer) = self.drawer.as_ref() {
-            drawer.get_text_size(font_size, text, text.len())
-        } else {
-            (text.chars().count() as f32 * font_size * 0.6, font_size)
-        }
-    }
-
-    fn active_key(&self, button: MouseButton) -> Option<UiKey> {
-        match button {
-            MouseButton::Left => self.active_left_key,
-            MouseButton::Right => self.active_right_key,
-        }
-    }
-
-    fn set_active_key(&mut self, button: MouseButton, key: Option<UiKey>) {
-        match button {
-            MouseButton::Left => self.active_left_key = key,
-            MouseButton::Right => self.active_right_key = key,
-        }
-    }
-
-    fn clipped_rect(&self, idx: usize) -> RectCoords {
-        let mut rect = self.boxes[idx].rect;
-        let mut parent = self.boxes[idx].parent;
-        while let Some(parent_idx) = parent {
-            let parent_box = &self.boxes[parent_idx];
-            if parent_box.flags.contains(UIBoxFlags::CLIP) {
-                rect = intersect_rects(rect, parent_box.rect);
-            }
-            parent = parent_box.parent;
-        }
-        rect
-    }
-
-    fn refresh_passive_signals(&mut self) {
-        self.hot_key = None;
-        self.cursor = OSCursor::Arrow;
-
-        let frame_boxes = self.frame_boxes_in_hit_test_order();
-        let mut hover_candidate = None;
-
-        for &idx in &frame_boxes {
-            self.boxes[idx].signal.flags &=
-                !(UiSignal::MOUSE_OVER | UiSignal::HOVERING | UiSignal::LEFT_DRAGGING);
-        }
-
-        for &idx in &frame_boxes {
-            let rect = expanded_rect(self.clipped_rect(idx), self.boxes[idx].hit_padding);
-            if point_in_rect(&rect, self.mouse) {
-                self.boxes[idx].signal.flags |= UiSignal::MOUSE_OVER;
-                if self.boxes[idx].flags.is_mouse_clickable() {
-                    hover_candidate = Some(idx);
-                }
-            }
-            if self.active_left_key == Some(self.boxes[idx].key) && self.left_mouse_down {
-                self.boxes[idx].signal.flags |= UiSignal::LEFT_DRAGGING;
-            }
-        }
-
-        if let Some(idx) = hover_candidate {
-            self.hot_key = Some(self.boxes[idx].key);
-            self.boxes[idx].signal.flags |= UiSignal::HOVERING;
-            self.cursor = if self.boxes[idx].flags.accepts_text_input() {
-                OSCursor::IBeam
-            } else {
-                self.boxes[idx].cursor.unwrap_or(OSCursor::Hand)
-            };
-        }
-
-        if self.left_mouse_down {
-            if let Some(idx) = self.active_left_key.and_then(|key| self.box_from_key(key)) {
-                if let Some(cursor) = self.boxes[idx].cursor {
-                    self.cursor = cursor;
-                }
-            }
-        }
-    }
-
-    fn frame_boxes_in_hit_test_order(&self) -> Vec<usize> {
-        let mut normal = Vec::new();
-        let mut overlay = Vec::new();
-        for &idx in &self.frame_boxes {
-            if self.is_overlay_box(idx) {
-                overlay.push(idx);
-            } else {
-                normal.push(idx);
-            }
-        }
-        normal.extend(overlay);
-        normal
-    }
-
-    fn is_overlay_box(&self, idx: usize) -> bool {
-        idx == self.overlay_root || self.box_has_ancestor(idx, self.overlay_root)
-    }
-
-    fn box_has_ancestor(&self, idx: usize, ancestor: usize) -> bool {
-        let mut parent = self.boxes[idx].parent;
-        while let Some(parent_idx) = parent {
-            if parent_idx == ancestor {
-                return true;
-            }
-            parent = self.boxes[parent_idx].parent;
-        }
-        false
-    }
-
-    fn release_box(&mut self, idx: usize) {
-        self.boxes[idx] = UIBox::new(UiKey::default(), UIBoxFlags::NONE, None, &self.theme);
-        self.free_boxes.push(idx);
-    }
-
-    fn prune_boxes(&mut self) {
-        let frame = self.build_index;
-        let stale_keys: Vec<UiKey> = self
-            .box_table
-            .iter()
-            .filter_map(|(key, &idx)| (self.boxes[idx].last_touched_frame < frame).then_some(*key))
-            .collect();
-
-        for key in stale_keys {
-            if let Some(idx) = self.box_table.remove(&key) {
-                self.release_box(idx);
-            }
-        }
-
-        let transient_boxes: Vec<usize> = self
-            .frame_boxes
-            .iter()
-            .copied()
-            .filter(|&idx| self.boxes[idx].key.is_zero())
-            .collect();
-        for idx in transient_boxes {
-            self.release_box(idx);
-        }
-
-        if self
-            .active_left_key
-            .is_some_and(|key| !self.box_table.contains_key(&key))
-        {
-            self.active_left_key = None;
-        }
-        if self
-            .active_right_key
-            .is_some_and(|key| !self.box_table.contains_key(&key))
-        {
-            self.active_right_key = None;
-        }
-        if self
-            .active_scrollbar
-            .is_some_and(|drag| !self.box_table.contains_key(&drag.key))
-        {
-            self.active_scrollbar = None;
-        }
-        if self
-            .hot_key
-            .is_some_and(|key| !self.box_table.contains_key(&key))
-        {
-            self.hot_key = None;
-        }
-        if self
-            .focus_key
-            .is_some_and(|key| !self.box_table.contains_key(&key))
-        {
-            self.focus_key = None;
-        }
-        if self
-            .next_focus_key
-            .is_some_and(|key| !self.box_table.contains_key(&key))
-        {
-            self.next_focus_key = None;
-        }
-    }
+    /// Browser window/event bridge for the DOM render path, used when there is
+    /// no `Drawer` (no GPU backend at all — see `imui/lifecycle.rs::new_dom`).
+    #[cfg(feature = "dom")]
+    wasm_window: Option<os::Window>,
+    /// Backing slot for every `RepaintWaker` handed out on wasm32 (see
+    /// [`TickScheduler`]) — shared, not per-waker, so all of them drive the
+    /// exact same scheduling decision.
+    #[cfg(target_arch = "wasm32")]
+    tick_scheduler: TickScheduler,
+    /// DOM reconciler for the web target (`imui/paint_dom.rs`); paints by
+    /// walking `boxes` directly instead of going through `Drawer`.
+    #[cfg(feature = "dom")]
+    dom: Option<paint_dom::DomReconciler>,
 }
 
 trait RectAxis {
@@ -3806,11 +2481,21 @@ fn flags_match(required: Option<OSEventFlag>, actual: Option<OSEventFlag>) -> bo
     }
 }
 
-fn smooth_rate(rate: f32, dt: f32) -> f32 {
+/// Frame-rate-independent smoothing factor for `rate` over `dt` seconds.
+///
+/// Feeds [`animate_scalar`]: `rate` is a per-second convergence speed (the
+/// values in [`UIMotion`]), so the same motion plays identically at 60 and 144
+/// Hz. Public so applications can drive their own animated values — a sliding
+/// panel, a cross-fading view — with the framework's easing instead of
+/// hand-rolling one; see [`IMUI::dt`].
+pub fn smooth_rate(rate: f32, dt: f32) -> f32 {
     (1.0 - 2.0_f32.powf(-rate.max(0.0) * dt.max(0.0))).clamp(0.0, 1.0)
 }
 
-fn animate_scalar(current: f32, target: f32, rate: f32, epsilon: f32) -> f32 {
+/// Step `current` toward `target` by `rate` (from [`smooth_rate`]), snapping
+/// once the remaining distance falls under `epsilon` so the value settles
+/// exactly instead of creeping forever. See [`UIMotion::epsilon`].
+pub fn animate_scalar(current: f32, target: f32, rate: f32, epsilon: f32) -> f32 {
     let next = current + (target - current) * rate;
     if (target - next).abs() <= epsilon {
         target
@@ -3834,14 +2519,7 @@ fn has_flag(flags: Option<OSEventFlag>, flag: OSEventFlag) -> bool {
 }
 
 fn primary_modifier(flags: Option<OSEventFlag>) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        has_flag(flags, OSEventFlag::Super)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        has_flag(flags, OSEventFlag::Control)
-    }
+    has_flag(flags, OSEventFlag::command())
 }
 
 fn char_count(text: &str) -> usize {
@@ -3874,12 +2552,41 @@ fn selected_text(text: &str, range: Option<(usize, usize)>) -> Option<String> {
     range.map(|range| substring_chars(text, range))
 }
 
-fn cursor_left(_text: &str, cursor: usize) -> usize {
-    cursor.saturating_sub(1)
+/// Char index of the grapheme-cluster boundary adjacent to `cursor`. Moving by
+/// grapheme (UAX #29) keeps the caret off the middle of combining sequences, ZWJ
+/// emoji, flags, etc. `forward` picks the next boundary, otherwise the previous.
+fn grapheme_boundary(text: &str, cursor: usize, forward: bool) -> usize {
+    use unicode_segmentation::UnicodeSegmentation;
+    let total = char_count(text);
+    let cursor = cursor.min(total);
+    if forward {
+        let mut boundary = 0usize;
+        for g in text.graphemes(true) {
+            boundary += g.chars().count();
+            if boundary > cursor {
+                return boundary;
+            }
+        }
+        total
+    } else {
+        let mut prev = 0usize;
+        for g in text.graphemes(true) {
+            let next = prev + g.chars().count();
+            if next >= cursor {
+                return prev;
+            }
+            prev = next;
+        }
+        prev
+    }
+}
+
+fn cursor_left(text: &str, cursor: usize) -> usize {
+    grapheme_boundary(text, cursor, false)
 }
 
 fn cursor_right(text: &str, cursor: usize) -> usize {
-    (cursor + 1).min(char_count(text))
+    grapheme_boundary(text, cursor, true)
 }
 
 fn line_home(text: &str, cursor: usize) -> usize {
@@ -3900,46 +2607,55 @@ fn line_end(text: &str, cursor: usize) -> usize {
     pos
 }
 
-fn line_col_from_cursor(text: &str, cursor: usize) -> (usize, usize) {
-    let mut line = 0;
-    let mut col = 0;
-    for (idx, ch) in text.chars().enumerate() {
-        if idx >= cursor {
-            break;
-        }
-        if ch == '\n' {
-            line += 1;
-            col = 0;
-        } else {
-            col += 1;
-        }
+fn text_word_range(text: &str, cursor: usize) -> (usize, usize) {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.is_empty() {
+        return (0, 0);
     }
-    (line, col)
+
+    let len = chars.len();
+    let cursor = cursor.min(len);
+    let mut idx = cursor.min(len.saturating_sub(1));
+    if cursor > 0 && cursor == len {
+        idx = len - 1;
+    } else if cursor > 0 && !is_word_char(chars[idx]) && is_word_char(chars[cursor - 1]) {
+        idx = cursor - 1;
+    }
+
+    if is_word_char(chars[idx]) {
+        let mut start = idx;
+        while start > 0 && is_word_char(chars[start - 1]) {
+            start -= 1;
+        }
+        let mut end = idx + 1;
+        while end < len && is_word_char(chars[end]) {
+            end += 1;
+        }
+        return (start, end);
+    }
+
+    let mut start = idx;
+    while start > 0 && !is_word_char(chars[start - 1]) && chars[start - 1] != '\n' {
+        start -= 1;
+    }
+    let mut end = idx + 1;
+    while end < len && !is_word_char(chars[end]) && chars[end] != '\n' {
+        end += 1;
+    }
+    (start, end)
 }
 
-fn cursor_from_line_col(text: &str, target_line: usize, target_col: usize) -> usize {
-    let mut line = 0;
-    let mut col = 0;
-    let mut cursor = 0;
-    for ch in text.chars() {
-        if line == target_line && col == target_col {
-            return cursor;
-        }
-        if line == target_line && ch == '\n' {
-            return cursor;
-        }
-        cursor += 1;
-        if ch == '\n' {
-            if line == target_line {
-                return cursor - 1;
-            }
-            line += 1;
-            col = 0;
-        } else {
-            col += 1;
-        }
+fn is_word_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
+}
+
+fn text_line_range(text: &str, cursor: usize) -> (usize, usize) {
+    let len = char_count(text);
+    if len == 0 {
+        return (0, 0);
     }
-    cursor
+    let cursor = cursor.min(len);
+    (line_home(text, cursor), line_end(text, cursor))
 }
 
 pub fn u64_hash_from_string(seed: u64, string: &str) -> u64 {
@@ -4021,766 +2737,35 @@ fn mouse_button_from_key(key: OSKey) -> Option<MouseButton> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod grapheme_nav_tests {
+    use super::{cursor_left, cursor_right};
 
-    fn push_test_event(ui: &mut IMUI, ev: OSEvent) {
-        ui.apply_event_side_effects(&ev);
-        ui.events.push(ev);
-    }
+    // "e" + combining acute accent = 2 chars, 1 grapheme cluster.
+    const COMBINED_E: &str = "e\u{0301}";
+    // Regional-indicator pair = 2 chars, 1 grapheme (flag).
+    const FLAG: &str = "\u{1F1EB}\u{1F1F7}";
 
-    fn build_vertical_scroll_pane(ui: &mut IMUI) -> UIBoxHandle {
-        let pane = ui.named_column("###vertical_scroll_pane", |ui| {
-            for idx in 0..10 {
-                let label = ui.label(&format!("Row {idx}"));
-                ui.height(label, UISize::Pixels(24.0));
-            }
-        });
-        ui.width(pane, UISize::Pixels(120.0));
-        ui.height(pane, UISize::Pixels(72.0));
-        ui.scroll_y(pane, true);
-        pane
-    }
-
-    fn build_horizontal_scroll_pane(ui: &mut IMUI) -> UIBoxHandle {
-        let pane = ui.named_row("###horizontal_scroll_pane", |ui| {
-            for idx in 0..6 {
-                let label = ui.label(&format!("Column {idx}"));
-                ui.width(label, UISize::Pixels(72.0));
-                ui.height(label, UISize::Pixels(24.0));
-            }
-        });
-        ui.width(pane, UISize::Pixels(140.0));
-        ui.height(pane, UISize::Pixels(48.0));
-        ui.scroll_x(pane, true);
-        pane
+    #[test]
+    fn moves_over_whole_combining_cluster() {
+        assert_eq!(cursor_right(COMBINED_E, 0), 2);
+        assert_eq!(cursor_left(COMBINED_E, 2), 0);
     }
 
     #[test]
-    fn built_in_themes_expose_distinct_light_and_dark_tokens() {
-        let dark = UITheme::dark();
-        let light = UITheme::light();
-
-        assert_eq!(dark.kind, ThemeKind::Dark);
-        assert_eq!(light.kind, ThemeKind::Light);
-        assert!(color_distance(dark.app_bg, light.app_bg) > 0.2);
-        assert!(dark.text.a > 0.0);
-        assert!(light.text.a > 0.0);
-        assert!(dark.accent.a > 0.0);
-        assert!(light.accent.a > 0.0);
-        assert_eq!(UITheme::for_kind(ThemeKind::Dark).kind, ThemeKind::Dark);
-        assert_eq!(UITheme::for_kind(ThemeKind::Light).kind, ThemeKind::Light);
+    fn moves_over_whole_flag_cluster() {
+        assert_eq!(cursor_right(FLAG, 0), 2);
+        assert_eq!(cursor_left(FLAG, 2), 0);
     }
 
     #[test]
-    fn retained_box_hover_state_animates_toward_signal_target() {
-        let mut ui = IMUI::new_for_test(400.0, 200.0);
-
-        ui.begin_frame();
-        let first = ui.button("Hover###hover_button", None);
-        ui.width(first, UISize::Pixels(120.0));
-        ui.height(first, UISize::Pixels(40.0));
-        ui.end_frame();
-        assert_eq!(ui.boxes[first.idx()].hot_t, 0.0);
-
-        ui.repaint_requested = false;
-        ui.mouse = Some(Point::new(20.0, 20.0));
-        ui.begin_frame();
-        let second = ui.button("Hover###hover_button", None);
-        ui.width(second, UISize::Pixels(120.0));
-        ui.height(second, UISize::Pixels(40.0));
-        ui.end_frame();
-
-        let hot_t = ui.boxes[second.idx()].hot_t;
-        assert!(hot_t > 0.0);
-        assert!(hot_t < 1.0);
-        assert!(ui.repaint_requested);
+    fn ascii_moves_one_char() {
+        assert_eq!(cursor_right("ab", 0), 1);
+        assert_eq!(cursor_left("ab", 1), 0);
     }
 
     #[test]
-    fn plain_icon_button_draws_only_clickable_icon_text() {
-        let mut ui = IMUI::new_for_test(400.0, 200.0);
-
-        ui.begin_frame();
-        let icon = ui.button_icon_plain("\u{e89c}###plain_icon", None);
-        ui.end_frame();
-
-        let icon_box = &ui.boxes[icon.idx()];
-        assert!(icon_box.flags.contains(UIBoxFlags::CLICKABLE));
-        assert!(icon_box.flags.contains(UIBoxFlags::DRAW_TEXT));
-        assert!(!icon_box.flags.contains(UIBoxFlags::DRAW_BACKGROUND));
-        assert!(!icon_box.flags.contains(UIBoxFlags::DRAW_BORDER));
-        assert!(icon_box.style.font_icon);
-        assert!(color_distance(icon_box.style.text_color, ui.theme.text_muted) < 0.001);
-    }
-
-    #[test]
-    fn plain_icon_button_highlights_with_text_color_on_hover() {
-        let mut ui = IMUI::new_for_test(400.0, 200.0);
-
-        ui.begin_frame();
-        let first = ui.button_icon_plain("\u{e89c}###plain_icon_hover", None);
-        ui.end_frame();
-        assert!(
-            color_distance(ui.boxes[first.idx()].style.text_color, ui.theme.text_muted) < 0.001
-        );
-
-        ui.mouse = Some(Point::new(8.0, 8.0));
-        ui.begin_frame();
-        let second = ui.button_icon_plain("\u{e89c}###plain_icon_hover", None);
-
-        assert!(second.hover());
-        assert!(
-            color_distance(
-                ui.boxes[second.idx()].style.text_color,
-                ui.theme.accent_hover
-            ) < 0.001
-        );
-        assert!(
-            !ui.boxes[second.idx()]
-                .flags
-                .contains(UIBoxFlags::DRAW_BACKGROUND)
-        );
-        assert!(
-            !ui.boxes[second.idx()]
-                .flags
-                .contains(UIBoxFlags::DRAW_BORDER)
-        );
-        ui.end_frame();
-    }
-
-    #[test]
-    fn plain_icon_button_remains_clickable() {
-        let mut ui = IMUI::new_for_test(400.0, 200.0);
-
-        ui.begin_frame();
-        ui.button_icon_plain("\u{e89c}###plain_icon_click", None);
-        ui.end_frame();
-
-        push_test_event(
-            &mut ui,
-            OSEvent::press(OSKey::LeftMouseButton, Some(Point::new(8.0, 8.0))),
-        );
-        push_test_event(
-            &mut ui,
-            OSEvent::release(OSKey::LeftMouseButton, Some(Point::new(8.0, 8.0))),
-        );
-        ui.begin_frame();
-        let clicked = ui.button_icon_plain("\u{e89c}###plain_icon_click", None);
-
-        assert!(clicked.clicked());
-        assert!(
-            color_distance(
-                ui.boxes[clicked.idx()].style.text_color,
-                ui.theme.accent_active
-            ) < 0.001
-        );
-        ui.end_frame();
-    }
-
-    #[test]
-    fn setting_same_theme_does_not_request_repaint() {
-        let mut ui = IMUI::new_for_test(400.0, 200.0);
-
-        ui.repaint_requested = false;
-        ui.set_theme(UITheme::dark());
-        assert!(!ui.repaint_requested);
-
-        ui.set_theme(UITheme::light());
-        assert!(ui.repaint_requested);
-    }
-
-    #[test]
-    fn static_retained_frame_does_not_keep_lazy_rendering_awake() {
-        let mut ui = IMUI::new_for_test(400.0, 200.0);
-
-        ui.begin_frame();
-        let first = ui.button("Idle###idle_button", None);
-        ui.width(first, UISize::Pixels(120.0));
-        ui.height(first, UISize::Pixels(40.0));
-        ui.end_frame();
-
-        ui.repaint_requested = false;
-        ui.begin_frame();
-        let second = ui.button("Idle###idle_button", None);
-        ui.width(second, UISize::Pixels(120.0));
-        ui.height(second, UISize::Pixels(40.0));
-        ui.end_frame();
-
-        assert!(!ui.repaint_requested);
-    }
-
-    #[test]
-    fn transient_visual_box_does_not_keep_lazy_rendering_awake() {
-        let mut ui = IMUI::new_for_test(400.0, 200.0);
-
-        ui.begin_frame();
-        ui.floating_pane_at(Point::new(20.0, 20.0), None, |ui| {
-            let label = ui.label("Transient");
-            ui.padding_all(label, 4.0);
-        });
-        ui.end_frame();
-
-        ui.repaint_requested = false;
-        ui.begin_frame();
-        let pane = ui.floating_pane_at(Point::new(20.0, 20.0), None, |ui| {
-            let label = ui.label("Transient");
-            ui.padding_all(label, 4.0);
-        });
-        ui.end_frame();
-
-        assert!(pane.key().is_zero());
-        assert!(ui.free_boxes.contains(&pane.idx()));
-        assert!(!ui.repaint_requested);
-    }
-
-    #[test]
-    fn key_string_display_and_hash_parts_match_rad_style() {
-        assert_eq!(display_part_from_key_string("Save##toolbar"), "Save");
-        assert_eq!(hash_part_from_key_string("Save##toolbar"), "Save##toolbar");
-        assert_eq!(display_part_from_key_string("Save###stable"), "Save");
-        assert_eq!(hash_part_from_key_string("Save###stable"), "###stable");
-    }
-
-    #[test]
-    fn layout_resolves_children_sum_and_parent_pct() {
-        let mut ui = IMUI::new_for_test(400.0, 200.0);
-        ui.begin_frame();
-        let root_child = ui.column(|ui| {
-            let a = ui.label("abc");
-            ui.width(a, UISize::Pixels(100.0));
-            ui.height(a, UISize::Pixels(20.0));
-            let b = ui.label("def");
-            ui.width(b, UISize::ParentPct(0.5));
-            ui.height(b, UISize::Pixels(20.0));
-        });
-        ui.width(root_child, UISize::ParentPct(1.0));
-        ui.height(root_child, UISize::ParentPct(1.0));
-        ui.layout_root(ui.root);
-        let children = ui.boxes[root_child.idx].children.clone();
-        assert_eq!(ui.boxes[children[0]].computed_size.width, 100.0);
-        assert_eq!(ui.boxes[children[1]].computed_size.width, 200.0);
-    }
-
-    #[test]
-    fn text_content_size_reserves_draw_margin() {
-        let mut ui = IMUI::new_for_test(400.0, 200.0);
-        ui.begin_frame();
-        let label = ui.label("abc");
-        ui.layout_root(ui.root);
-
-        let (text_width, text_height) = ui.text_size(ui.boxes[label.idx()].style.font_size, "abc");
-        let margin = ui.boxes[label.idx()].style.margin;
-
-        assert!(ui.boxes[label.idx()].computed_size.width >= text_width + margin * 2.0);
-        assert!(ui.boxes[label.idx()].computed_size.height >= text_height + margin * 2.0);
-    }
-
-    #[test]
-    fn floating_boxes_do_not_affect_parent_flow_size_or_gaps() {
-        let mut ui = IMUI::new_for_test(400.0, 200.0);
-
-        ui.begin_frame();
-        let row = ui.row(|ui| {
-            let a = ui.label("a");
-            ui.width(a, UISize::Pixels(40.0));
-            ui.height(a, UISize::Pixels(20.0));
-
-            let floating = ui.floating_pane_at(Point::new(100.0, 100.0), Some("###float"), |ui| {
-                let child = ui.label("floating");
-                ui.width(child, UISize::Pixels(80.0));
-                ui.height(child, UISize::Pixels(20.0));
-            });
-            ui.width(floating, UISize::Pixels(80.0));
-            ui.height(floating, UISize::Pixels(20.0));
-
-            let b = ui.label("b");
-            ui.width(b, UISize::Pixels(50.0));
-            ui.height(b, UISize::Pixels(20.0));
-        });
-        ui.gap(row, 10.0);
-        ui.layout_root(ui.root);
-
-        assert_eq!(ui.boxes[row.idx()].computed_size.width, 100.0);
-    }
-
-    #[test]
-    fn fill_and_parent_pct_share_remaining_width_without_overflow() {
-        let mut ui = IMUI::new_for_test(1000.0, 300.0);
-        ui.begin_frame();
-        let row = ui.row(|ui| {
-            let left = ui.label("left");
-            ui.width(left, UISize::Fill);
-            ui.height(left, UISize::Pixels(20.0));
-
-            let right = ui.label("right");
-            ui.width(right, UISize::ParentPct(0.34));
-            ui.height(right, UISize::Pixels(20.0));
-        });
-        ui.width(row, UISize::ParentPct(1.0));
-        ui.height(row, UISize::Pixels(30.0));
-        ui.padding_all(row, 10.0);
-        ui.gap(row, 12.0);
-        ui.layout_root(ui.root);
-
-        let children = ui.boxes[row.idx()].children.clone();
-        let left_w = ui.boxes[children[0]].computed_size.width;
-        let right_w = ui.boxes[children[1]].computed_size.width;
-        let available =
-            ui.boxes[row.idx()].computed_size.width - ui.boxes[row.idx()].padding.horizontal();
-        let used = left_w + right_w + ui.boxes[row.idx()].child_gap;
-
-        assert!(
-            used <= available + 0.01,
-            "used={used} available={available}"
-        );
-        assert!(left_w > 0.0);
-    }
-
-    #[test]
-    fn keyed_boxes_are_reused_across_consecutive_frames() {
-        let mut ui = IMUI::new_for_test(400.0, 200.0);
-
-        ui.begin_frame();
-        let first = ui.named_column("###stable", |_| {});
-        ui.end_frame();
-
-        ui.begin_frame();
-        let second = ui.named_column("###stable", |_| {});
-        ui.end_frame();
-
-        assert_eq!(first.idx(), second.idx());
-        assert_eq!(ui.box_table.get(&first.key()), Some(&first.idx()));
-    }
-
-    #[test]
-    fn keyed_boxes_are_pruned_when_missing_for_a_frame() {
-        let mut ui = IMUI::new_for_test(400.0, 200.0);
-
-        ui.begin_frame();
-        let first = ui.named_column("###stable", |_| {});
-        ui.end_frame();
-        assert!(ui.box_table.contains_key(&first.key()));
-
-        ui.begin_frame();
-        ui.end_frame();
-
-        assert!(!ui.box_table.contains_key(&first.key()));
-        assert!(ui.free_boxes.contains(&first.idx()));
-    }
-
-    #[test]
-    fn retained_button_consumes_press_and_release_events() {
-        let mut ui = IMUI::new_for_test(400.0, 200.0);
-
-        ui.begin_frame();
-        let first = ui.button("Click###button", None);
-        ui.width(first, UISize::Pixels(120.0));
-        ui.height(first, UISize::Pixels(40.0));
-        ui.end_frame();
-
-        ui.mouse = Some(Point::new(20.0, 20.0));
-        ui.events = vec![
-            OSEvent {
-                ty: OSEventType::Press,
-                key: OSKey::LeftMouseButton,
-                pos: Some(Point::new(20.0, 20.0)),
-                chars: None,
-                delta: 0.0,
-                flags: None,
-            },
-            OSEvent {
-                ty: OSEventType::Release,
-                key: OSKey::LeftMouseButton,
-                pos: Some(Point::new(20.0, 20.0)),
-                chars: None,
-                delta: 0.0,
-                flags: None,
-            },
-        ];
-
-        ui.begin_frame();
-        let second = ui.button("Click###button", None);
-        ui.width(second, UISize::Pixels(120.0));
-        ui.height(second, UISize::Pixels(40.0));
-
-        assert!(second.clicked());
-        assert!(ui.events.is_empty());
-    }
-
-    #[test]
-    fn focused_line_edit_consumes_text_events() {
-        let mut ui = IMUI::new_for_test(400.0, 200.0);
-        let mut buffer = String::new();
-
-        ui.begin_frame();
-        let edit = ui.line_edit("Edit###edit", &mut buffer, false);
-        ui.width(edit, UISize::Pixels(120.0));
-        ui.height(edit, UISize::Pixels(32.0));
-        ui.end_frame();
-
-        ui.focus_key = Some(edit.key());
-        ui.events = vec![OSEvent {
-            ty: OSEventType::Press,
-            key: OSKey::Keyboard(OSKeyCode::KeyA),
-            pos: None,
-            chars: Some('a'),
-            delta: 0.0,
-            flags: None,
-        }];
-
-        ui.begin_frame();
-        ui.line_edit("Edit###edit", &mut buffer, false);
-
-        assert_eq!(buffer, "a");
-        assert!(ui.events.is_empty());
-    }
-
-    #[test]
-    fn line_edit_selects_text_with_mouse_drag() {
-        let mut ui = IMUI::new_for_test(400.0, 200.0);
-        let mut buffer = "abcdef".to_string();
-
-        ui.begin_frame();
-        let edit = ui.line_edit("Edit###edit", &mut buffer, false);
-        ui.width(edit, UISize::Pixels(220.0));
-        ui.height(edit, UISize::Pixels(32.0));
-        ui.end_frame();
-
-        let rect = ui.boxes[edit.idx()].rect;
-        let padding = ui.boxes[edit.idx()].padding;
-        let style = ui.boxes[edit.idx()].style;
-        let char_w = style.font_size * 0.6;
-        let content_x = rect.x0 + padding.left + style.margin;
-        let y = rect.y0 + rect.height() * 0.5;
-        let start = Point::new(content_x + char_w * 1.2, y);
-        let end = Point::new(content_x + char_w * 4.2, y);
-
-        push_test_event(&mut ui, OSEvent::press(OSKey::LeftMouseButton, Some(start)));
-        ui.begin_frame();
-        let edit = ui.line_edit("Edit###edit", &mut buffer, false);
-        ui.width(edit, UISize::Pixels(220.0));
-        ui.height(edit, UISize::Pixels(32.0));
-        ui.end_frame();
-
-        let state = ui.text_edit_states.get(&edit.key()).unwrap();
-        assert_eq!(state.cursor, 1);
-        assert_eq!(state.selection_range(), None);
-        assert_eq!(ui.focus_key, Some(edit.key()));
-
-        push_test_event(&mut ui, OSEvent::mouse_move(end));
-        ui.begin_frame();
-        let edit = ui.line_edit("Edit###edit", &mut buffer, false);
-        ui.width(edit, UISize::Pixels(220.0));
-        ui.height(edit, UISize::Pixels(32.0));
-        ui.end_frame();
-
-        let state = ui.text_edit_states.get(&edit.key()).unwrap();
-        assert_eq!(state.cursor, 4);
-        assert_eq!(state.selection_range(), Some((1, 4)));
-
-        push_test_event(&mut ui, OSEvent::release(OSKey::LeftMouseButton, Some(end)));
-        ui.begin_frame();
-        let edit = ui.line_edit("Edit###edit", &mut buffer, false);
-        ui.width(edit, UISize::Pixels(220.0));
-        ui.height(edit, UISize::Pixels(32.0));
-        ui.end_frame();
-
-        let state = ui.text_edit_states.get(&edit.key()).unwrap();
-        assert_eq!(state.selection_range(), Some((1, 4)));
-    }
-
-    #[test]
-    fn textarea_selects_text_with_mouse_drag_across_lines() {
-        let mut ui = IMUI::new_for_test(400.0, 200.0);
-        let mut buffer = "abc\ndef".to_string();
-
-        ui.begin_frame();
-        let edit = ui.textarea("Text###text", &mut buffer);
-        ui.width(edit, UISize::Pixels(220.0));
-        ui.height(edit, UISize::Pixels(120.0));
-        ui.end_frame();
-
-        let rect = ui.boxes[edit.idx()].rect;
-        let padding = ui.boxes[edit.idx()].padding;
-        let style = ui.boxes[edit.idx()].style;
-        let char_w = style.font_size * 0.6;
-        let line_h = ui.theme.size_text + 6.0;
-        let content_x = rect.x0 + padding.left + style.margin;
-        let content_y = rect.y0 + padding.top + style.margin;
-        let start = Point::new(content_x + char_w * 1.2, content_y + line_h * 0.5);
-        let end = Point::new(content_x + char_w * 2.2, content_y + line_h * 1.5);
-
-        push_test_event(&mut ui, OSEvent::press(OSKey::LeftMouseButton, Some(start)));
-        ui.begin_frame();
-        let edit = ui.textarea("Text###text", &mut buffer);
-        ui.width(edit, UISize::Pixels(220.0));
-        ui.height(edit, UISize::Pixels(120.0));
-        ui.end_frame();
-
-        let state = ui.text_edit_states.get(&edit.key()).unwrap();
-        assert_eq!(state.cursor, 1);
-        assert_eq!(state.selection_range(), None);
-        assert_eq!(ui.focus_key, Some(edit.key()));
-
-        push_test_event(&mut ui, OSEvent::mouse_move(end));
-        ui.begin_frame();
-        let edit = ui.textarea("Text###text", &mut buffer);
-        ui.width(edit, UISize::Pixels(220.0));
-        ui.height(edit, UISize::Pixels(120.0));
-        ui.end_frame();
-
-        let state = ui.text_edit_states.get(&edit.key()).unwrap();
-        assert_eq!(state.cursor, 6);
-        assert_eq!(state.selection_range(), Some((1, 6)));
-
-        push_test_event(&mut ui, OSEvent::release(OSKey::LeftMouseButton, Some(end)));
-        ui.begin_frame();
-        let edit = ui.textarea("Text###text", &mut buffer);
-        ui.width(edit, UISize::Pixels(220.0));
-        ui.height(edit, UISize::Pixels(120.0));
-        ui.end_frame();
-
-        let state = ui.text_edit_states.get(&edit.key()).unwrap();
-        assert_eq!(state.selection_range(), Some((1, 6)));
-    }
-
-    #[test]
-    fn vertical_scrollbar_width_animates_on_hover() {
-        let mut ui = IMUI::new_for_test(400.0, 200.0);
-
-        ui.begin_frame();
-        let pane = build_vertical_scroll_pane(&mut ui);
-        ui.end_frame();
-
-        assert_eq!(
-            ui.scrollbar_thickness(pane.idx(), Axis::Y),
-            SCROLLBAR_THICKNESS
-        );
-        let thumb = ui
-            .scrollbar_thumb_rect(pane.idx(), Axis::Y, SCROLLBAR_THICKNESS)
-            .unwrap();
-        ui.mouse = Some(Point::new(
-            thumb.x0 + thumb.width() * 0.5,
-            thumb.y0 + thumb.height() * 0.5,
-        ));
-        ui.repaint_requested = false;
-
-        ui.begin_frame();
-        let pane = build_vertical_scroll_pane(&mut ui);
-        ui.end_frame();
-
-        let thickness = ui.scrollbar_thickness(pane.idx(), Axis::Y);
-        assert!(thickness > SCROLLBAR_THICKNESS);
-        assert!(thickness < SCROLLBAR_HOVER_THICKNESS);
-        assert!(ui.repaint_requested);
-
-        for _ in 0..120 {
-            ui.repaint_requested = false;
-            ui.begin_frame();
-            build_vertical_scroll_pane(&mut ui);
-            ui.end_frame();
-            if !ui.repaint_requested {
-                break;
-            }
-        }
-        assert_eq!(
-            ui.scrollbar_thickness(pane.idx(), Axis::Y),
-            SCROLLBAR_HOVER_THICKNESS
-        );
-
-        ui.mouse = Some(Point::new(300.0, 180.0));
-        ui.repaint_requested = false;
-        ui.begin_frame();
-        let pane = build_vertical_scroll_pane(&mut ui);
-        ui.end_frame();
-
-        let thickness = ui.scrollbar_thickness(pane.idx(), Axis::Y);
-        assert!(thickness > SCROLLBAR_THICKNESS);
-        assert!(thickness < SCROLLBAR_HOVER_THICKNESS);
-        assert!(ui.repaint_requested);
-    }
-
-    #[test]
-    fn horizontal_scrollbar_height_animates_on_hover() {
-        let mut ui = IMUI::new_for_test(400.0, 200.0);
-
-        ui.begin_frame();
-        let pane = build_horizontal_scroll_pane(&mut ui);
-        ui.end_frame();
-
-        assert_eq!(
-            ui.scrollbar_thickness(pane.idx(), Axis::X),
-            SCROLLBAR_THICKNESS
-        );
-        let thumb = ui
-            .scrollbar_thumb_rect(pane.idx(), Axis::X, SCROLLBAR_THICKNESS)
-            .unwrap();
-        ui.mouse = Some(Point::new(
-            thumb.x0 + thumb.width() * 0.5,
-            thumb.y0 + thumb.height() * 0.5,
-        ));
-        ui.repaint_requested = false;
-
-        ui.begin_frame();
-        let pane = build_horizontal_scroll_pane(&mut ui);
-        ui.end_frame();
-
-        let thickness = ui.scrollbar_thickness(pane.idx(), Axis::X);
-        assert!(thickness > SCROLLBAR_THICKNESS);
-        assert!(thickness < SCROLLBAR_HOVER_THICKNESS);
-        assert!(ui.repaint_requested);
-
-        for _ in 0..120 {
-            ui.repaint_requested = false;
-            ui.begin_frame();
-            build_horizontal_scroll_pane(&mut ui);
-            ui.end_frame();
-            if !ui.repaint_requested {
-                break;
-            }
-        }
-        assert_eq!(
-            ui.scrollbar_thickness(pane.idx(), Axis::X),
-            SCROLLBAR_HOVER_THICKNESS
-        );
-
-        ui.mouse = Some(Point::new(300.0, 180.0));
-        ui.repaint_requested = false;
-        ui.begin_frame();
-        let pane = build_horizontal_scroll_pane(&mut ui);
-        ui.end_frame();
-
-        let thickness = ui.scrollbar_thickness(pane.idx(), Axis::X);
-        assert!(thickness > SCROLLBAR_THICKNESS);
-        assert!(thickness < SCROLLBAR_HOVER_THICKNESS);
-        assert!(ui.repaint_requested);
-    }
-
-    #[test]
-    fn vertical_scrollbar_click_and_drag_updates_scroll() {
-        let mut ui = IMUI::new_for_test(400.0, 200.0);
-
-        ui.begin_frame();
-        let pane = build_vertical_scroll_pane(&mut ui);
-        ui.end_frame();
-
-        let thumb = ui
-            .scrollbar_thumb_rect(pane.idx(), Axis::Y, SCROLLBAR_HOVER_THICKNESS)
-            .unwrap();
-        let start = Point::new(
-            thumb.x0 + thumb.width() * 0.5,
-            thumb.y0 + thumb.height() * 0.5,
-        );
-        let end = Point::new(start.x(), start.y() + 24.0);
-
-        push_test_event(&mut ui, OSEvent::press(OSKey::LeftMouseButton, Some(start)));
-        ui.begin_frame();
-        let _pane = build_vertical_scroll_pane(&mut ui);
-        ui.end_frame();
-        assert!(ui.active_scrollbar.is_some());
-        assert!(ui.events.is_empty());
-
-        push_test_event(&mut ui, OSEvent::mouse_move(end));
-        ui.begin_frame();
-        let pane = build_vertical_scroll_pane(&mut ui);
-        ui.end_frame();
-        assert!(ui.boxes[pane.idx()].scroll.y > 0.0);
-        assert_eq!(
-            ui.boxes[pane.idx()].scroll.y,
-            ui.boxes[pane.idx()].scroll_target.y
-        );
-
-        push_test_event(&mut ui, OSEvent::release(OSKey::LeftMouseButton, Some(end)));
-        ui.begin_frame();
-        build_vertical_scroll_pane(&mut ui);
-        ui.end_frame();
-        assert!(ui.active_scrollbar.is_none());
-        assert!(ui.events.is_empty());
-    }
-
-    #[test]
-    fn vertical_scrollbar_track_click_updates_scroll() {
-        let mut ui = IMUI::new_for_test(400.0, 200.0);
-
-        ui.begin_frame();
-        let pane = build_vertical_scroll_pane(&mut ui);
-        ui.end_frame();
-
-        let thumb = ui
-            .scrollbar_thumb_rect(pane.idx(), Axis::Y, SCROLLBAR_HOVER_THICKNESS)
-            .unwrap();
-        let rect = ui.boxes[pane.idx()].rect;
-        let click = Point::new(
-            thumb.x0 + thumb.width() * 0.5,
-            thumb.y1 + (rect.y1 - thumb.y1) * 0.5,
-        );
-
-        push_test_event(&mut ui, OSEvent::press(OSKey::LeftMouseButton, Some(click)));
-        ui.begin_frame();
-        let pane = build_vertical_scroll_pane(&mut ui);
-        ui.end_frame();
-
-        assert!(ui.boxes[pane.idx()].scroll.y > 0.0);
-        assert_eq!(
-            ui.boxes[pane.idx()].scroll.y,
-            ui.boxes[pane.idx()].scroll_target.y
-        );
-        assert!(ui.events.is_empty());
-    }
-
-    #[test]
-    fn topmost_box_wins_hovering_after_layout() {
-        let mut ui = IMUI::new_for_test(400.0, 200.0);
-        ui.mouse = Some(Point::new(20.0, 20.0));
-
-        ui.begin_frame();
-        let base = ui.button("Base###base", None);
-        ui.width(base, UISize::Pixels(120.0));
-        ui.height(base, UISize::Pixels(40.0));
-
-        let mut overlay_button = None;
-        let overlay = ui.floating_pane_at(Point::new(0.0, 0.0), Some("###overlay"), |ui| {
-            let button = ui.button("Overlay###overlay_button", None);
-            ui.width(button, UISize::Pixels(120.0));
-            ui.height(button, UISize::Pixels(40.0));
-            overlay_button = Some(button);
-        });
-        ui.padding_all(overlay, 0.0);
-        ui.gap(overlay, 0.0);
-
-        ui.end_frame();
-
-        let overlay_button = overlay_button.unwrap();
-        assert!(ui.boxes[base.idx()].signal.mouse_over());
-        assert!(!ui.boxes[base.idx()].signal.hovering());
-        assert!(ui.boxes[overlay_button.idx()].signal.hovering());
-    }
-
-    #[test]
-    fn overlay_box_wins_hovering_even_when_declared_before_normal_box() {
-        let mut ui = IMUI::new_for_test(400.0, 200.0);
-        ui.mouse = Some(Point::new(20.0, 20.0));
-
-        ui.begin_frame();
-        let mut overlay_button = None;
-        let overlay = ui.floating_pane_at(Point::new(0.0, 0.0), Some("###overlay"), |ui| {
-            let button = ui.button("Overlay###overlay_button", None);
-            ui.width(button, UISize::Pixels(120.0));
-            ui.height(button, UISize::Pixels(40.0));
-            overlay_button = Some(button);
-        });
-        ui.padding_all(overlay, 0.0);
-        ui.gap(overlay, 0.0);
-
-        let base = ui.button("Base###base", None);
-        ui.width(base, UISize::Pixels(120.0));
-        ui.height(base, UISize::Pixels(40.0));
-        ui.end_frame();
-
-        let overlay_button = overlay_button.unwrap();
-        assert!(ui.boxes[base.idx()].signal.mouse_over());
-        assert!(!ui.boxes[base.idx()].signal.hovering());
-        assert!(ui.boxes[overlay_button.idx()].signal.hovering());
+    fn clamps_at_bounds() {
+        assert_eq!(cursor_left("ab", 0), 0);
+        assert_eq!(cursor_right("ab", 2), 2);
     }
 }

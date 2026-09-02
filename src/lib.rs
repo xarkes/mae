@@ -1,4 +1,5 @@
 pub mod draw;
+pub mod file_explorer;
 pub mod imui;
 pub mod os;
 pub mod render;

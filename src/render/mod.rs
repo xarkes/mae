@@ -1,14 +1,22 @@
 #[cfg(feature = "cpu")]
 mod cpu;
 pub mod font_cache;
+mod font_fallback;
 #[cfg(feature = "opengl")]
 mod opengl;
+#[cfg(feature = "png_capture")]
+pub mod png;
 pub mod software;
 
 use std::{cell::RefCell, rc::Rc};
 
 use crate::os::Window;
 use font_cache::{FontCache, FontTag};
+
+#[derive(Debug)]
+enum RendererError {
+    OGLInitFailed(String),
+}
 
 pub trait RenderBackend {
     fn create_texture(&mut self, width: usize, height: usize, format: TextureFormat) -> u32;
@@ -20,18 +28,32 @@ pub trait RenderBackend {
         width: usize,
         height: usize,
         data: &[u8],
+        format: TextureFormat,
     );
     fn remove_texture(&mut self, id: u32);
     fn resize(&mut self, w: f32, h: f32);
     fn begin_frame(&mut self);
+    /// Colour the framebuffer is cleared to at the start of each frame.
+    ///
+    /// Anything the UI does not paint shows through as this — including a box
+    /// faded below full opacity, which composites against it. Left at the
+    /// default transparent black, a fading view dissolves toward black no
+    /// matter how light the theme is, which is why this follows
+    /// `UITheme::app_bg`.
+    fn set_clear_color(&mut self, color: V4f32);
     fn end_frame(&mut self);
     fn render(&mut self, batches: &Vec<RenderBatch>);
     fn vsync(&mut self, enable: bool);
+    fn backend(&self) -> Backend;
+    /// Capture the current framebuffer as RGBA bytes (row-major, top-to-bottom).
+    #[cfg(feature = "png_capture")]
+    fn capture_framebuffer(&mut self) -> (Vec<u8>, usize, usize);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextureFormat {
     R8,
+    Rgba8,
 }
 
 pub struct RenderBatch {
@@ -103,10 +125,17 @@ pub struct V4f32 {
 pub struct Extra {
     pub omit_texture: f32,
     pub corner_radius_px: f32,
-    pub _unused: [f32; 2],
+    /// 1.0 if the sampled texture is a color (RGBA) glyph to use directly rather
+    /// than an alpha mask to tint. Maps to `c2v_extra.z` in the shaders.
+    pub is_color: f32,
+    pub _unused: f32,
 }
 impl Extra {
     pub fn new(omit_texture: bool, corner_radius_px: f32) -> Self {
+        Self::with_color(omit_texture, corner_radius_px, false)
+    }
+
+    pub fn with_color(omit_texture: bool, corner_radius_px: f32, is_color: bool) -> Self {
         let omit = match omit_texture {
             true => 1.0,
             false => 0.0,
@@ -114,7 +143,8 @@ impl Extra {
         Extra {
             omit_texture: omit,
             corner_radius_px,
-            _unused: [0.0, 0.0],
+            is_color: if is_color { 1.0 } else { 0.0 },
+            _unused: 0.0,
         }
     }
 }
@@ -167,7 +197,7 @@ pub enum Backend {
 }
 
 impl Backend {
-    pub fn label(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             #[cfg(feature = "opengl")]
             Backend::OpenGL => "OpenGL",
@@ -176,6 +206,7 @@ impl Backend {
         }
     }
 
+    /// Returns a vec of vailable backends
     pub fn available() -> Vec<Self> {
         vec![
             #[cfg(feature = "opengl")]
@@ -194,32 +225,30 @@ impl Backend {
     }
 
     /// Returns backend from MAE_RENDERER environment variable, or default
-    pub fn from_env() -> Self {
+    pub fn from_env() -> Option<Self> {
         match std::env::var("MAE_RENDERER").as_deref() {
             #[cfg(feature = "opengl")]
-            Ok("opengl") => Backend::OpenGL,
+            Ok("opengl") => Some(Backend::OpenGL),
             #[cfg(feature = "cpu")]
-            Ok("cpu") => Backend::CPU,
-            _ => Self::default_backend(),
+            Ok("cpu") => Some(Backend::CPU),
+            _ => None,
         }
     }
 }
 
 pub struct Renderer {
     pub win: Window,
-    backend: Backend,
     ctx: Box<dyn RenderBackend>,
     pub font_cache: Rc<RefCell<FontCache>>,
     pub icon_font_cache: Rc<RefCell<FontCache>>,
     batches: Vec<RenderBatch>,
+    #[cfg(feature = "png_capture")]
+    pending_capture: Option<String>,
 }
 
 impl Renderer {
     pub fn new(win: Window) -> Self {
-        Self::with_backend(win, Backend::from_env())
-    }
-
-    pub fn with_backend(win: Window, backend: Backend) -> Self {
+        let backend = Backend::from_env();
         println!("render new with backend: {:?}", backend);
 
         let t0 = std::time::Instant::now();
@@ -246,11 +275,12 @@ impl Renderer {
         let batches = vec![RenderBatch::new(100)];
         let mut renderer = Renderer {
             win,
-            backend,
             ctx,
             font_cache,
             icon_font_cache,
             batches,
+            #[cfg(feature = "png_capture")]
+            pending_capture: None,
         };
 
         let t3 = std::time::Instant::now();
@@ -265,21 +295,66 @@ impl Renderer {
         renderer
     }
 
-    fn create_backend(win: &Window, backend: Backend) -> Box<dyn RenderBackend> {
-        match backend {
-            #[cfg(feature = "opengl")]
-            Backend::OpenGL => Box::new(opengl::GLContext::new(win)),
-            #[cfg(feature = "cpu")]
-            Backend::CPU => Box::new(cpu::CPUContext::new(win)),
+    fn create_backend(win: &Window, backend: Option<Backend>) -> Box<dyn RenderBackend> {
+        let mut backends = Backend::available();
+        if backend.is_some() {
+            backends = vec![backend.unwrap()];
+        }
+        for backend in backends {
+            // Explicit annotation: with neither `opengl` nor `cpu` enabled (the DOM
+            // backend's build — see `imui/lifecycle.rs::new_dom`, which never calls
+            // `Renderer::new` at all), `Backend` is uninhabited and this match has no
+            // arms, leaving the compiler nothing to infer the type from even though
+            // the loop body is unreachable.
+            let ctx: Result<Box<dyn RenderBackend>, RendererError> = match backend {
+                #[cfg(feature = "opengl")]
+                Backend::OpenGL => opengl::GLContext::new(win),
+                #[cfg(feature = "cpu")]
+                Backend::CPU => cpu::CPUContext::new(win),
+            };
+            match ctx {
+                Ok(c) => {
+                    return c;
+                }
+                Err(e) => {
+                    println!("Backend initialization failed: {:?}", e);
+                }
+            }
+        }
+        panic!("No backend could be initialized.");
+    }
+
+    /// Upload an RGBA8 image as a GPU texture and return its id. Used for
+    /// inline document images; the caller owns the lifetime and frees it with
+    /// [`Renderer::remove_image_texture`].
+    pub fn create_image_texture(&mut self, width: usize, height: usize, rgba: &[u8]) -> u32 {
+        let id = self.ctx.create_texture(width, height, TextureFormat::Rgba8);
+        self.ctx
+            .update_texture_region(id, 0, 0, width, height, rgba, TextureFormat::Rgba8);
+        id
+    }
+
+    pub fn remove_image_texture(&mut self, id: u32) {
+        if id != 0 {
+            self.ctx.remove_texture(id);
         }
     }
 
     pub fn update_font_texture(&mut self, font_icon: bool) {
+        let cache = match font_icon {
+            true => &self.icon_font_cache,
+            false => &self.font_cache,
+        };
+        if !cache.borrow().needs_texture_update() {
+            return;
+        }
+
         let mut fc = match font_icon {
             true => self.icon_font_cache.borrow_mut(),
             false => self.font_cache.borrow_mut(),
         };
 
+        // Alpha (R8) atlases.
         for atlas_index in 0..fc.atlas_count() {
             if fc.atlas_texture_id(atlas_index) == 0 {
                 let atlas = fc.atlas(atlas_index);
@@ -295,12 +370,41 @@ impl Renderer {
                     atlas.width,
                     atlas.height,
                     &atlas.data,
+                    TextureFormat::R8,
+                );
+            }
+        }
+
+        // Color (RGBA) atlases.
+        for atlas_index in 0..fc.color_atlas_count() {
+            if fc.color_atlas_texture_id(atlas_index) == 0 {
+                let atlas = fc.color_atlas(atlas_index);
+                let texture_id =
+                    self.ctx
+                        .create_texture(atlas.width, atlas.height, TextureFormat::Rgba8);
+                fc.color_atlas_mut(atlas_index).set_texture_id(texture_id);
+                let atlas = fc.color_atlas(atlas_index);
+                self.ctx.update_texture_region(
+                    texture_id,
+                    0,
+                    0,
+                    atlas.width,
+                    atlas.height,
+                    &atlas.data,
+                    TextureFormat::Rgba8,
                 );
             }
         }
 
         for upload in fc.take_pending_uploads() {
-            let texture_id = fc.atlas_texture_id(upload.atlas_index);
+            let (texture_id, format) = if upload.color {
+                (
+                    fc.color_atlas_texture_id(upload.atlas_index),
+                    TextureFormat::Rgba8,
+                )
+            } else {
+                (fc.atlas_texture_id(upload.atlas_index), TextureFormat::R8)
+            };
             if texture_id != 0 {
                 self.ctx.update_texture_region(
                     texture_id,
@@ -309,11 +413,11 @@ impl Renderer {
                     upload.width,
                     upload.height,
                     &upload.data,
+                    format,
                 );
             }
         }
-
-        fc.refresh_run_texture_ids();
+        fc.mark_textures_clean();
     }
 
     pub fn begin_font_frame(&mut self) {
@@ -341,18 +445,17 @@ impl Renderer {
     }
 
     pub fn backend(&self) -> Backend {
-        self.backend
+        self.ctx.backend()
     }
 
     pub fn set_backend(&mut self, backend: Backend) {
-        if self.backend == backend {
+        if self.ctx.backend() == backend {
             return;
         }
 
         self.remove_font_textures(false);
         self.remove_font_textures(true);
-        self.ctx = Self::create_backend(&self.win, backend);
-        self.backend = backend;
+        self.ctx = Self::create_backend(&self.win, Some(backend));
 
         let render_size = self.win.get_render_size();
         self.resize(render_size.0, render_size.1);
@@ -367,11 +470,26 @@ impl Renderer {
     pub fn render_frame(&mut self) {
         self.ctx.begin_frame();
         self.ctx.render(&self.batches);
+
+        #[cfg(feature = "png_capture")]
+        if let Some(path) = self.pending_capture.take() {
+            let (rgba, w, h) = self.ctx.capture_framebuffer();
+            match png::write_png(&path, w, h, &rgba) {
+                Ok(()) => println!("PNG captured to: {path}"),
+                Err(e) => eprintln!("PNG capture failed: {e}"),
+            }
+        }
+
         self.ctx.end_frame();
 
         self.batches.clear();
         self.batches.push(RenderBatch::new(100));
         self.begin_font_frame();
+    }
+
+    #[cfg(feature = "png_capture")]
+    pub fn request_capture(&mut self, path: String) {
+        self.pending_capture = Some(path);
     }
 
     pub fn current_batch(&mut self) -> &mut RenderBatch {
@@ -389,5 +507,10 @@ impl Renderer {
 
     pub fn vsync(&mut self, enable: bool) {
         self.ctx.vsync(enable);
+    }
+
+    /// See [`RenderBackend::set_clear_color`].
+    pub fn set_clear_color(&mut self, color: V4f32) {
+        self.ctx.set_clear_color(color);
     }
 }

@@ -80,6 +80,13 @@ fn character_map_and_combine_key(
 }
 
 impl Window {
+    // IME (preedit/candidate positioning) is implemented on macOS only for now.
+    pub fn ime_preedit(&self) -> Option<String> {
+        None
+    }
+
+    pub fn set_ime_caret_rect(&self, _x: f32, _y: f32, _width: f32, _height: f32) {}
+
     pub fn new(app: AndroidApp) -> Self {
         Window { app }
     }
@@ -103,6 +110,9 @@ impl Window {
     pub fn get_size(&self) -> (f32, f32) {
         // XXX: We have to find a better API to support Android
         (0., 0.)
+    }
+    pub fn refresh_rate_hz(&self) -> f32 {
+        60.0
     }
     pub fn get_events(&self) -> Vec<OSEvent> {
         let events = Vec::new();
@@ -230,4 +240,23 @@ pub fn timer_init() -> f64 {
 }
 pub fn timer_value() -> u64 {
     1
+}
+
+/// No Android clipboard integration yet; the in-app clipboard fallback keeps copy/paste
+/// working within the process.
+pub fn clipboard_set(_text: &str) {}
+
+/// No Android clipboard integration yet; see [`clipboard_set`].
+pub fn clipboard_get() -> Option<String> {
+    None
+}
+
+/// Image clipboard read - not yet implemented on this platform.
+pub fn clipboard_get_image() -> Option<Vec<u8>> {
+    None
+}
+
+/// Native image file picker - not yet implemented on this platform.
+pub fn open_image_file_dialog() -> Option<std::path::PathBuf> {
+    None
 }

@@ -14,6 +14,7 @@ out float v2p_omit_texture;
 out vec2 v2p_dst_pos_px;
 out vec4 v2p_dst_rect_px;
 out float v2p_corner_radius_px;
+out float v2p_is_color;
 
 uniform vec2 u_viewport_size_px;
 
@@ -44,4 +45,5 @@ void main() {
   v2p_dst_pos_px = dst_position;
   v2p_dst_rect_px = c2v_dst_rect;
   v2p_corner_radius_px = c2v_extra.y;
+  v2p_is_color = c2v_extra.z;
 }
