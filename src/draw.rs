@@ -5,6 +5,59 @@ use crate::render::{
     font_cache::{ATLAS_SIZE, TextPiece},
 };
 
+/// Vertical placement of one glyph quad, in device pixels: the row it starts
+/// on, how much of its top is clipped away, and how many rows survive — all
+/// snapped to whole pixels. `None` when the glyph is entirely outside the clip.
+///
+/// The snapping is the point. A glyph mask is rasterized once, at an integer
+/// pixel size, and blitted at 1:1 texel-to-pixel — so it is only reproduced
+/// faithfully if it lands on the pixel grid. Off the grid, the OpenGL backend
+/// samples the atlas with `GL_LINEAR` (`render/opengl/mod.rs`), which reads
+/// each row of the mask as a blend of two, softening the glyph and thinning
+/// its top and bottom edges to where they can disappear. (The software backend
+/// happens not to show this: it truncates its destination rect to whole pixels
+/// on its own, so it is the OpenGL path this protects.)
+///
+/// The baseline is fractional whenever the view is scrolled by a non-integer
+/// amount, which on macOS is *any* trackpad scroll: `NSEvent::deltaY` is a
+/// CGFloat of sub-pixel precision, so `scroll.y` — and every box position
+/// derived from it — lands between pixels and the artifact drifts with the
+/// scroll offset. A wheel notch elsewhere gives whole numbers, which is why it
+/// shows up there and not on Windows or Linux.
+///
+/// Horizontal placement is deliberately left alone: glyph x positions come
+/// from fractional shaping advances, and the editor's caret and selection
+/// geometry (`cum_x`) is measured against those same advances. Snapping x
+/// would crispen the glyphs and then put the caret in the wrong place.
+fn glyph_rows(
+    baseline_y: f32,
+    glyph_top: f32,
+    height: f32,
+    ymin: f32,
+    ymax: f32,
+) -> Option<GlyphRows> {
+    let y0 = (baseline_y + glyph_top).round();
+    // Round the near edge and floor the extent, so both the destination rect
+    // and the atlas sub-rect it samples stay on whole pixels/texels; flooring
+    // also keeps a partly-clipped glyph from spilling past the clip edge.
+    let top_clip = (ymin - y0).clamp(0.0, height).round();
+    let rows = (ymax - (y0 + top_clip)).min(height - top_clip).floor();
+    if rows <= 0.0 {
+        return None;
+    }
+    Some(GlyphRows { y0, top_clip, rows })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct GlyphRows {
+    /// Device-space y the glyph's own bitmap starts at, before clipping.
+    y0: f32,
+    /// Rows of the bitmap hidden above `ymin`.
+    top_clip: f32,
+    /// Rows actually drawn.
+    rows: f32,
+}
+
 pub struct Drawer {
     pub renderer: Renderer,
     text_pieces: Vec<TextPiece>,
@@ -194,7 +247,8 @@ impl Drawer {
         }
         self.renderer.update_font_texture(font_icon);
 
-        let y = y * scale_factor + size;
+        // Snapped to the pixel grid — see `glyph_rows`.
+        let y = (y * scale_factor + size).round();
         self.text_texture_ids.clear();
         self.text_color_texture_ids.clear();
         {
@@ -223,21 +277,24 @@ impl Drawer {
             }
 
             let xpos = xstart + piece.offset_px.0;
-            let ypos = y + piece.offset_px.1;
             if xpos >= xmax {
                 break;
             }
-            if xpos + w <= xmin || ypos >= ymax + vertical_clip_pad || ypos + h <= ymin {
+            if xpos + w <= xmin {
                 continue;
             }
+            let Some(rows) = glyph_rows(y, piece.offset_px.1, h, ymin, ymax + vertical_clip_pad)
+            else {
+                continue;
+            };
+            let ypos = rows.y0;
 
             {
                 let left_clip = (xmin - xpos).clamp(0.0, w);
-                let top_clip = (ymin - ypos).clamp(0.0, h);
+                let top_clip = rows.top_clip;
                 let width_trunc = (xmax - (xpos + left_clip)).min(w - left_clip);
-                let height_trunc =
-                    ((ymax + vertical_clip_pad) - (ypos + top_clip)).min(h - top_clip);
-                if width_trunc <= 0.0 || height_trunc <= 0.0 {
+                let height_trunc = rows.rows;
+                if width_trunc <= 0.0 {
                     continue;
                 }
                 let (u0, v0, u1, v1) = piece.subrect_px.uv(ATLAS_SIZE, ATLAS_SIZE);
@@ -272,5 +329,49 @@ impl Drawer {
             }
         }
         run_dim.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Fractional baselines are the normal case while scrolling on macOS, and
+    /// every one of them must still put the glyph bitmap on whole pixels — the
+    /// atlas is blitted 1:1, so anything else resamples the mask.
+    #[test]
+    fn a_glyph_lands_on_whole_pixels_from_any_baseline() {
+        for step in 0..64 {
+            let baseline = 100.0 + step as f32 / 64.0;
+            let rows = glyph_rows(baseline, -11.0, 14.0, 0.0, 1000.0).expect("glyph is visible");
+            assert_eq!(rows.y0.fract(), 0.0, "baseline {baseline}");
+            assert_eq!(rows.top_clip.fract(), 0.0, "baseline {baseline}");
+            assert_eq!(rows.rows.fract(), 0.0, "baseline {baseline}");
+            // Unclipped, the whole bitmap is drawn.
+            assert_eq!(rows.rows, 14.0, "baseline {baseline}");
+        }
+    }
+
+    /// The same, at a clip edge: a partly-scrolled-off line still samples whole
+    /// texel rows, which is where the "cut by a pixel or two" showed up.
+    #[test]
+    fn a_clipped_glyph_still_samples_whole_texel_rows() {
+        for step in 0..64 {
+            let frac = step as f32 / 64.0;
+            let rows = glyph_rows(100.0 + frac, -11.0, 14.0, 92.0 + frac, 200.0)
+                .expect("glyph is partly visible");
+            assert_eq!(rows.y0.fract(), 0.0);
+            assert_eq!(rows.top_clip.fract(), 0.0);
+            assert_eq!(rows.rows.fract(), 0.0);
+            assert!(rows.top_clip > 0.0, "the top should be clipped here");
+            // Never drawn past the clip edge.
+            assert!(rows.y0 + rows.top_clip + rows.rows <= 200.0);
+        }
+    }
+
+    #[test]
+    fn a_glyph_fully_outside_the_clip_is_dropped() {
+        assert!(glyph_rows(100.0, -11.0, 14.0, 200.0, 300.0).is_none());
+        assert!(glyph_rows(100.0, -11.0, 14.0, 0.0, 50.0).is_none());
     }
 }
