@@ -6,6 +6,13 @@ impl IMUI {
         if !flags.scrolls_x() && !flags.scrolls_y() {
             return;
         }
+        // On the DOM backend the box is a real scroller and the browser has
+        // already applied the wheel/trackpad/finger itself — `os/wasm.rs`
+        // does not even forward those any more. Consuming them here would be
+        // scrolling it a second time.
+        if self.css_drives_animation() {
+            return;
+        }
 
         let rect = self.boxes[idx].rect;
         let mut signal = UISignal::default();
@@ -159,6 +166,11 @@ impl IMUI {
         if key.is_zero() || (!flags.scrolls_x() && !flags.scrolls_y()) {
             return;
         }
+        // The browser draws that scrollbar and drags it (see `paint_dom.rs`),
+        // so there is no Rust-side thumb for a press to have landed on.
+        if self.css_drives_animation() {
+            return;
+        }
 
         let mut ev_idx = 0;
         while ev_idx < self.events.len() {
@@ -266,10 +278,21 @@ impl IMUI {
         let rate = smooth_rate(self.theme.motion.scroll_rate, self.animation_dt);
         let epsilon = 0.5;
         let mut animating = false;
+        // Nothing to ease on the DOM backend: the box is a real scroller and
+        // the browser owns the offset entirely — wheel, finger, momentum and
+        // the scrollbar drag. `scroll` is a mirror of `scrollTop`, kept up to
+        // date by `adopt_dom_scrolls`, and the gap between it and
+        // `scroll_target` is precisely how `ensure_scroll_wrapper` recognises
+        // a *programmatic* jump (`scroll_to_y`) to push onto the element —
+        // so closing that gap here would swallow the only signal it has.
+        if self.css_drives_animation() {
+            return;
+        }
+        let snap = false;
         for frame_pos in 0..self.frame_boxes.len() {
             let idx = self.frame_boxes[frame_pos];
             let box_ = &mut self.boxes[idx];
-            if box_.first_touched_frame == self.build_index {
+            if snap || box_.first_touched_frame == self.build_index {
                 box_.scroll = box_.scroll_target;
                 continue;
             }

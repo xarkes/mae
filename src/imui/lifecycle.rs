@@ -616,6 +616,32 @@ impl IMUI {
         self.repaint_requested = true;
     }
 
+    /// Does the browser own the easing of visual state (hover/press/focus
+    /// tints, a floating pane appearing, scroll offsets)?
+    ///
+    /// True on the DOM backend, where those are CSS transitions on real
+    /// elements. Rust then writes each *target* value straight out and never
+    /// interpolates toward it, which is the difference between a popover fade
+    /// costing one rebuild and costing one per frame for its whole duration:
+    /// [`animate_visual_state`](Self::animate_visual_state) and
+    /// [`animate_scroll_offsets`](Self::animate_scroll_offsets) ask for
+    /// another frame for as long as anything is still moving, and `run_dom`
+    /// keeps ticking while they do. With the browser easing instead, the loop
+    /// goes idle the frame after the state changed and the animation still
+    /// runs — off the main thread, at the display's own rate.
+    ///
+    /// Native has no such layer: there the interpolation *is* the animation.
+    pub(crate) fn css_drives_animation(&self) -> bool {
+        #[cfg(feature = "dom")]
+        {
+            self.dom.is_some()
+        }
+        #[cfg(not(feature = "dom"))]
+        {
+            false
+        }
+    }
+
     /// Whether another frame has been asked for, clearing the request — exactly
     /// what [`IMUI::eventloop`] does before it builds.
     ///

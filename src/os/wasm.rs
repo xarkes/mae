@@ -12,7 +12,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
-use web_sys::{Element, EventTarget, HtmlElement, KeyboardEvent, PointerEvent, WheelEvent};
+use web_sys::{Element, EventTarget, HtmlElement, KeyboardEvent, PointerEvent};
 
 pub struct Window {
     container: HtmlElement,
@@ -25,7 +25,6 @@ pub struct Window {
     _on_pointer_up: Closure<dyn FnMut(PointerEvent)>,
     _on_pointer_cancel: Closure<dyn FnMut(PointerEvent)>,
     _on_pointer_move: Closure<dyn FnMut(PointerEvent)>,
-    _on_wheel: Closure<dyn FnMut(WheelEvent)>,
     _on_key_down: Closure<dyn FnMut(KeyboardEvent)>,
     _on_key_up: Closure<dyn FnMut(KeyboardEvent)>,
     _on_resize: Closure<dyn FnMut(js_sys::Array)>,
@@ -43,93 +42,14 @@ fn container_pos(container: &Element, client_x: f64, client_y: f64) -> Point {
     )
 }
 
-/// How far a finger must travel before its press is reinterpreted as a
-/// scroll rather than a tap. Without a threshold the wobble in an ordinary
-/// tap would scroll the list out from under whatever was being tapped.
-const TOUCH_SLOP: f32 = 8.0;
-
-/// Pixels of content per unit of `OSEvent::scroll` delta —
-/// `apply_scroll_signal` (`imui/widgets.rs`) multiplies by exactly this, so
-/// dividing by it here makes the content track the finger 1:1, which is the
-/// only ratio a drag-to-scroll gesture can have.
-const SCROLL_PX_PER_UNIT: f32 = 16.0;
-
-/// A one-finger drag on a touch screen, tracked across the pointer listeners.
-///
-/// mae scrolls by transforming a wrapper inside a clipped box
-/// (`imui/paint_dom.rs`'s `ensure_scroll_wrapper`) rather than by giving the
-/// browser a real scroller to drive, and scroll input was wheel-only — so
-/// before this, nothing mae drew could be scrolled by finger at all. Rather
-/// than add a second scrolling mechanism, a qualifying drag is turned into
-/// the `OSEvent::scroll` stream the wheel already produces, and the whole
-/// existing path (`imui/scroll.rs`'s `absorb_pending_scroll_for_box`, which
-/// picks the scrollable box under the pointer and chains to its ancestors)
-/// handles it unchanged.
-#[derive(Default, Clone, Copy)]
-struct TouchPan {
-    /// Where the finger went down, in container coordinates. `None` when no
-    /// touch is down — a mouse never sets this, so a mouse drag keeps
-    /// selecting text and dragging splitters exactly as before.
-    origin: Option<Point>,
-    /// The previous position, for per-move deltas.
-    last: Point,
-    /// Past `TOUCH_SLOP`: this gesture is a scroll now, and the press it
-    /// began life as has already been cancelled.
-    scrolling: bool,
-}
-
-impl TouchPan {
-    /// End the gesture, returning what it had become. Called from both
-    /// `pointerup` and `pointercancel`, which are the only two ways a touch
-    /// can finish.
-    fn take_ending(&mut self) -> TouchPan {
-        std::mem::take(self)
-    }
-}
-
-/// Advance a touch drag, queueing scroll events for it. Returns `true` when
-/// the move was consumed as a scroll and must not also be reported as a
-/// pointer move — a drag cannot be a scroll *and* a text selection.
-///
-/// See [`TouchPan`] for why scrolling is expressed as `OSEvent::scroll` at
-/// all rather than as its own mechanism.
-fn touch_pan_move(
-    pan: &Rc<RefCell<TouchPan>>,
-    events: &Rc<RefCell<VecDeque<OSEvent>>>,
-    pos: Point,
-) -> bool {
-    let mut pan = pan.borrow_mut();
-    let Some(origin) = pan.origin else {
-        return false; // a mouse, or no button down: nothing to reinterpret
-    };
-    if !pan.scrolling {
-        let (dx, dy) = (pos.x() - origin.x(), pos.y() - origin.y());
-        if (dx * dx + dy * dy).sqrt() < TOUCH_SLOP {
-            pan.last = pos;
-            return false;
-        }
-        pan.scrolling = true;
-        // Cancel the press this gesture began as, *outside* every box: a
-        // release within bounds is how `signal_from_key_and_flags` recognises
-        // a click, so releasing at the origin would activate whatever the
-        // finger came down on. Far outside, it only clears the active key —
-        // which is the point, since an in-progress drag (a scrollbar thumb, a
-        // text selection) must not keep tracking a finger that is now
-        // scrolling.
-        events.borrow_mut().push_back(OSEvent::release(
-            OSKey::LeftMouseButton,
-            Some(Point::new(-10000.0, -10000.0)),
-        ));
-    }
-    // Content follows the finger: dragging down reveals what is above, which
-    // is a *decrease* in scroll offset, and `apply_scroll_signal` subtracts.
-    let delta = (pos.y() - pan.last.y()) / SCROLL_PX_PER_UNIT;
-    pan.last = pos;
-    if delta != 0.0 {
-        events.borrow_mut().push_back(OSEvent::scroll(pos, delta));
-    }
-    true
-}
+// One-finger panning is the browser's now: every scrollable box is a real
+// scroller (`imui/paint_dom.rs` gives it `overflow: auto` and a
+// `touch-action` that permits panning), so a drag scrolls it natively, with
+// the platform's own momentum and rubber-banding — and the browser fires
+// `pointercancel` when it takes the gesture over, which is what releases the
+// press mae was holding. Before that, nothing mae drew was natively
+// scrollable at all, so a drag had to be re-synthesised into
+// `OSEvent::scroll` here.
 
 fn pointer_button(e: &PointerEvent) -> Option<OSKey> {
     match e.button() {
@@ -292,7 +212,6 @@ impl Window {
         let size = (rect.width().max(1.0) as f32, rect.height().max(1.0) as f32);
 
         let events: Rc<RefCell<VecDeque<OSEvent>>> = Rc::new(RefCell::new(VecDeque::new()));
-        let touch_pan: Rc<RefCell<TouchPan>> = Rc::new(RefCell::new(TouchPan::default()));
         let events_elem: Element = container.clone().into();
         // Pointer/wheel events are dispatched by position and so belong on the
         // container; keyboard events are dispatched by focus and do not — see
@@ -303,7 +222,6 @@ impl Window {
             let events = events.clone();
             let container = events_elem.clone();
             let waker = waker.clone();
-            let touch_pan = touch_pan.clone();
             Closure::<dyn FnMut(PointerEvent)>::new(move |e: PointerEvent| {
                 // mae's input model is one pointer (see `IMUI::mouse`), so a
                 // second finger must not be reported as another press. The
@@ -317,15 +235,6 @@ impl Window {
                     return;
                 };
                 let pos = container_pos(&container, e.client_x() as f64, e.client_y() as f64);
-                // The press is still reported: this may yet turn out to be a
-                // tap. `pointermove` decides (see `TouchPan`).
-                if e.pointer_type() == "touch" {
-                    *touch_pan.borrow_mut() = TouchPan {
-                        origin: Some(pos),
-                        last: pos,
-                        scrolling: false,
-                    };
-                }
                 events
                     .borrow_mut()
                     .push_back(OSEvent::press(key, Some(pos)));
@@ -343,7 +252,6 @@ impl Window {
             let events = events.clone();
             let container = events_elem.clone();
             let waker = waker.clone();
-            let touch_pan = touch_pan.clone();
             Closure::<dyn FnMut(PointerEvent)>::new(move |e: PointerEvent| {
                 if !e.is_primary() {
                     return;
@@ -352,13 +260,6 @@ impl Window {
                     return;
                 };
                 let pos = container_pos(&container, e.client_x() as f64, e.client_y() as f64);
-                // A gesture that became a scroll already had its press
-                // cancelled; reporting a release here too could land as a
-                // click on whatever the finger started on.
-                if touch_pan.borrow_mut().take_ending().scrolling {
-                    waker.schedule_tick();
-                    return;
-                }
                 events
                     .borrow_mut()
                     .push_back(OSEvent::release(key, Some(pos)));
@@ -378,12 +279,10 @@ impl Window {
             let events = events.clone();
             let container = events_elem.clone();
             let waker = waker.clone();
-            let touch_pan = touch_pan.clone();
             Closure::<dyn FnMut(PointerEvent)>::new(move |e: PointerEvent| {
                 if !e.is_primary() {
                     return;
                 }
-                touch_pan.borrow_mut().take_ending();
                 let pos = container_pos(&container, e.client_x() as f64, e.client_y() as f64);
                 // Released as the left button whatever the event says: a
                 // cancelled pointer reports `button: -1`, which
@@ -406,16 +305,11 @@ impl Window {
             let events = events.clone();
             let container = events_elem.clone();
             let waker = waker.clone();
-            let touch_pan = touch_pan.clone();
             Closure::<dyn FnMut(PointerEvent)>::new(move |e: PointerEvent| {
                 if !e.is_primary() {
                     return;
                 }
                 let pos = container_pos(&container, e.client_x() as f64, e.client_y() as f64);
-                if touch_pan_move(&touch_pan, &events, pos) {
-                    waker.schedule_tick();
-                    return;
-                }
                 events.borrow_mut().push_back(OSEvent::mouse_move(pos));
                 // Browsers already throttle pointermove dispatch to roughly
                 // the display refresh rate, so this is bounded to "one tick
@@ -434,33 +328,13 @@ impl Window {
             )
             .expect("add pointermove listener");
 
-        let on_wheel = {
-            let events = events.clone();
-            let container = events_elem.clone();
-            let waker = waker.clone();
-            Closure::<dyn FnMut(WheelEvent)>::new(move |e: WheelEvent| {
-                // Ctrl+wheel is the desktop browser's zoom gesture, not a
-                // scroll. Preventing it unconditionally meant the app could
-                // not be zoomed with a mouse either — the same hole
-                // `touch-action` left on phones.
-                if e.ctrl_key() {
-                    return;
-                }
-                e.prevent_default();
-                let pos = container_pos(&container, e.client_x() as f64, e.client_y() as f64);
-                // Browser deltaY is positive scrolling down; native OSEvent::scroll
-                // treats a positive delta as scrolling up (see os/linux.rs).
-                let delta = (-(e.delta_y() as f32) / 40.0).clamp(-10.0, 10.0);
-                let flags = web_modifiers(e.shift_key(), e.ctrl_key(), e.alt_key(), e.meta_key());
-                events
-                    .borrow_mut()
-                    .push_back(OSEvent::scroll_with_flags(pos, delta, flags));
-                waker.schedule_tick();
-            })
-        };
-        container
-            .add_event_listener_with_callback("wheel", on_wheel.as_ref().unchecked_ref())
-            .expect("add wheel listener");
+        // No wheel listener at all: every scrollable box is a real scroller
+        // (`imui/paint_dom.rs` gives it `overflow: auto`), so the browser
+        // applies the wheel, the trackpad's momentum and the chaining to an
+        // ancestor at the end of a list itself — better than replaying any of
+        // it as an `OSEvent` did, and Ctrl+wheel stays the browser's zoom.
+        // Where the scroll *landed* still reaches mae, from a `scroll`
+        // handler on the element itself (`attach_scroll_listener`).
 
         let on_key_down = {
             let events = events.clone();
@@ -583,7 +457,6 @@ impl Window {
             _on_pointer_up: on_pointer_up,
             _on_pointer_cancel: on_pointer_cancel,
             _on_pointer_move: on_pointer_move,
-            _on_wheel: on_wheel,
             _on_key_down: on_key_down,
             _on_key_up: on_key_up,
             _on_resize: on_resize,
@@ -721,6 +594,14 @@ fn key_owned_by_hosted_editor(e: &KeyboardEvent) -> bool {
     match e.key().as_str() {
         "Escape" => false,
         "Enter" => !single_line_input,
+        // Up/Down in a *single-line* field only park the caret at one end —
+        // nothing the user would miss — while the app above it is very often
+        // using them to move a selection through a list the field filters
+        // (the space switcher, the move-to picker, every search palette).
+        // Swallowed here, that list could not be driven from the keyboard on
+        // this backend at all. A textarea keeps them: there they move between
+        // real lines.
+        "ArrowUp" | "ArrowDown" => !single_line_input,
         _ => true,
     }
 }

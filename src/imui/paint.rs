@@ -9,6 +9,12 @@ impl IMUI {
         let color_rate = smooth_rate(30.0, self.animation_dt);
         let epsilon = self.theme.motion.epsilon;
         let mut animating = false;
+        // On the DOM backend the browser eases these — see
+        // `css_drives_animation`. Every box then takes its target value in
+        // one step, exactly like the `key.is_zero()` and first-frame arms
+        // below already do, and `animating` stays false so the loop is not
+        // asked for another frame.
+        let snap = self.css_drives_animation();
 
         for frame_pos in 0..self.frame_boxes.len() {
             let idx = self.frame_boxes[frame_pos];
@@ -35,7 +41,7 @@ impl IMUI {
                 as u8 as f32;
             let box_ = &mut self.boxes[idx];
 
-            if key.is_zero() {
+            if snap || key.is_zero() {
                 box_.hot_t = is_hot as u8 as f32;
                 box_.active_t = is_active as u8 as f32;
                 box_.focus_t = is_focused as u8 as f32;

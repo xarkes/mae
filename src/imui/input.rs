@@ -20,6 +20,7 @@ pub(super) struct DomPointerState {
 
 impl IMUI {
     pub fn pull_consume_events(&mut self) {
+        self.adopt_dom_scrolls();
         if let Some(win) = self.os_window_mut() {
             self.events = win.get_events();
         }
@@ -107,8 +108,40 @@ impl IMUI {
         }
     }
 
+    /// Take up whatever the browser has scrolled since the last frame, so
+    /// mae's own `scroll`/`scroll_target` describe where the content really
+    /// is — see `paint_dom.rs`'s `attach_scroll_listener`. Called before the
+    /// build, so this frame lays out against it.
+    ///
+    /// Both are set, not just `scroll`: `scroll_target` is what Rust *wants*,
+    /// and leaving it behind would have the next frame yank the list back to
+    /// where the user just scrolled away from.
+    pub(super) fn adopt_dom_scrolls(&mut self) {
+        #[cfg(feature = "dom")]
+        {
+            let Some(dom) = self.dom.as_ref() else {
+                return;
+            };
+            let scrolls = dom.take_pending_scrolls();
+            for (key, (x, y)) in scrolls {
+                let Some(idx) = self.box_from_key(key) else {
+                    continue;
+                };
+                self.boxes[idx].scroll = Point::new(x, y);
+                self.boxes[idx].scroll_target = Point::new(x, y);
+            }
+        }
+    }
+
     pub(super) fn capture_scrollbar_hit_areas(&mut self) {
         self.scrollbar_hit_areas.clear();
+        // The browser draws and drags the scrollbar on this backend (see
+        // `paint_dom.rs`), so there is no Rust-side thumb to reserve the
+        // pointer for — and reserving it anyway would blank out a strip down
+        // the right edge of every scrollable box for every other widget.
+        if self.css_drives_animation() {
+            return;
+        }
         for frame_pos in 0..self.frame_boxes.len() {
             let idx = self.frame_boxes[frame_pos];
             let key = self.boxes[idx].key;

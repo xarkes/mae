@@ -247,6 +247,12 @@ struct PaintSnapshot {
     /// *and* positioned by Rust) or a node with no layout intent of its own
     /// (hosted input, image, scrollbar thumb).
     flow: Option<FlowLayout>,
+    /// What was last written by `apply_flow_size`. Compared instead of the
+    /// rect for a normal-flow box: a box that grows or takes a percentage
+    /// emits the same CSS whatever the solve made of it that frame, and a
+    /// box that changed which of the two it is emits different CSS at an
+    /// unchanged size.
+    flow_size: Option<FlowSize>,
     /// Tracked separately from `style_differs`'s other fields so a theme
     /// switch that only changes text color (bg/border/etc. of a plain label
     /// often stay identical, e.g. transparent-on-transparent) still triggers
@@ -289,6 +295,7 @@ impl PaintSnapshot {
             hot: None,
             text: None,
             flow: None,
+            flow_size: None,
             text_color: Color {
                 r: -1.0,
                 g: -1.0,
@@ -304,15 +311,18 @@ impl PaintSnapshot {
     /// For a floating/absolute node, all four coordinates matter (Rust sets
     /// both position and size). For a normal-flow node, position is CSS's to
     /// decide — only a size change needs a DOM write.
-    fn geometry_differs(&self, other: &RectCoords, floating: bool) -> bool {
+    fn geometry_differs(&self, other: &RectCoords, floating: bool, size: FlowSize) -> bool {
         if floating {
             self.rect.x0 != other.x0
                 || self.rect.y0 != other.y0
                 || self.rect.x1 != other.x1
                 || self.rect.y1 != other.y1
         } else {
-            (self.rect.x1 - self.rect.x0) != (other.x1 - other.x0)
-                || (self.rect.y1 - self.rect.y0) != (other.y1 - other.y0)
+            // Not the rect: what `apply_flow_size` would emit. A `Grow`/`Pct`
+            // box's CSS is the same whatever this frame's solve made of it,
+            // and a box that swapped one for the other needs rewriting even
+            // at an identical size.
+            self.flow_size != Some(size)
         }
     }
 
@@ -593,6 +603,57 @@ struct FlowLayout {
     clip: bool,
 }
 
+/// How one axis of a normal-flow box is written to CSS.
+///
+/// Rust solves the whole layout either way — every rect a hit test, a
+/// scrollbar or an anchored popover reads still comes from that solve. What
+/// this decides is only what the *element* is told, and the difference shows
+/// up whenever the browser reflows without asking Rust first: an on-screen
+/// keyboard, a rotation, a window resize, a font finishing loading. A box
+/// pinned to solved pixels keeps last frame's size until mae wakes up,
+/// re-solves and rewrites it; one that declared `Fill` or a percentage is
+/// re-laid-out by the browser on the spot, for nothing.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum CssLen {
+    /// Rust's solved pixels — for `UISize::Pixels`, and for `ChildrenSum`
+    /// (whose children may themselves be text).
+    Px(f32),
+    /// `UISize::TextContent`: hug the text. Carries mae's own measurement,
+    /// which is what a plain `<div>` gets and what a hosted field falls back
+    /// to — but a hosted field prefers `field-sizing: content` where the
+    /// browser has it (see the `.mae-fit` rule), because mae shapes text with
+    /// harfrust and the browser with its own engine, and the two do not agree
+    /// to the pixel. They disagree by a lot on a touch device, where the
+    /// field is rendered at the 16px floor that stops iOS zooming the page
+    /// while mae measured the size the app asked for.
+    FitText(f32),
+    /// `UISize::ParentPct` — CSS resolves a percentage against the parent's
+    /// content box, which is what mae's `apply_downward_size` does too.
+    Pct(f32),
+    /// `UISize::Fill` along the parent's *main* axis: an equal share of what
+    /// is left after the fixed children and the gaps, which is exactly
+    /// `flex: 1 1 0` (and exactly what `distribute_fill_children` computes).
+    Grow,
+    /// `UISize::Fill` across it, where mae treats Fill as the parent's whole
+    /// content box — `align-self: stretch`, overriding whatever
+    /// `align-items` the parent set.
+    Stretch,
+}
+
+/// Both axes of a normal-flow box, in CSS terms.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct FlowSize {
+    width: CssLen,
+    height: CssLen,
+    /// mae's `min_size`, which `enforce_constraints` applies after the solve.
+    /// Always written out — a flex item's CSS default is `min-width: auto`,
+    /// which refuses to shrink below its own content, and mae has no such
+    /// rule: a box with no minimum of its own gets an explicit zero so a long
+    /// word in a `Fill` box makes it scroll or clip, as it does on native,
+    /// instead of pushing its siblings off the edge.
+    min: (f32, f32),
+}
+
 /// Identity used for DOM-node reconciliation — deliberately *not* `UiKey`.
 /// `UiKey` is zero for every anonymous box (`label()`, unnamed `row`/`column`
 /// — see `alloc_box` in `widgets.rs`: it's only derived from an explicit
@@ -729,6 +790,19 @@ pub struct DomReconciler {
     // always false), so nothing ever corrected the caret the browser
     // itself defaults a removed-node's selection to after a rebuild.
     pending_focus: Rc<RefCell<HashMap<UiKey, bool>>>,
+    /// Where the browser has scrolled each native scroller since mae last
+    /// looked, keyed by the box's own `UiKey` — which is always a real one:
+    /// only a box with an explicit `##id` survives from frame to frame
+    /// (`alloc_box`), so an anonymous box could never have kept a scroll
+    /// offset in the first place.
+    ///
+    /// The browser owns scrolling on this backend; this is the one wire back,
+    /// so mae's `scroll`/`scroll_target` keep describing where the content
+    /// actually is (`IMUI::adopt_dom_scrolls`, run before the build so the
+    /// frame lays out against it).
+    pending_scrolls: Rc<RefCell<HashMap<UiKey, (f32, f32)>>>,
+    /// Which scrollers already have their `scroll` listener attached.
+    scroll_listeners: HashMap<DomKey, Closure<dyn FnMut(web_sys::Event)>>,
     // The `UiKey` whose hosted element this reconciler last pushed the
     // browser's own focus onto — see `sync_hosted_focus`. Only an element
     // *this* drove focus into is ever blurred by it, so a focus the browser
@@ -762,6 +836,25 @@ impl DomReconciler {
         // sets `--mae-hover-bg`/`--mae-active-bg` per box and adds this class. That's
         // what lets `run_dom`'s tick (lifecycle.rs) skip rebuilding on plain mouse
         // movement: the visual feedback no longer depends on a Rust rebuild at all.
+        //
+        // The first two rules extend that from hover to *every* eased visual
+        // change. `animate_visual_state`/`animate_scroll_offsets` (paint.rs,
+        // scroll.rs) interpolate a box's colours, focus ring, appearance and
+        // scroll offset a step per frame, and ask for another frame for as
+        // long as anything is still moving — so on this backend a popover
+        // fading in or a scroll settling used to rebuild and re-diff the whole
+        // app at 60fps for its whole duration. They now write the *target*
+        // straight out (`IMUI::css_drives_animation`) and these two rules do
+        // the easing instead: a transition for colour changes, and a one-shot
+        // keyframe for a floating pane appearing (`paint_div` adds
+        // `.mae-appear` when it creates one — deliberately opacity-only, the
+        // same thing native's `appear_t` does, since a `transform` here would
+        // become the containing block for the pane's own positioned children
+        // mid-animation). Both run off the main thread, and the loop can go
+        // idle the frame after the state changed. Opacity is left out of the
+        // transition on purpose: an app driving its own fade (enkr's view
+        // transition) writes a new value every frame, and easing an already
+        // eased value just adds lag.
         //
         // The `[contenteditable="true"] *` rule re-enables hit-testing and
         // text selection inside a `RICH_TEXT_HOST`. `paint_div` sets
@@ -797,11 +890,26 @@ impl DomReconciler {
         // wanted). Fields carry their requested size as `--mae-font-size`,
         // so this only ever raises a size below the threshold and leaves a
         // larger one alone; on a mouse-driven page it does not apply at all.
+        //
+        // Which is exactly why the rule after it exists. A field that asked
+        // to hug its text (`UISize::TextContent` — the note title) is sized
+        // from mae's own measurement of that text, and mae measured it at the
+        // size the app asked for, not the floored one: on a phone the box
+        // came out ~12px too narrow for the text actually drawn in it, and
+        // the end of the title was clipped. `field-sizing: content` hands
+        // that measurement to the browser, which is the only party that knows
+        // what it will really draw. Behind `@supports` because the fallback —
+        // `width: auto` on an `<input>` — is a default ~20-character box,
+        // much worse than mae's estimate; without support the inline pixels
+        // `apply_flow_size` writes stand, as they did before.
         let style_el = document
             .create_element("style")
             .expect("create style element");
+        let _ = container.class_list().add_1("mae-scope");
         style_el.set_text_content(Some(
-            ".mae-hot { transition: background-color 120ms ease, border-color 120ms ease; }\
+            ".mae-scope * { transition: background-color 120ms ease, border-color 120ms ease; }\
+             @keyframes mae-appear { from { opacity: 0; } }\
+             .mae-appear { animation: mae-appear 120ms ease-out; }\
              .mae-hot:hover { background: var(--mae-hover-bg) !important; }\
              .mae-hot:active { background: var(--mae-active-bg) !important; }\
              button.mae-btn { appearance: none; -webkit-appearance: none; margin: 0; \
@@ -812,7 +920,10 @@ impl DomReconciler {
              input, textarea, [contenteditable=\"true\"] { touch-action: auto; \
              overscroll-behavior: contain; }\
              @media (pointer: coarse) { input, textarea, [contenteditable=\"true\"] { \
-             font-size: max(16px, var(--mae-font-size, 16px)) !important; } }",
+             font-size: max(16px, var(--mae-font-size, 16px)) !important; } }\
+             @supports (field-sizing: content) { .mae-scope input.mae-fit, \
+             .mae-scope textarea.mae-fit { field-sizing: content; width: auto !important; \
+             min-width: 2ch; } }",
         ));
         let _ = container.append_child(&style_el);
         DomReconciler {
@@ -834,6 +945,8 @@ impl DomReconciler {
             pending_selection: Rc::new(RefCell::new(HashMap::new())),
             richtext_selection_listeners: HashMap::new(),
             pending_focus: Rc::new(RefCell::new(HashMap::new())),
+            pending_scrolls: Rc::new(RefCell::new(HashMap::new())),
+            scroll_listeners: HashMap::new(),
             driven_focus: None,
             synced_input_caret: HashMap::new(),
             caret_signatures: HashMap::new(),
@@ -1003,6 +1116,7 @@ impl DomReconciler {
             entry.node.as_html_element().remove();
         }
         self.dom_listeners.remove(&key);
+        self.scroll_listeners.remove(&key);
         self.caret_signatures.remove(&key);
         // Pointer state has to go with the node. `pointerleave` never fires for
         // an element removed from under the cursor, so a stale `dom_hover`
@@ -1104,18 +1218,50 @@ impl DomReconciler {
     }
 
     /// Normal-flow *size*: CSS flexbox decides position (see
-    /// `apply_flex_container`); Rust still sets the explicit size from its
-    /// own layout solve, with `flex: 0 0 auto` so CSS never grows/shrinks it
-    /// against that — this is what keeps the existing hit-test/hover/
-    /// scrollbar math (all keyed off `self.boxes[idx].rect`) accurate
-    /// without any changes, while still getting rid of `position: absolute`
-    /// for the normal case.
-    fn apply_flow_size(el: &HtmlElement, rect: &RectCoords) {
+    /// `apply_flex_container`), and this decides what the element is told
+    /// about its own size — a declared `Fill`/percentage where the box has
+    /// one, Rust's solved pixels otherwise. See [`CssLen`] for why the
+    /// distinction matters, and `flow_size_for` for which boxes get which.
+    ///
+    /// Rust's solve stays authoritative for every rect anything *reads*
+    /// (hit tests, scrollbar math, anchored popovers): the two agree in the
+    /// steady state, because CSS is being handed the same declarations mae
+    /// resolved. They diverge only while the browser has reflowed and mae
+    /// has not caught up yet — and there the browser is the one that is
+    /// right, which is the entire point.
+    fn apply_flow_size(el: &HtmlElement, size: FlowSize) {
         let style = el.style();
         let _ = style.set_property("position", "static");
-        let _ = style.set_property("flex", "0 0 auto");
-        let _ = style.set_property("width", &format!("{}px", (rect.x1 - rect.x0).max(0.0)));
-        let _ = style.set_property("height", &format!("{}px", (rect.y1 - rect.y0).max(0.0)));
+        // `flex` is the main axis only, so a box that grows along it is
+        // still free to be a percentage or a fixed size across it.
+        let grows = size.width == CssLen::Grow || size.height == CssLen::Grow;
+        let _ = style.set_property("flex", if grows { "1 1 0" } else { "0 0 auto" });
+        if size.width == CssLen::Stretch || size.height == CssLen::Stretch {
+            let _ = style.set_property("align-self", "stretch");
+        } else {
+            let _ = style.remove_property("align-self");
+        }
+        let _ = style.set_property("min-width", &format!("{}px", size.min.0));
+        let _ = style.set_property("min-height", &format!("{}px", size.min.1));
+        for (property, len) in [("width", size.width), ("height", size.height)] {
+            match len {
+                // `FitText` writes the measurement too: it is what a plain
+                // element gets, and the fallback for a hosted field in a
+                // browser without `field-sizing`.
+                CssLen::Px(px) | CssLen::FitText(px) => {
+                    let _ = style.set_property(property, &format!("{px}px"));
+                }
+                CssLen::Pct(pct) => {
+                    let _ = style.set_property(property, &format!("{pct}%"));
+                }
+                // Both are the absence of a size: `flex-basis: 0` owns the
+                // main axis, `align-self: stretch` the cross one, and either
+                // would be overridden by an explicit length here.
+                CssLen::Grow | CssLen::Stretch => {
+                    let _ = style.set_property(property, "auto");
+                }
+            }
+        }
     }
 
     /// Makes `el` a flex container for its children, matching mae's own
@@ -1146,15 +1292,32 @@ impl DomReconciler {
     /// expressed as one CSS transform instead of per-child math, since real
     /// DOM nesting means CSS flow now computes each child's position itself.
     /// Returns the wrapper's `DomKey` for children to mount under.
+    #[allow(clippy::too_many_arguments)]
     fn ensure_scroll_wrapper(
         &mut self,
         box_key: DomKey,
         box_el: &HtmlElement,
+        ui_key: UiKey,
         flow: FlowLayout,
         scroll: Point,
         scrolls_x: bool,
         scrolls_y: bool,
     ) -> DomKey {
+        // The outer box is the scroller (see `paint_div`), so that is what
+        // reports where the browser put it.
+        self.attach_scroll_listener(box_key, ui_key, box_el);
+        // `scroll` here is mae's *target* (see `walk_dom`). Writing it only
+        // when the element is not already there is what keeps this from
+        // fighting the user: a scroll they performed arrives through the
+        // listener as both `scroll` and `scroll_target`, leaving nothing to
+        // push, while a programmatic jump (`scroll_to_y`) is a target the
+        // element has never been at.
+        if scrolls_x && (box_el.scroll_left() as f32 - scroll.x()).abs() >= 1.0 {
+            box_el.set_scroll_left(scroll.x() as i32);
+        }
+        if scrolls_y && (box_el.scroll_top() as f32 - scroll.y()).abs() >= 1.0 {
+            box_el.set_scroll_top(scroll.y() as i32);
+        }
         let wrapper_key = box_key.wrapping_add(0xFFFF_FFFF_FFFF_FFF3);
         if !matches!(self.nodes.get(&wrapper_key), Some(e) if matches!(e.node, DomNode::Div(_))) {
             self.remove(wrapper_key);
@@ -1216,13 +1379,12 @@ impl DomReconciler {
                 let _ = style.remove_property("height");
             }
         }
-        // Scroll changes only ever arrive alongside a real rebuild (wheel/drag
-        // events are never coalesced away — see `run_dom`'s mousemove-only
-        // skip), so this is already infrequent; not worth a separate diff.
-        let _ = el.style().set_property(
-            "transform",
-            &format!("translate({}px, {}px)", -scroll.x(), -scroll.y()),
-        );
+        // No transform: the outer box is a real scroller now (`paint_div`),
+        // so the offset lives in its `scrollLeft`/`scrollTop` and the browser
+        // is what moves the content. This wrapper is left purely as the
+        // shrink-wrapping flex container that gives the scroller something
+        // taller (or wider) than itself to scroll.
+        let _ = el.style().remove_property("transform");
         entry.snapshot = PaintSnapshot {
             flow: Some(flow),
             ..PaintSnapshot::blank()
@@ -1320,6 +1482,7 @@ impl DomReconciler {
         mount_point: Option<DomKey>,
         ui_key: UiKey,
         rect: RectCoords,
+        flow_size: FlowSize,
         bg: Option<Color>,
         border: Option<(Color, f32)>,
         corner_radius: f32,
@@ -1350,6 +1513,13 @@ impl DomReconciler {
                 let _ = el.set_attribute("type", "button");
                 let _ = el.class_list().add_1("mae-btn");
                 self.attach_interactive_listeners(key, ui_key, &el);
+            }
+            // A pane that has just come into existence fades in, the way
+            // native's `appear_t` does — a one-shot CSS animation, so it costs
+            // no frames at all. Only on creation: a *reused* node (a menu that
+            // was already on screen last frame) must not re-run it.
+            if floating {
+                let _ = el.class_list().add_1("mae-appear");
             }
             self.nodes.insert(
                 key,
@@ -1383,11 +1553,11 @@ impl DomReconciler {
         let own_flow = scroll.is_none().then_some(flow);
 
         let entry = self.nodes.get(&key).expect("just inserted");
-        if entry.snapshot.geometry_differs(&rect, floating) {
+        if entry.snapshot.geometry_differs(&rect, floating, flow_size) {
             if floating {
                 Self::position(&el, &rect);
             } else {
-                Self::apply_flow_size(&el, &rect);
+                Self::apply_flow_size(&el, flow_size);
                 // `apply_flow_size` always sets `position: static`; a
                 // scroll-delegate box needs `relative` instead (see the
                 // style block below) so its scrollbar-thumb sibling can
@@ -1423,14 +1593,21 @@ impl DomReconciler {
             match own_flow {
                 Some(f) => Self::apply_flex_container(&el, f),
                 None => {
-                    // Delegating to a scroll wrapper: this element only sizes
-                    // + clips its (single, wrapper) child. `position: relative`
-                    // makes it the containing block for its scrollbar-thumb
-                    // sibling (see `walk_dom`), which positions itself
-                    // relative to this box's own top-left rather than
-                    // `#mae-root`'s.
+                    // Delegating to a scroll wrapper: this element sizes its
+                    // (single, wrapper) child and is the *scroller* itself.
+                    // The browser owns the whole gesture from here — wheel,
+                    // trackpad, one-finger pan, momentum, overscroll, the
+                    // scrollbar and its drag, keyboard paging — and mae only
+                    // mirrors the offset it lands on (see the `scroll`
+                    // listener in `attach_scroll_listener`). `touch-action`
+                    // has to be restated because the container hands mae
+                    // every one-finger gesture (`os/wasm.rs` sets
+                    // `pinch-zoom`), which would leave this unpannable.
                     let _ = s.set_property("display", "block");
-                    let _ = s.set_property("overflow", "hidden");
+                    let _ = s.set_property("overflow-x", if scrolls_x { "auto" } else { "hidden" });
+                    let _ = s.set_property("overflow-y", if scrolls_y { "auto" } else { "hidden" });
+                    let _ = s.set_property("touch-action", "pan-x pan-y pinch-zoom");
+                    let _ = s.set_property("overscroll-behavior", "contain");
                     let _ = s.set_property("position", "relative");
                 }
             }
@@ -1446,9 +1623,15 @@ impl DomReconciler {
                     // `clickable_column`) still need `pointer-events: auto`
                     // or the browser's hit-test — now the source of truth
                     // for hover/click, see `attach_interactive_listeners` —
-                    // would skip them entirely.
+                    // would skip them entirely. So does a scroller, for the
+                    // same reason and a newer one: a wheel or a finger is
+                    // routed to whatever the hit test lands on, so a
+                    // `pointer-events: none` scroller is one the browser
+                    // will not scroll — the input goes straight through it
+                    // to whatever is behind.
+                    let interactive = clickable || scroll.is_some();
                     let _ =
-                        s.set_property("pointer-events", if clickable { "auto" } else { "none" });
+                        s.set_property("pointer-events", if interactive { "auto" } else { "none" });
                     let _ = el.class_list().remove_1("mae-hot");
                 }
             }
@@ -1465,7 +1648,7 @@ impl DomReconciler {
 
         let children_mount = match scroll {
             Some(offset) => {
-                self.ensure_scroll_wrapper(key, &el, flow, offset, scrolls_x, scrolls_y)
+                self.ensure_scroll_wrapper(key, &el, ui_key, flow, offset, scrolls_x, scrolls_y)
             }
             None => key,
         };
@@ -1481,6 +1664,7 @@ impl DomReconciler {
             key_id: key_id.map(str::to_string),
             opacity,
             rect,
+            flow_size: Some(flow_size),
             bg,
             border,
             corner_radius,
@@ -1505,6 +1689,7 @@ impl DomReconciler {
         mount_point: Option<DomKey>,
         ui_key: UiKey,
         rect: RectCoords,
+        flow_size: FlowSize,
         bg: Option<Color>,
         border: Option<(Color, f32)>,
         corner_radius: f32,
@@ -1565,12 +1750,23 @@ impl DomReconciler {
         let el = entry.node.as_html_element().clone();
         Self::reappend_if_needed(&mut self.last_appended_in_frame, mount_point, &parent, &el);
 
-        if entry.snapshot.geometry_differs(&rect, floating) {
+        if entry.snapshot.geometry_differs(&rect, floating, flow_size) {
             if floating {
                 Self::position(&el, &rect);
             } else {
-                Self::apply_flow_size(&el, &rect);
+                Self::apply_flow_size(&el, flow_size);
             }
+            // Only the browser knows how wide the text it is about to draw
+            // will be — see the `.mae-fit` rule and `CssLen::FitText`. The
+            // pixels `apply_flow_size` just wrote stay as the fallback for a
+            // browser without `field-sizing`.
+            let fits_text = matches!(flow_size.width, CssLen::FitText(_));
+            let classes = el.class_list();
+            let _ = if fits_text {
+                classes.add_1("mae-fit")
+            } else {
+                classes.remove_1("mae-fit")
+            };
         }
         let opacity = style.opacity.clamp(0.0, 1.0);
         if entry.snapshot.style_differs(
@@ -1620,6 +1816,7 @@ impl DomReconciler {
             key_id: key_id.map(str::to_string),
             opacity,
             rect,
+            flow_size: Some(flow_size),
             bg,
             border,
             corner_radius,
@@ -1655,6 +1852,7 @@ impl DomReconciler {
         mount_point: Option<DomKey>,
         ui_key: UiKey,
         rect: RectCoords,
+        flow_size: FlowSize,
         bg: Option<Color>,
         border: Option<(Color, f32)>,
         corner_radius: f32,
@@ -1699,11 +1897,11 @@ impl DomReconciler {
         let el = entry.node.as_html_element().clone();
         Self::reappend_if_needed(&mut self.last_appended_in_frame, mount_point, &parent, &el);
 
-        if entry.snapshot.geometry_differs(&rect, floating) {
+        if entry.snapshot.geometry_differs(&rect, floating, flow_size) {
             if floating {
                 Self::position(&el, &rect);
             } else {
-                Self::apply_flow_size(&el, &rect);
+                Self::apply_flow_size(&el, flow_size);
             }
         }
         let opacity = style.opacity.clamp(0.0, 1.0);
@@ -1744,6 +1942,7 @@ impl DomReconciler {
             key_id: key_id.map(str::to_string),
             opacity,
             rect,
+            flow_size: Some(flow_size),
             bg,
             border,
             corner_radius,
@@ -1770,11 +1969,13 @@ impl DomReconciler {
     /// first — the browser never needs to decode our own encoder's output
     /// versus a store's own bytes any differently, this just picks whether
     /// that encode step is needed.
+    #[allow(clippy::too_many_arguments)]
     fn paint_image(
         &mut self,
         key: DomKey,
         mount_point: Option<DomKey>,
         rect: RectCoords,
+        flow_size: FlowSize,
         image_key: &str,
         pixels: Option<(u32, u32, Option<&'static str>, &[u8])>,
         floating: bool,
@@ -1833,12 +2034,12 @@ impl DomReconciler {
             unreachable!()
         };
         Self::reappend_if_needed(&mut self.last_appended_in_frame, mount_point, &parent, el);
-        if entry.snapshot.geometry_differs(&rect, floating) {
+        if entry.snapshot.geometry_differs(&rect, floating, flow_size) {
             let el: &HtmlElement = el.unchecked_ref();
             if floating {
                 Self::position(el, &rect);
             } else {
-                Self::apply_flow_size(el, &rect);
+                Self::apply_flow_size(el, flow_size);
             }
         }
         if entry.snapshot.id_differs(Some(image_key)) {
@@ -1850,70 +2051,10 @@ impl DomReconciler {
         let richtext_span = entry.snapshot.richtext_span;
         entry.snapshot = PaintSnapshot {
             rect,
+            flow_size: Some(flow_size),
             text: Some(image_key.to_string()),
             id: Some(image_key.to_string()),
             richtext_span,
-            ..PaintSnapshot::blank()
-        };
-    }
-
-    /// Paint one axis's scrollbar thumb as a small positioned div. Dragging
-    /// it already works with no DOM-side wiring at all: hit-testing for a
-    /// scrollbar drag (`scroll.rs::apply_scrollbar_events`) is pure Rust-side
-    /// geometry against `self.mouse`, part of the same backend-agnostic pass
-    /// that already runs for hover/click — this method only needs to draw
-    /// the thumb so there's something to see while dragging it.
-    fn paint_scrollbar_thumb(
-        &mut self,
-        key: DomKey,
-        mount_point: DomKey,
-        rect: RectCoords,
-        color: Color,
-    ) {
-        if !matches!(self.nodes.get(&key), Some(e) if matches!(e.node, DomNode::Div(_))) {
-            self.remove(key);
-            let el: HtmlElement = self
-                .document
-                .create_element("div")
-                .expect("create div")
-                .dyn_into()
-                .expect("div is an HtmlElement");
-            let style = el.style();
-            let _ = style.set_property("position", "absolute");
-            let _ = style.set_property("pointer-events", "none");
-            let _ = style.set_property("border-radius", "999px");
-            self.nodes.insert(
-                key,
-                DomEntry {
-                    node: DomNode::Div(el),
-                    snapshot: PaintSnapshot::blank(),
-                    seen_this_frame: false,
-                },
-            );
-        }
-        // See paint_div's comment: re-append every time, not just on
-        // creation, so a reused node's DOM order stays correct.
-        let parent = self.mount_element(Some(mount_point));
-        let entry = self.nodes.get_mut(&key).expect("just inserted");
-        entry.seen_this_frame = true;
-        let DomNode::Div(el) = &entry.node else {
-            unreachable!()
-        };
-        Self::reappend_if_needed(
-            &mut self.last_appended_in_frame,
-            Some(mount_point),
-            &parent,
-            el,
-        );
-        if entry.snapshot.geometry_differs(&rect, true) {
-            Self::position(el, &rect);
-        }
-        if !opt_color_eq(&entry.snapshot.bg, &Some(color)) {
-            let _ = el.style().set_property("background", &css_color(color));
-        }
-        entry.snapshot = PaintSnapshot {
-            rect,
-            bg: Some(color),
             ..PaintSnapshot::blank()
         };
     }
@@ -3069,6 +3210,38 @@ impl DomReconciler {
     /// hover-movement optimization — hover's *visual* feedback is already
     /// CSS-driven); `pointerdown`/`pointerup`/`click`/`contextmenu` do, same
     /// as `attach_input_listeners`'s `on_input`.
+    /// Mirror a native scroller's offset back to mae, once per element.
+    ///
+    /// The browser is what scrolls now, so `scrollLeft`/`scrollTop` are the
+    /// truth and mae's `scroll` is a copy of them — kept up to date because
+    /// its own layout still positions children against it, and because a
+    /// later `scroll_to_y` has to know where it is starting from. `wake`
+    /// rather than `schedule_tick`: a scroll changes what is on screen (a
+    /// list can lazily show different rows), so the next tick must rebuild.
+    fn attach_scroll_listener(&mut self, key: DomKey, ui_key: UiKey, el: &HtmlElement) {
+        if self.scroll_listeners.contains_key(&key) || ui_key.is_zero() {
+            return;
+        }
+        let pending = self.pending_scrolls.clone();
+        let waker = self.waker.clone();
+        let closure = Closure::<dyn FnMut(web_sys::Event)>::new(move |e: web_sys::Event| {
+            let Some(el) = e.target().and_then(|t| t.dyn_into::<Element>().ok()) else {
+                return;
+            };
+            pending
+                .borrow_mut()
+                .insert(ui_key, (el.scroll_left() as f32, el.scroll_top() as f32));
+            waker.wake();
+        });
+        let _ = el.add_event_listener_with_callback("scroll", closure.as_ref().unchecked_ref());
+        self.scroll_listeners.insert(key, closure);
+    }
+
+    /// Everything the browser has scrolled since this was last called.
+    pub(super) fn take_pending_scrolls(&self) -> HashMap<UiKey, (f32, f32)> {
+        std::mem::take(&mut *self.pending_scrolls.borrow_mut())
+    }
+
     fn attach_interactive_listeners(&mut self, key: DomKey, ui_key: UiKey, el: &HtmlElement) {
         let mut closures: Vec<Closure<dyn FnMut(web_sys::Event)>> = Vec::new();
 
@@ -3319,6 +3492,76 @@ impl IMUI {
     /// entirely) whatever didn't overlap — redundant with CSS at best, and
     /// at worst a second, independently-computed source of truth that could
     /// disagree with it, silently dropping content that should exist.
+    /// What `apply_flow_size` should tell the element about box `idx`.
+    ///
+    /// Per axis: the box's *declared* `UISize` where CSS can express it and
+    /// resolve it the same way mae's solve did, and Rust's solved pixels
+    /// everywhere else. The exclusions are what makes this safe rather than
+    /// a second, disagreeing layout engine:
+    ///
+    /// - `TextContent`/`ChildrenSum` always stay pixels — mae measures text
+    ///   with harfrust, the browser with its own shaper, and a box sized to
+    ///   its text is the one place the two genuinely disagree.
+    /// - So does *any* axis whose parent scrolls along it. A scrolled axis's
+    ///   flex container is the scroll wrapper, which shrink-wraps its content
+    ///   (`ensure_scroll_wrapper`) — an indefinite main size, against which
+    ///   `flex: 1 1 0` has no free space to claim and a percentage has
+    ///   nothing to resolve against, so either would collapse the child to
+    ///   nothing. mae resolves Fill against the *viewport* size there, and
+    ///   pixels are how that is expressed to CSS.
+    ///
+    /// Everything else has a definite parent by construction — every box
+    /// that is not `Fill`/`ParentPct` is emitted as pixels, and the root is
+    /// the container itself — so a percentage always has something to
+    /// resolve against.
+    fn flow_size_for(&self, idx: usize, rect: &RectCoords) -> FlowSize {
+        let Some(parent) = self.boxes[idx].parent else {
+            // The root box *is* the window in mae's model, and in the DOM it
+            // is a child of the container the host page sized. Filling that
+            // rather than restating the pixels mae measured out of it is what
+            // makes every percentage below it resolve against the real
+            // window: with the root pinned, a browser-side resize left the
+            // whole tree laying itself out against the old width, and the
+            // content simply overflowed the smaller container.
+            return FlowSize {
+                width: CssLen::Pct(100.0),
+                height: CssLen::Pct(100.0),
+                min: (0.0, 0.0),
+            };
+        };
+        let main_axis = self.boxes[parent].child_layout_axis;
+        let parent_flags = self.boxes[parent].flags;
+        let axis_len = |axis: Axis| {
+            let solved = CssLen::Px(match axis {
+                Axis::X => (rect.x1 - rect.x0).max(0.0),
+                Axis::Y => (rect.y1 - rect.y0).max(0.0),
+            });
+            let parent_scrolls = match axis {
+                Axis::X => parent_flags.scrolls_x(),
+                Axis::Y => parent_flags.scrolls_y(),
+            };
+            if parent_scrolls {
+                return solved;
+            }
+            match self.boxes[idx].pref_size[axis_idx(axis)] {
+                UISize::ParentPct(pct) => CssLen::Pct(pct * 100.0),
+                UISize::Fill if axis == main_axis => CssLen::Grow,
+                UISize::Fill => CssLen::Stretch,
+                UISize::TextContent(_) => match solved {
+                    CssLen::Px(px) => CssLen::FitText(px),
+                    other => other,
+                },
+                UISize::Pixels(_) | UISize::ChildrenSum => solved,
+            }
+        };
+        let min = self.boxes[idx].min_size;
+        FlowSize {
+            width: axis_len(Axis::X),
+            height: axis_len(Axis::Y),
+            min: (min.width.max(0.0), min.height.max(0.0)),
+        }
+    }
+
     fn walk_dom(
         &mut self,
         dom: &mut DomReconciler,
@@ -3334,6 +3577,7 @@ impl IMUI {
             return;
         }
         let rect = self.boxes[idx].rect;
+        let flow_size = self.flow_size_for(idx, &rect);
 
         let flags = self.boxes[idx].flags;
         let style = self.boxes[idx].style;
@@ -3380,7 +3624,14 @@ impl IMUI {
             gap: self.boxes[idx].child_gap,
             clip: flags.contains(UIBoxFlags::CLIP),
         };
-        let scroll = (flags.scrolls_x() || flags.scrolls_y()).then_some(self.boxes[idx].scroll);
+        // `scroll_target`, not `scroll`: the browser owns the offset, so
+        // `scroll` is only mae's *mirror* of where it already is
+        // (`adopt_dom_scrolls`) and pushing that back would say nothing. The
+        // gap between the two is exactly a programmatic move — `scroll_to_y`
+        // keeping a keyboard-selected row in view — which is what
+        // `ensure_scroll_wrapper` has to hand to the element.
+        let scroll =
+            (flags.scrolls_x() || flags.scrolls_y()).then_some(self.boxes[idx].scroll_target);
 
         // A reused positional path (see `DomKey`'s doc comment: identity is
         // purely structural, so it's shared across e.g. different tabs' boxes
@@ -3426,7 +3677,15 @@ impl IMUI {
                 self.request_image(&image_key);
             }
             let pixels = self.image_dom_bytes(&image_key);
-            dom.paint_image(dom_key, mount_point, rect, &image_key, pixels, floating);
+            dom.paint_image(
+                dom_key,
+                mount_point,
+                rect,
+                flow_size,
+                &image_key,
+                pixels,
+                floating,
+            );
             dom_key
         } else if is_rich_text_host {
             // A `RICH_TEXT_HOST` MULTILINE box's full raw text (see the
@@ -3440,6 +3699,7 @@ impl IMUI {
                 mount_point,
                 ui_key,
                 rect,
+                flow_size,
                 hosted_bg,
                 hosted_border,
                 style.corner_radius,
@@ -3477,6 +3737,7 @@ impl IMUI {
                 mount_point,
                 ui_key,
                 rect,
+                flow_size,
                 hosted_bg,
                 hosted_border,
                 style.corner_radius,
@@ -3539,6 +3800,7 @@ impl IMUI {
                 mount_point,
                 ui_key,
                 rect,
+                flow_size,
                 bg,
                 border,
                 style.corner_radius,
@@ -3596,44 +3858,15 @@ impl IMUI {
             }
         }
 
-        // Text inputs (LINE_EDIT/MULTILINE) get the browser's own native
-        // scrollbar for free on the hosted <input>/<textarea> — only draw a
-        // custom thumb for generic scrollable containers (SCROLL_X/SCROLL_Y
-        // on a plain box, e.g. the demo's vertical list / horizontal strip).
-        // The thumb mounts as a child of *this* box (a sibling of its scroll
-        // wrapper — see `paint_div`'s `position: relative` for scroll-delegate
-        // boxes) positioned relative to its own top-left, not `#mae-root`'s:
-        // `scrollbar_thumb_rect` returns Rust's absolute layout-space rect,
-        // which real CSS flow (flexbox, gaps, ancestor padding) no longer
-        // guarantees matches this box's actual on-screen position pixel for
-        // pixel now that boxes nest for real instead of every node being a
-        // flat `position: absolute` child of the same containing block.
-        if !is_text_input {
-            let scrollbar_color = self.theme.scrollbar;
-            for axis in [Axis::X, Axis::Y] {
-                if !self.scrollbar_available(idx, axis) {
-                    continue;
-                }
-                let thickness = self.scrollbar_thickness(idx, axis);
-                let Some(thumb_rect) = self.scrollbar_thumb_rect(idx, axis, thickness) else {
-                    continue;
-                };
-                let relative_rect = thumb_rect.x(-rect.x0).y(-rect.y0);
-                // Offsets far outside any realistic child-index range, so a
-                // thumb's DomKey can never collide with an actual child's
-                // (see `child_path` below).
-                let marker = match axis {
-                    Axis::X => 0xFFFF_FFFF_FFFF_FFF1,
-                    Axis::Y => 0xFFFF_FFFF_FFFF_FFF2,
-                };
-                dom.paint_scrollbar_thumb(
-                    path.wrapping_add(marker),
-                    dom_key,
-                    relative_rect,
-                    scrollbar_color,
-                );
-            }
-        }
+        // No scrollbar is painted here at all any more. A scrollable box is
+        // a real scroller on this backend (`paint_div` gives it
+        // `overflow: auto`), so the browser draws its scrollbar, in the
+        // platform's own style, and drags it — the same way it always did for
+        // a hosted `<input>`/`<textarea>`. Rust's `scrollbar_thumb_rect` was
+        // also becoming a poor description of where a thumb belonged: it
+        // returns an absolute layout-space rect, which real CSS flow
+        // (flexbox, gaps, ancestor padding) no longer guarantees matches the
+        // box's actual on-screen position pixel for pixel.
 
         if is_text_input && !is_rich_text_host {
             // A LINE_EDIT/MULTILINE box's children are per-visual-line boxes

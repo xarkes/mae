@@ -936,16 +936,25 @@ impl UiDriver for CdpDriver {
         let (x, y) = self
             .center_of(id)
             .unwrap_or_else(|| panic!("no element with data-mae-id={id:?}"));
-        // `Input.dispatchMouseEvent`'s own "mouseWheel" type does not
-        // reliably produce a real `wheel` DOM event in this headless setup
-        // (verified in `www/test_dom_e2e.py`) — a JS-dispatched `WheelEvent`
-        // does, and fires real listeners the same as a trusted one for
-        // everything except CSS `:hover` matching, which scrolling doesn't
-        // depend on.
-        self.conn.eval(&format!(
-            "document.getElementById('mae-root').dispatchEvent(new WheelEvent('wheel', \
-             {{bubbles: true, clientX: {x}, clientY: {y}, deltaY: {delta}}}))"
-        ));
+        // A *trusted* wheel, through the input pipeline — not a
+        // JS-dispatched `WheelEvent`, which is what this used to send. The
+        // synthetic one was enough while mae did the scrolling itself in
+        // response to a `wheel` listener, but an untrusted event does not
+        // move a scroller: the browser scrolls for real input only, and on
+        // this backend the browser is what scrolls (`paint_dom.rs` makes a
+        // scrollable box `overflow: auto`).
+        //
+        // `delta` is in mae's own scroll units, positive scrolling *up*
+        // (see `os/linux.rs`); CDP wants CSS pixels, positive scrolling
+        // down.
+        let delta_y = f64::from(-delta) * 16.0;
+        self.conn.send(
+            "Input.dispatchMouseEvent",
+            json!({
+                "type": "mouseWheel", "x": x, "y": y,
+                "deltaX": 0, "deltaY": delta_y, "pointerType": "mouse"
+            }),
+        );
         self.settle();
     }
 
@@ -1054,6 +1063,18 @@ impl UiDriver for CdpDriver {
              }})()"
         ));
         value.as_str().map(str::to_string)
+    }
+
+    fn scroll_offset(&mut self, id: &str) -> f32 {
+        let id_lit = serde_json::to_string(id).expect("id is representable as a JSON string");
+        let value = self.conn.eval(&format!(
+            "(() => {{ \
+               const el = document.querySelector('[data-mae-id=\"' + CSS.escape({id_lit}) + '\"], \
+                 [data-mae-key=\"' + CSS.escape({id_lit}) + '\"]'); \
+               return el ? el.scrollTop : -1; \
+             }})()"
+        ));
+        value.as_f64().unwrap_or(-1.0) as f32
     }
 
     fn settle(&mut self) {

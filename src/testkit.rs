@@ -293,6 +293,16 @@ pub trait UiDriver {
     /// to actually *moving the browser's focus* when the app focuses a
     /// field, rather than only drawing a focus ring around it.
     fn focused_id(&mut self) -> Option<String>;
+    /// How far `id` is scrolled down, in pixels.
+    ///
+    /// Answered from genuinely different places on the two backends — mae's
+    /// own `scroll` offset natively, the element's `scrollTop` in a browser,
+    /// where the box is a real `overflow: auto` scroller the browser drives
+    /// and mae only mirrors (`paint_dom.rs`'s `attach_scroll_listener`).
+    /// That difference is the point: a scenario asserting on it holds the
+    /// DOM backend to actually scrolling, not to mae having moved something
+    /// of its own that happens to look the same.
+    fn scroll_offset(&mut self, id: &str) -> f32;
     /// Whether an element currently matches `id`.
     fn exists(&mut self, id: &str) -> bool {
         self.text_of(id).is_some()
@@ -352,6 +362,10 @@ impl UiDriver for UiHarness {
 
     fn text_of(&mut self, id: &str) -> Option<String> {
         self.last_snapshot.try_node(id).map(node_text)
+    }
+
+    fn scroll_offset(&mut self, id: &str) -> f32 {
+        self.last_snapshot.node(id).scroll.y()
     }
 
     fn settle(&mut self) {
@@ -474,6 +488,10 @@ impl<F: FnMut(&mut IMUI)> UiDriver for NativeDriver<F> {
 
     fn text_of(&mut self, id: &str) -> Option<String> {
         self.harness.snapshot().try_node(id).map(node_text)
+    }
+
+    fn scroll_offset(&mut self, id: &str) -> f32 {
+        self.harness.snapshot().node(id).scroll.y()
     }
 
     fn settle(&mut self) {

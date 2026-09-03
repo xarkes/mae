@@ -184,6 +184,80 @@ fn line_edit_insert_and_delete_scenario<D: UiDriver>(mut new_driver: impl FnMut(
     );
 }
 
+/// A wheel over a scrollable list scrolls it, on both backends.
+///
+/// The DOM half is what this exists for. mae used to scroll by transforming a
+/// wrapper inside a clipped box, driven by `OSEvent::scroll` that
+/// `os/wasm.rs` synthesised from a `preventDefault`ed wheel — a whole
+/// parallel scrolling implementation with no scrollbar the browser drew, no
+/// momentum and no chaining. The box is `overflow: auto` now, so a wheel is
+/// just a wheel and the offset that comes back is the element's own
+/// `scrollTop` (see `UiDriver::scroll_offset`, which reads mae's `scroll` on
+/// native and the browser's on the other side — deliberately different
+/// places, so this cannot pass by mae moving something of its own).
+fn wheel_scrolls_a_list<D: UiDriver>(mut new_driver: impl FnMut() -> D) {
+    let id = "###vertical_scroll_list";
+    // Native eases the offset toward its target over several frames, where
+    // the browser has already applied the whole wheel by the time the event
+    // returns — so settle to whatever each has landed on before reading.
+    fn settled<D: UiDriver>(driver: &mut D, id: &str) -> f32 {
+        let mut last = f32::NAN;
+        for _ in 0..120 {
+            let now = driver.scroll_offset(id);
+            if (now - last).abs() < 0.01 {
+                return now;
+            }
+            last = now;
+            driver.settle();
+        }
+        last
+    }
+
+    let mut driver = new_driver();
+    assert_eq!(settled(&mut driver, id), 0.0, "starts unscrolled");
+
+    // Negative is "content up", the direction a wheel away from you scrolls.
+    driver.scroll(id, -4.0);
+    let scrolled = settled(&mut driver, id);
+    assert!(
+        scrolled > 0.0,
+        "a wheel over the list should scroll it, got {scrolled}"
+    );
+
+    // And back, without overshooting past the top: both backends clamp.
+    driver.scroll(id, 40.0);
+    let back = settled(&mut driver, id);
+    assert!(
+        back.abs() < 1.0,
+        "scrolling back past the top should stop at it, got {back}"
+    );
+}
+
+driver_test!(
+    wheel_scrolls_a_list,
+    native: || {
+        let mut rows = 0usize;
+        NativeDriver::new(300.0, 200.0, move |ui| scroll_list_widget(ui, &mut rows))
+    },
+    // Drives `###vertical_scroll_list` (`src/main.rs`'s `scroll_section`).
+    cdp: launch_demo
+);
+
+/// A stand-in for the demo's own scrolling list, seeded the same way.
+fn scroll_list_widget(ui: &mut IMUI, _rows: &mut usize) {
+    let list = ui.named_column("###vertical_scroll_list", |ui| {
+        for i in 0..40 {
+            ui.label(&format!("Row {i}"))
+                .width(ui, UISize::Pixels(200.0))
+                .height(ui, UISize::Pixels(28.0));
+        }
+    });
+    list.width(ui, UISize::Pixels(220.0))
+        .height(ui, UISize::Pixels(180.0))
+        .scroll_y(ui, true)
+        .clip(ui, true);
+}
+
 fn line_edit_widget(ui: &mut IMUI, buffer: &mut String) {
     ui.line_edit("###line_edit_demo", buffer, false)
         .width(ui, UISize::Pixels(200.0))
