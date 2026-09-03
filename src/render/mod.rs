@@ -249,28 +249,18 @@ pub struct Renderer {
 impl Renderer {
     pub fn new(win: Window) -> Self {
         let backend = Backend::from_env();
-        println!("render new with backend: {:?}", backend);
 
-        let t0 = std::time::Instant::now();
         let ctx: Box<dyn RenderBackend> = Self::create_backend(&win, backend);
-        println!("[profile] create_backend: {:?}", t0.elapsed());
 
-        let t1 = std::time::Instant::now();
         let font_cache = Rc::new(RefCell::new(FontCache::new_with_tag(
             FontTag::Main,
             include_bytes!("../../assets/NotoSans-Regular.ttf"),
         )));
-        println!("[profile] font_cache (NotoSans): {:?}", t1.elapsed());
 
-        let t2 = std::time::Instant::now();
         let icon_font_cache = Rc::new(RefCell::new(FontCache::new_with_tag(
             FontTag::Icon,
             include_bytes!("../../assets/MaterialIcons-Regular.ttf"),
         )));
-        println!(
-            "[profile] icon_font_cache (MaterialIcons): {:?}",
-            t2.elapsed()
-        );
 
         let batches = vec![RenderBatch::new(100)];
         let mut renderer = Renderer {
@@ -282,16 +272,8 @@ impl Renderer {
             #[cfg(feature = "png_capture")]
             pending_capture: None,
         };
-
-        let t3 = std::time::Instant::now();
         renderer.update_font_texture(false);
-        println!("[profile] update_font_texture (text): {:?}", t3.elapsed());
-
-        let t4 = std::time::Instant::now();
         renderer.update_font_texture(true);
-        println!("[profile] update_font_texture (icons): {:?}", t4.elapsed());
-
-        println!("[profile] total init: {:?}", t0.elapsed());
         renderer
     }
 

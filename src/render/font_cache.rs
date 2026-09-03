@@ -548,10 +548,8 @@ impl FontCache {
     }
 
     pub fn new_with_tag(tag: FontTag, font_bytes: &[u8]) -> Self {
-        let t0 = std::time::Instant::now();
         let faces = vec![Face::new(font_bytes)];
         let atlases = vec![Atlas::new()];
-        println!("[profile]   FontCache::new ({:?}): {:?}", tag, t0.elapsed());
         Self {
             tag,
             faces,
