@@ -422,22 +422,17 @@ impl IMUI {
 
         for block_idx in 0..block_count {
             let block = self.editor_layouts[&key].blocks[block_idx];
-            let Some(first) = self.boxes[idx]
-                .children
-                .get(block.first_visual_line)
-                .copied()
-            else {
+            // From the layout, not the rows: a code fence taller than the
+            // viewport has its first and/or last line outside the emitted
+            // window while its background still has to span the whole screen.
+            let (Some(first), Some(last)) = (
+                self.textarea_line_rect(idx, block.first_visual_line),
+                self.textarea_line_rect(idx, block.last_visual_line),
+            ) else {
                 continue;
             };
-            let Some(last) = self.boxes[idx]
-                .children
-                .get(block.last_visual_line)
-                .copied()
-            else {
-                continue;
-            };
-            let y0 = self.boxes[first].rect.y0 - block.padding.top;
-            let y1 = self.boxes[last].rect.y1 + block.padding.bottom;
+            let y0 = first.y0 - block.padding.top;
+            let y1 = last.y1 + block.padding.bottom;
             let block_rect = RectCoords {
                 x0: content_x0,
                 y0,
@@ -637,10 +632,8 @@ impl IMUI {
             if start >= end {
                 continue;
             }
-            let child = self.boxes[idx].children.get(line).copied();
-            let line_padding_left = child
-                .map(|child| self.boxes[child].padding.left)
-                .unwrap_or(0.0);
+            let line_rect = self.textarea_line_rect(idx, line);
+            let line_padding_left = line_rect.map(|line| line.padding.left).unwrap_or(0.0);
             // An image line has zero-width text geometry; highlight its full
             // displayed width so a selection over it is visible.
             let (start_w, selected_w) = match self.layout_line_image_width(key, line) {
@@ -652,11 +645,8 @@ impl IMUI {
             };
             let x = rect.x0 + padding.left + style.margin + line_padding_left + start_w
                 - self.boxes[idx].scroll.x;
-            let (y, h) = child
-                .map(|child| {
-                    let child = &self.boxes[child];
-                    (child.rect.y0 + child.style.margin, child.rect.height())
-                })
+            let (y, h) = line_rect
+                .map(|line| (line.y0, line.y1 - line.y0))
                 .unwrap_or_else(|| {
                     (
                         rect.y0 + padding.top + style.margin + line as f32 * line_h
@@ -767,15 +757,13 @@ impl IMUI {
         let content_x0 = rect.x0 + padding.left + style.margin;
         let line_h = self.theme.size_text + 6.0;
         let content_x1 = rect.x1 - padding.right - style.margin;
-        let (content_y0, content_y1, font_size) = self.boxes[idx]
-            .children
-            .get(visual_line)
-            .map(|child| {
-                let child = &self.boxes[*child];
+        let line_rect = self.textarea_line_rect(idx, visual_line);
+        let (content_y0, content_y1, font_size) = line_rect
+            .map(|line| {
                 (
-                    child.rect.y0 + child.padding.top + child.style.margin,
-                    child.rect.y1 - child.padding.bottom - child.style.margin,
-                    child.style.font_size,
+                    line.y0 + line.padding.top,
+                    line.y1 - line.padding.bottom,
+                    line.font_size,
                 )
             })
             .unwrap_or_else(|| {
@@ -789,11 +777,7 @@ impl IMUI {
             });
 
         let text_width = self.layout_caret_x(key, visual_line.min(ranges.len() - 1), cursor);
-        let line_padding_left = self.boxes[idx]
-            .children
-            .get(visual_line)
-            .map(|child| self.boxes[*child].padding.left)
-            .unwrap_or(0.0);
+        let line_padding_left = line_rect.map(|line| line.padding.left).unwrap_or(0.0);
         let text_height = self
             .drawer
             .as_ref()
@@ -886,15 +870,13 @@ impl IMUI {
             }
             let cursor = caret.cursor.min(text_len);
             let (visual_line, _col) = self.visual_line_col_from_cursor_with_ranges(&ranges, cursor);
-            let (content_y0, content_y1, font_size) = self.boxes[idx]
-                .children
-                .get(visual_line)
-                .map(|child| {
-                    let child = &self.boxes[*child];
+            let line_rect = self.textarea_line_rect(idx, visual_line);
+            let (content_y0, content_y1, font_size) = line_rect
+                .map(|line| {
                     (
-                        child.rect.y0 + child.padding.top + child.style.margin,
-                        child.rect.y1 - child.padding.bottom - child.style.margin,
-                        child.style.font_size,
+                        line.y0 + line.padding.top,
+                        line.y1 - line.padding.bottom,
+                        line.font_size,
                     )
                 })
                 .unwrap_or_else(|| {
@@ -909,11 +891,7 @@ impl IMUI {
                 });
 
             let text_width = self.layout_caret_x(key, visual_line.min(ranges.len() - 1), cursor);
-            let line_padding_left = self.boxes[idx]
-                .children
-                .get(visual_line)
-                .map(|child| self.boxes[*child].padding.left)
-                .unwrap_or(0.0);
+            let line_padding_left = line_rect.map(|line| line.padding.left).unwrap_or(0.0);
             let caret_right = (content_x1 - 1.0).max(content_x0);
             let caret_x = (content_x0 + line_padding_left + text_width - self.boxes[idx].scroll.x)
                 .clamp(content_x0, caret_right);

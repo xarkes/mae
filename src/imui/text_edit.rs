@@ -300,12 +300,15 @@ impl IMUI {
         let key = self.boxes[idx].key;
         let layout = self.editor_layouts.get(&key)?;
         const GRIP: f32 = 22.0;
-        for (line_idx, line) in layout.lines.iter().enumerate() {
-            let Some(image) = &line.image else {
+        // Only the emitted lines can be under the pointer, and only they have
+        // a row box to measure the grip against — `textarea_line_box` skips
+        // the rest.
+        for line_idx in layout.emitted.clone() {
+            let Some(image) = &layout.lines[line_idx].image else {
                 continue;
             };
             // The per-line row box holds the image box as its single child.
-            let Some(row_idx) = self.boxes[idx].children.get(line_idx).copied() else {
+            let Some(row_idx) = self.textarea_line_box(idx, line_idx) else {
                 continue;
             };
             let img_idx = self.boxes[row_idx]
@@ -797,6 +800,31 @@ impl IMUI {
             md_mode,
             reveal_line_start,
         );
+        // Row extents, resolved once per rebuild instead of per frame: the
+        // emit window, every off-screen caret/selection/decoration y, and the
+        // spacer heights are all prefix sums over these.
+        let mut line_tops = Vec::with_capacity(layout.lines.len() + 1);
+        let mut top = 0.0f32;
+        let mut max_line_width = 0.0f32;
+        for line in &layout.lines {
+            line_tops.push(top);
+            top += line.row_height();
+            max_line_width = max_line_width.max(line.row_width());
+        }
+        line_tops.push(top);
+        // `ensure_layout_for_box` can rebuild mid-frame (the paint and input
+        // paths both call it), after the rows for this frame are already out.
+        // Those rows are the previous window's, so carry it over — clamped,
+        // since a rebuild can have produced fewer lines — rather than reset to
+        // empty and leave `textarea_line_box` unable to name any of them.
+        let line_count = layout.lines.len();
+        let emitted = self
+            .editor_layouts
+            .get(&key)
+            .map(|previous| {
+                previous.emitted.start.min(line_count)..previous.emitted.end.min(line_count)
+            })
+            .unwrap_or(0..0);
         self.editor_layouts.insert(
             key,
             EditorLayout {
@@ -810,6 +838,9 @@ impl IMUI {
                 images_rev: self.images_rev,
                 lines: layout.lines,
                 blocks: layout.blocks,
+                line_tops,
+                max_line_width,
+                emitted,
             },
         );
     }
@@ -1019,13 +1050,43 @@ impl IMUI {
         self.parent_stack.push(handle.idx);
         // Take ownership of the cached layout while emitting boxes to avoid cloning the
         // (potentially large) line/span data every frame, then return it to the cache.
-        let layout = self
+        let mut layout = self
             .editor_layouts
             .remove(&key)
             .expect("layout ensured above");
-        for (line_idx, line) in layout.lines.iter().enumerate() {
-            self.emit_layout_line(line, line_idx);
+        // Only the lines near the viewport become boxes; the rest are stood in
+        // for by a spacer of exactly their combined height, so the emitted rows
+        // land on the same y they always did and `total_children_size` — and
+        // with it `scroll_max` and the scrollbar thumb — is unchanged. Without
+        // this a 4k-line note rebuilt ~16k boxes (and ~5 String allocations
+        // each) every frame, which is linear in the *document*, not in what is
+        // actually on screen.
+        let window = self.visible_line_window(handle.idx, &layout);
+        let gap = self.boxes[handle.idx].child_gap;
+        let line_count = layout.lines.len();
+        // Only a horizontally scrolling text area needs the spacers to carry a
+        // width (see `emit_line_spacer`). In wrap mode `SCROLL_X` is off, which
+        // means `reconcile_overflow` is free to shrink children to fit — so a
+        // spacer as wide as the widest line could squeeze the real rows.
+        let spacer_width = if self.boxes[handle.idx].flags.scrolls_x() {
+            layout.max_line_width
+        } else {
+            0.0
+        };
+        if window.start > 0 {
+            // The first emitted row sits one `child_gap` after this spacer, so
+            // the spacer is that much shorter than the skipped lines' extent.
+            let height = layout.line_top(window.start, gap) - gap;
+            self.emit_line_spacer("###textarea_lead_spacer", height, spacer_width);
         }
+        for line_idx in window.clone() {
+            self.emit_layout_line(&layout.lines[line_idx], line_idx);
+        }
+        if window.end < line_count {
+            let height = layout.line_top(line_count, gap) - gap - layout.line_top(window.end, gap);
+            self.emit_line_spacer("###textarea_trail_spacer", height, spacer_width);
+        }
+        layout.emitted = window;
         self.editor_layouts.insert(key, layout);
         self.parent_stack.pop();
         // Click/drag selection is resolved post-layout (apply_textarea_mouse_selections)
@@ -1033,9 +1094,100 @@ impl IMUI {
         handle
     }
 
-    /// Emit one visual line as a horizontal row of pre-styled text segments. The row is
-    /// `children[line_idx]` of the text area, so the existing per-line geometry (y, height)
-    /// keeps working; horizontal caret/selection geometry comes from the cached `cum_x`.
+    /// The visual lines worth turning into boxes this frame: everything on
+    /// screen plus a viewport of overscan either side, unioned over the
+    /// current *and* the target scroll offset so a smooth-scroll glide — or a
+    /// caret-follow jump the previous frame queued onto `scroll_target` — is
+    /// already covered by the time it becomes visible. Both are read after
+    /// `alloc_box` has applied this frame's wheel signal, so a scroll and the
+    /// window that serves it land in the same frame.
+    fn visible_line_window(&self, idx: usize, layout: &EditorLayout) -> Range<usize> {
+        let line_count = layout.lines.len();
+        // The DOM rich-text host mounts these rows as the contenteditable's
+        // own content, so a line that isn't emitted isn't merely unpainted —
+        // it isn't in the document, and a selection (Ctrl+A most obviously)
+        // could not reach past the window. Native first; virtualizing the DOM
+        // backend needs its own selection story.
+        #[cfg(feature = "dom")]
+        if self.dom.is_some() {
+            return 0..line_count;
+        }
+        // Nothing to virtualize against without a viewport to clip to.
+        if !self.boxes[idx].flags.scrolls_y() {
+            return 0..line_count;
+        }
+        let gap = self.boxes[idx].child_gap;
+        // A text area that has never been laid out has a zero rect, and an
+        // empty window would flash the note blank for its first frame. The
+        // window is only ever a lower bound on what to emit, so falling back
+        // to the whole surface just over-emits once.
+        let viewport = {
+            let height = self.boxes[idx].rect.height() - self.boxes[idx].padding.vertical();
+            if height > 1.0 {
+                height
+            } else {
+                self.size.height
+            }
+        };
+        let scroll = self.boxes[idx].scroll.y;
+        let target = self.boxes[idx].scroll_target.y;
+        let first = layout.line_at_offset(scroll.min(target) - viewport, gap);
+        let last = layout.line_at_offset(scroll.max(target) + viewport * 2.0, gap);
+        first..(last + 1).min(line_count)
+    }
+
+    /// A stand-in for the visual lines `visible_line_window` skipped: no
+    /// content, exactly their combined height, and — when the text area scrolls
+    /// horizontally — the document's widest line for a width, so that extent
+    /// stays the whole note's rather than just the rows on screen.
+    fn emit_line_spacer(&mut self, id: &str, height: f32, width: f32) {
+        let spacer = self.alloc_box(Some(id), UIBoxFlags::NONE);
+        self.boxes[spacer.idx].pref_size = [
+            UISize::Pixels(width.max(0.0)),
+            UISize::Pixels(height.max(0.0)),
+        ];
+        self.boxes[spacer.idx].style.margin = 0.0;
+    }
+
+    /// The row box emitted for visual line `line_idx`, or `None` when that
+    /// line is outside the window this frame emitted. A line index is *not* a
+    /// child index: the lead spacer, when there is one, takes slot 0.
+    pub(super) fn textarea_line_box(&self, idx: usize, line_idx: usize) -> Option<usize> {
+        let layout = self.editor_layouts.get(&self.boxes[idx].key)?;
+        if !layout.emitted.contains(&line_idx) {
+            return None;
+        }
+        let lead = usize::from(layout.emitted.start > 0);
+        let child_pos = line_idx - layout.emitted.start + lead;
+        self.boxes[idx].children.get(child_pos).copied()
+    }
+
+    /// Screen-space geometry of visual line `line_idx`'s row, taken from the
+    /// cached layout rather than from its box. Answers for every line, not
+    /// just the emitted ones — an off-screen caret, a selection running past
+    /// the viewport and a block decoration straddling it all need a real y,
+    /// and the uniform-line-height guesses this replaces were only ever right
+    /// for a plain-text note.
+    pub(super) fn textarea_line_rect(&self, idx: usize, line_idx: usize) -> Option<LineRect> {
+        let layout = self.editor_layouts.get(&self.boxes[idx].key)?;
+        let line = layout.lines.get(line_idx)?;
+        // Children are positioned at `rect.y0 + padding.top - scroll` plus the
+        // preceding rows' extent; the box's own margin is not part of that
+        // (see `position_children_on_main_axis`).
+        let y0 = self.boxes[idx].rect.y0 + self.boxes[idx].padding.top - self.boxes[idx].scroll.y
+            + layout.line_top(line_idx, self.boxes[idx].child_gap);
+        Some(LineRect {
+            y0,
+            y1: y0 + line.row_height(),
+            padding: line.padding,
+            font_size: line.font_size,
+        })
+    }
+
+    /// Emit one visual line as a horizontal row of pre-styled text segments. Horizontal
+    /// caret/selection geometry comes from the cached `cum_x`, vertical from
+    /// `textarea_line_rect` — neither reads the row box back, so a line stays
+    /// addressable while it is scrolled out of the emitted window.
     pub(super) fn emit_layout_line(&mut self, line: &LayoutLine, idx: usize) {
         if let Some(image) = &line.image {
             let row_id = format!("###textarea_line_{idx}");
@@ -1757,17 +1909,13 @@ impl IMUI {
     }
 
     pub(super) fn textarea_line_height(&self, idx: usize, line_idx: usize) -> f32 {
-        let Some(child_idx) = self.boxes[idx].children.get(line_idx).copied() else {
-            return self.theme.size_text + 6.0;
-        };
-        match self.boxes[child_idx].pref_size[axis_idx(Axis::Y)] {
-            UISize::Pixels(height) => height,
-            _ => self.boxes[child_idx]
-                .computed_size
-                .height
-                .max(self.boxes[child_idx].rect.height())
-                .max(self.boxes[child_idx].style.font_size + 4.0),
-        }
+        // The row box's `Pixels(...)` height *is* `row_height()`, and the
+        // layout has it for off-screen lines too.
+        self.editor_layouts
+            .get(&self.boxes[idx].key)
+            .and_then(|layout| layout.lines.get(line_idx))
+            .map(LayoutLine::row_height)
+            .unwrap_or(self.theme.size_text + 6.0)
     }
 
     pub(super) fn replace_selection_or_insert<T: TextEditBuffer>(
@@ -2014,14 +2162,13 @@ impl IMUI {
         let rect = self.boxes[idx].rect;
         let padding = self.boxes[idx].padding;
         let style = self.boxes[idx].style;
-        let (visual_line, _line_font_size) = self.textarea_visual_line_from_point(idx, point);
+        let visual_line = self.textarea_visual_line_from_point(idx, point);
         let key = self.ensure_layout_for_box(idx, buffer);
         let ranges = self.layout_ranges(key);
         let visual_line = visual_line.min(ranges.len().saturating_sub(1));
-        let line_padding_left = self.boxes[idx]
-            .children
-            .get(visual_line)
-            .map(|child| self.boxes[*child].padding.left)
+        let line_padding_left = self
+            .textarea_line_rect(idx, visual_line)
+            .map(|line| line.padding.left)
             .unwrap_or(0.0);
         let local_x = (point.x - rect.x0 - padding.left - style.margin - line_padding_left
             + self.boxes[idx].scroll.x)
@@ -2039,36 +2186,30 @@ impl IMUI {
         (rect.x1 - rect.x0 - padding.horizontal() - style.margin * 2.0).max(0.0)
     }
 
-    pub(super) fn textarea_visual_line_from_point(&self, idx: usize, point: Point) -> (usize, f32) {
-        let children = &self.boxes[idx].children;
-        if !children.is_empty() {
-            let first = &self.boxes[children[0]];
-            if point.y <= first.rect.y0 {
-                return (0, first.style.font_size);
-            }
-
-            for (line_idx, child_idx) in children.iter().copied().enumerate() {
-                let child = &self.boxes[child_idx];
-                if point.y >= child.rect.y0 && point.y <= child.rect.y1 {
-                    return (line_idx, child.style.font_size);
-                }
-                if point.y < child.rect.y0 {
-                    return (line_idx, child.style.font_size);
-                }
-            }
-
-            let last_idx = children.len() - 1;
-            let last = &self.boxes[children[last_idx]];
-            return (last_idx, last.style.font_size);
+    /// The visual line under `point`, clamped into range. A binary search over
+    /// the cached row extents rather than a walk of the row boxes: it is O(log
+    /// n) instead of O(n) per click, and it still answers once the clicked
+    /// line is one the emit window skipped (an autoscrolling drag, say).
+    pub(super) fn textarea_visual_line_from_point(&self, idx: usize, point: Point) -> usize {
+        let local_y = point.y - self.boxes[idx].rect.y0 - self.boxes[idx].padding.top
+            + self.boxes[idx].scroll.y;
+        let Some(layout) = self.editor_layouts.get(&self.boxes[idx].key) else {
+            let line_h = self.theme.size_text + 6.0;
+            return (local_y / line_h).floor().max(0.0) as usize;
+        };
+        if layout.lines.is_empty() {
+            return 0;
         }
-
-        let rect = self.boxes[idx].rect;
-        let padding = self.boxes[idx].padding;
-        let line_h = self.theme.size_text + 6.0;
-        let visual_line = ((point.y - rect.y0 - padding.top + self.boxes[idx].scroll.y) / line_h)
-            .floor()
-            .max(0.0) as usize;
-        (visual_line, self.boxes[idx].style.font_size)
+        let gap = self.boxes[idx].child_gap;
+        let line_idx = layout.line_at_offset(local_y, gap);
+        // A point in the `child_gap` between two rows belongs to the row below
+        // it, which is where walking the boxes in order used to land it.
+        if local_y > layout.line_top(line_idx, gap) + layout.lines[line_idx].row_height()
+            && line_idx + 1 < layout.lines.len()
+        {
+            return line_idx + 1;
+        }
+        line_idx
     }
 
     pub(super) fn cursor_from_x(&mut self, text: &str, font_size: f32, x: f32) -> usize {
@@ -2135,21 +2276,22 @@ impl IMUI {
 
         let content_x0 = rect.x0 + padding.left + margin;
         let content_x1 = rect.x1 - padding.right - margin;
-        let line_padding_left = self.boxes[idx]
-            .children
-            .get(visual_line)
-            .map(|child| self.boxes[*child].padding.left)
+        let line_padding_left = self
+            .textarea_line_rect(idx, visual_line)
+            .map(|line| line.padding.left)
             .unwrap_or(0.0);
         let caret_x = line_padding_left + self.layout_caret_x(key, visual_line, cursor);
         self.keep_textarea_caret_visible(idx, caret_x, content_x0, content_x1);
 
-        // Caret y in 0-based content space (sum of preceding visual-line heights).
+        // Caret y in 0-based content space. `line_top` is the prefix sum this
+        // used to re-add a line at a time, which made following the caret in a
+        // long note O(lines) on every keystroke.
         let gap = self.boxes[idx].child_gap;
-        let mut caret_top = 0.0;
-        for line in 0..visual_line {
-            caret_top += self.textarea_line_height(idx, line) + gap;
-        }
-        let caret_bottom = caret_top + self.textarea_line_height(idx, visual_line);
+        let Some(layout) = self.editor_layouts.get(&key) else {
+            return;
+        };
+        let caret_top = layout.line_top(visual_line, gap);
+        let caret_bottom = caret_top + layout.lines[visual_line].row_height();
         self.keep_textarea_caret_visible_y(idx, caret_top, caret_bottom);
     }
 

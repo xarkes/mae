@@ -1610,3 +1610,237 @@ fn theme_background_drives_what_a_fade_dissolves_into() {
         "the theme's background is what the renderer clears to"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Row virtualization: a text area builds row boxes only for the visual lines
+// near its viewport, standing in for the rest with two spacers. What these
+// pin down is that the *window follows the viewport* (never a fixed line
+// count) and that nothing outside the emitted rows — scroll extent, row
+// position, hit testing — notices the difference.
+// ---------------------------------------------------------------------------
+
+const LONG_NOTE_LINES: usize = 2000;
+
+fn numbered_lines(count: usize) -> String {
+    (0..count)
+        .map(|idx| format!("line {idx:04}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// One frame of a no-wrap text area, so every raw line is exactly one visual
+/// line and row geometry stays predictable.
+fn tall_editor_frame(
+    harness: &mut UiHarness,
+    text: &mut String,
+    font_size: f32,
+) -> testkit::UiSnapshot {
+    harness.frame(|ui| {
+        ui.textarea_with_options(
+            "editor",
+            text,
+            TextAreaOptions::new()
+                .wrap_x(false)
+                .scroll_x(true)
+                .scroll_y(true)
+                .font_size(font_size),
+        );
+    })
+}
+
+/// The first frame lays the editor out; only from the second does it have a
+/// real rect to size a window against.
+fn settled_tall_editor(
+    harness: &mut UiHarness,
+    text: &mut String,
+    font_size: f32,
+) -> testkit::UiSnapshot {
+    tall_editor_frame(harness, text, font_size);
+    tall_editor_frame(harness, text, font_size)
+}
+
+/// Wheel `editor` a long way down and let the scroll animation converge, so
+/// what a later click is measured against is what the post-layout hit test
+/// will see. (Scroll easing runs at the top of the frame, ahead of both.)
+fn scroll_down_and_settle(harness: &mut UiHarness, text: &mut String, font_size: f32) -> f32 {
+    for _ in 0..40 {
+        harness.scroll("editor", -30.0);
+        tall_editor_frame(harness, text, font_size);
+    }
+    let mut last = f32::NAN;
+    for _ in 0..300 {
+        let frame = tall_editor_frame(harness, text, font_size);
+        let now = frame.node("editor").scroll.y();
+        if now == last {
+            return now;
+        }
+        last = now;
+    }
+    panic!("scroll never settled (stopped at {last})");
+}
+
+/// `(row height, child gap)` for one visual line at `font_size`, read off a
+/// note short enough that no virtualization is in play. Everything below
+/// calibrates against this instead of hardcoding theme metrics.
+fn row_pitch(font_size: f32) -> (f32, f32) {
+    let mut harness = UiHarness::new(240.0, 400.0);
+    let mut text = numbered_lines(3);
+    let frame = settled_tall_editor(&mut harness, &mut text, font_size);
+    assert_eq!(frame.node("editor").child_count, 3, "note should fit whole");
+    let first = frame.node("line 0000");
+    let second = frame.node("line 0001");
+    let height = first.bounds.height();
+    (height, second.bounds.y0 - first.bounds.y1)
+}
+
+#[test]
+fn a_long_note_only_builds_rows_near_the_viewport() {
+    let mut harness = UiHarness::new(240.0, 200.0);
+    let mut text = numbered_lines(LONG_NOTE_LINES);
+    let frame = settled_tall_editor(&mut harness, &mut text, 14.0);
+
+    let editor = frame.node("editor");
+    assert!(
+        editor.child_count < 100,
+        "built {} children for a {LONG_NOTE_LINES}-line note",
+        editor.child_count
+    );
+    assert!(
+        frame.try_node("line 0000").is_some(),
+        "top line is on screen"
+    );
+    assert!(
+        frame.try_node("line 1999").is_none(),
+        "the far end of the note should not be built"
+    );
+}
+
+#[test]
+fn the_row_window_follows_the_viewport_not_a_line_count() {
+    // Same note, same viewport, two font sizes: what gets built tracks how
+    // many lines actually fit on screen, so the smaller font — twice as many
+    // lines in the same 200px — builds proportionally more rows. A fixed cap
+    // would hand back the same count for both.
+    for font_size in [8.0, 14.0, 24.0] {
+        let (height, gap) = row_pitch(font_size);
+        let mut harness = UiHarness::new(240.0, 200.0);
+        let mut text = numbered_lines(LONG_NOTE_LINES);
+        let built = settled_tall_editor(&mut harness, &mut text, font_size)
+            .node("editor")
+            .child_count;
+
+        // 200px viewport less its 10px insets, over this font's line pitch.
+        let on_screen = (180.0 / (height + gap)).ceil() as usize;
+        assert!(
+            built >= on_screen,
+            "{font_size}px font built {built} rows for {on_screen} visible lines"
+        );
+        // The window is the viewport plus a viewport of overscan either side,
+        // and the two spacers; nowhere near the whole note.
+        assert!(
+            built <= on_screen * 4 + 2,
+            "{font_size}px font built {built} rows for {on_screen} visible lines"
+        );
+    }
+}
+
+#[test]
+fn a_taller_viewport_builds_more_rows() {
+    let mut harness = UiHarness::new(240.0, 200.0);
+    let mut text = numbered_lines(LONG_NOTE_LINES);
+    let short = settled_tall_editor(&mut harness, &mut text, 14.0)
+        .node("editor")
+        .child_count;
+
+    let mut harness = UiHarness::new(240.0, 800.0);
+    let tall = settled_tall_editor(&mut harness, &mut text, 14.0)
+        .node("editor")
+        .child_count;
+
+    assert!(
+        tall > short,
+        "800px viewport built {tall}, 200px built {short}"
+    );
+}
+
+#[test]
+fn virtualized_rows_keep_the_whole_notes_scroll_extent() {
+    let (height, gap) = row_pitch(14.0);
+    let mut harness = UiHarness::new(240.0, 200.0);
+    let mut text = numbered_lines(LONG_NOTE_LINES);
+    let frame = settled_tall_editor(&mut harness, &mut text, 14.0);
+
+    // The spacers stand in for the skipped rows exactly, so the content the
+    // scrollbar measures is still the whole note's.
+    let expected = LONG_NOTE_LINES as f32 * height + (LONG_NOTE_LINES - 1) as f32 * gap;
+    let editor = frame.node("editor");
+    assert!(
+        (editor.content_size.height - expected).abs() < 1.0,
+        "content height {} != whole-note {expected}",
+        editor.content_size.height
+    );
+    assert!(editor.scroll_max.y() > 0.0);
+}
+
+#[test]
+fn a_scrolled_row_lands_where_the_unvirtualized_layout_would_put_it() {
+    let (height, gap) = row_pitch(14.0);
+    let mut harness = UiHarness::new(240.0, 200.0);
+    let mut text = numbered_lines(LONG_NOTE_LINES);
+    settled_tall_editor(&mut harness, &mut text, 14.0);
+    assert!(
+        scroll_down_and_settle(&mut harness, &mut text, 14.0) > 0.0,
+        "the note should have scrolled"
+    );
+    let frame = tall_editor_frame(&mut harness, &mut text, 14.0);
+
+    let editor = frame.node("editor");
+    // Whichever lines ended up on screen, each sits at its own content-space
+    // offset less the scroll — the spacers having taken up the exact extent
+    // of everything above them.
+    let content_top = editor.bounds.y0 + editor.padding.top - editor.scroll.y();
+    let mut checked = 0;
+    for line_idx in 0..LONG_NOTE_LINES {
+        let Some(row) = frame.try_node(&format!("line {line_idx:04}")) else {
+            continue;
+        };
+        let expected = content_top + line_idx as f32 * (height + gap);
+        assert!(
+            (row.bounds.y0 - expected).abs() < 0.5,
+            "line {line_idx} at y {}, expected {expected}",
+            row.bounds.y0
+        );
+        checked += 1;
+    }
+    assert!(checked > 3, "only {checked} rows were on screen to check");
+}
+
+#[test]
+fn clicking_a_scrolled_line_puts_the_caret_on_that_line() {
+    let mut harness = UiHarness::new(240.0, 200.0);
+    let mut text = numbered_lines(LONG_NOTE_LINES);
+    settled_tall_editor(&mut harness, &mut text, 14.0);
+    scroll_down_and_settle(&mut harness, &mut text, 14.0);
+    let frame = tall_editor_frame(&mut harness, &mut text, 14.0);
+
+    // Pick a row that is genuinely on screen and click its start. Hit testing
+    // resolves the line from the cached layout, so it has to name the line's
+    // own raw offset and not the emitted rows' index.
+    let editor = frame.node("editor");
+    let (line_idx, row) = (0..LONG_NOTE_LINES)
+        .find_map(|idx| {
+            let row = frame.try_node(&format!("line {idx:04}"))?;
+            let inside =
+                row.bounds.y0 > editor.bounds.y0 + 20.0 && row.bounds.y1 < editor.bounds.y1 - 20.0;
+            inside.then_some((idx, row))
+        })
+        .expect("a row fully inside the viewport");
+
+    harness.click_at(row.bounds.x0 + 1.0, row.center().y());
+    let frame = tall_editor_frame(&mut harness, &mut text, 14.0);
+
+    // Every line is "line NNNN\n" — 10 chars including the newline.
+    let expected = line_idx * 10;
+    let cursor = frame.node("editor").text_edit.as_ref().unwrap().cursor;
+    assert_eq!(cursor, expected, "clicked line {line_idx}");
+}

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Range};
 
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;
@@ -946,6 +946,25 @@ struct LayoutLine {
     image: Option<ImageLine>,
 }
 
+impl LayoutLine {
+    /// Height of the row box `emit_layout_line` gives this line. Kept here
+    /// rather than read back off that box: with virtualization the box only
+    /// exists while the line is inside the emitted window, and the cached
+    /// layout has to be able to answer for every line regardless.
+    fn row_height(&self) -> f32 {
+        self.height + self.padding.vertical()
+    }
+
+    /// Width of the row box: its text (whole-run advances, so this is exactly
+    /// what the glyphs occupy) plus its own horizontal padding.
+    fn row_width(&self) -> f32 {
+        match &self.image {
+            Some(image) => image.width + self.padding.horizontal(),
+            None => self.cum_x.last().copied().unwrap_or(0.0) + self.padding.horizontal(),
+        }
+    }
+}
+
 /// Which dimension an image link pins (`?h=` or `?w=`); the other is derived
 /// from the intrinsic aspect ratio. `h` is the default for new images.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1008,6 +1027,61 @@ struct EditorLayout {
     images_rev: u64,
     lines: Vec<LayoutLine>,
     blocks: Vec<LayoutBlock>,
+    /// Prefix sums of the visual lines' row heights, gaps *excluded*:
+    /// `line_tops[i] == Σ_{j<i} lines[j].row_height()`, with a final entry
+    /// past the last line (so `len() == lines.len() + 1`). The text area's
+    /// `child_gap` is folded back in by `line_top`, which keeps this vector
+    /// independent of a gap the layout doesn't know about at build time.
+    line_tops: Vec<f32>,
+    /// Widest visual line. Only the *emitted* rows reach `max_child_size`, so
+    /// a virtualized editor's horizontal scroll extent has to come from here
+    /// instead — otherwise it would grow and shrink as you scroll vertically.
+    max_line_width: f32,
+    /// The visual lines the last frame actually emitted row boxes for. Lines
+    /// outside it are stood in for by the two spacer boxes, so a line index
+    /// is not a child index any more — go through `textarea_line_box`.
+    emitted: Range<usize>,
+}
+
+impl EditorLayout {
+    /// Content-space y of visual line `i`'s row box, `gap` being the text
+    /// area's `child_gap`. Defined for `i == lines.len()` too, where it is the
+    /// bottom of the last line — that is what the trailing spacer measures
+    /// against.
+    fn line_top(&self, i: usize, gap: f32) -> f32 {
+        let i = i.min(self.lines.len());
+        self.line_tops[i] + i as f32 * gap
+    }
+
+    /// The visual line containing content-space offset `y`, clamped into
+    /// range. `line_top` is strictly increasing, so this is a binary search.
+    fn line_at_offset(&self, y: f32, gap: f32) -> usize {
+        let count = self.lines.len();
+        if count == 0 {
+            return 0;
+        }
+        let (mut lo, mut hi) = (0usize, count - 1);
+        while lo < hi {
+            let mid = lo + (hi - lo).div_ceil(2);
+            if self.line_top(mid, gap) <= y {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        lo
+    }
+}
+
+/// Where one visual line's row sits on screen, derived from `EditorLayout`
+/// alone so it is available for lines outside the emitted window too.
+#[derive(Clone, Copy)]
+struct LineRect {
+    y0: f32,
+    y1: f32,
+    /// The row's own padding (a quote/code block indents its lines).
+    padding: Padding,
+    font_size: f32,
 }
 
 struct BuiltEditorLayout {
