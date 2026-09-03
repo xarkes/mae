@@ -611,14 +611,12 @@ impl IMUI {
         let rect = self.boxes[idx].rect;
         let padding = self.boxes[idx].padding;
         let style = self.boxes[idx].style;
-        let text = self.boxes[idx].string.clone().unwrap_or_default();
         let line_h = self.theme.size_text + 6.0;
-        let key = self.ensure_layout_for_box(idx, &text);
-        let ranges = self.layout_ranges(key);
-        let (start_line, _) = self.visual_line_col_from_cursor_with_ranges(&ranges, range.0);
-        let (end_line, _) = self.visual_line_col_from_cursor_with_ranges(&ranges, range.1);
+        let key = self.with_box_text(idx, |ui, text| ui.ensure_layout_for_box(idx, text));
+        let (start_line, _) = self.visual_line_col_from_cursor(key, range.0);
+        let (end_line, _) = self.visual_line_col_from_cursor(key, range.1);
         for line in start_line..=end_line {
-            let (line_start, line_end_idx) = ranges[line];
+            let (line_start, line_end_idx) = self.layout_line_range(key, line);
             let start = if line == start_line {
                 range.0.max(line_start)
             } else {
@@ -740,20 +738,19 @@ impl IMUI {
         let style = self.boxes[idx].style;
         let rect = self.boxes[idx].rect;
         let padding = self.boxes[idx].padding;
-        let text = self.boxes[idx].string.clone().unwrap_or_default();
         // The display string includes any injected IME preedit, so the caret renders
         // *after* the composing text.
         let preedit_len = self.focused_preedit_len(self.boxes[idx].key);
+        let key = self.with_box_text(idx, |ui, text| ui.ensure_layout_for_box(idx, text));
+        let text_len = self.textarea_char_len(key).unwrap_or(0);
         let cursor = (self
             .text_edit_states
             .get(&self.boxes[idx].key)
             .map(|state| state.cursor)
-            .unwrap_or_else(|| char_count(&text))
+            .unwrap_or(text_len)
             + preedit_len)
-            .min(char_count(&text));
-        let key = self.ensure_layout_for_box(idx, &text);
-        let ranges = self.layout_ranges(key);
-        let (visual_line, _col) = self.visual_line_col_from_cursor_with_ranges(&ranges, cursor);
+            .min(text_len);
+        let (visual_line, _col) = self.visual_line_col_from_cursor(key, cursor);
         let content_x0 = rect.x0 + padding.left + style.margin;
         let line_h = self.theme.size_text + 6.0;
         let content_x1 = rect.x1 - padding.right - style.margin;
@@ -776,7 +773,8 @@ impl IMUI {
                 )
             });
 
-        let text_width = self.layout_caret_x(key, visual_line.min(ranges.len() - 1), cursor);
+        let last_line = self.layout_line_count(key).saturating_sub(1);
+        let text_width = self.layout_caret_x(key, visual_line.min(last_line), cursor);
         let line_padding_left = line_rect.map(|line| line.padding.left).unwrap_or(0.0);
         let text_height = self
             .drawer
@@ -803,8 +801,7 @@ impl IMUI {
         let preedit_len = self.focused_preedit_len(self.boxes[idx].key);
         if preedit_len > 0 {
             let start_cursor = cursor.saturating_sub(preedit_len);
-            let start_width =
-                self.layout_caret_x(key, visual_line.min(ranges.len() - 1), start_cursor);
+            let start_width = self.layout_caret_x(key, visual_line.min(last_line), start_cursor);
             let start_x = (content_x0 + line_padding_left + start_width - self.boxes[idx].scroll.x)
                 .clamp(content_x0, caret_right);
             let underline = intersect_rects(
@@ -847,10 +844,9 @@ impl IMUI {
         let style = self.boxes[idx].style;
         let rect = self.boxes[idx].rect;
         let padding = self.boxes[idx].padding;
-        let text = self.boxes[idx].string.clone().unwrap_or_default();
-        let text_len = char_count(&text);
-        let key = self.ensure_layout_for_box(idx, &text);
-        let ranges = self.layout_ranges(key);
+        let key = self.with_box_text(idx, |ui, text| ui.ensure_layout_for_box(idx, text));
+        let text_len = self.textarea_char_len(key).unwrap_or(0);
+        let line_count = self.layout_line_count(key);
         let line_h = self.theme.size_text + 6.0;
         let content_x0 = rect.x0 + padding.left + style.margin;
         let content_x1 = rect.x1 - padding.right - style.margin;
@@ -869,7 +865,7 @@ impl IMUI {
                 );
             }
             let cursor = caret.cursor.min(text_len);
-            let (visual_line, _col) = self.visual_line_col_from_cursor_with_ranges(&ranges, cursor);
+            let (visual_line, _col) = self.visual_line_col_from_cursor(key, cursor);
             let line_rect = self.textarea_line_rect(idx, visual_line);
             let (content_y0, content_y1, font_size) = line_rect
                 .map(|line| {
@@ -890,7 +886,8 @@ impl IMUI {
                     )
                 });
 
-            let text_width = self.layout_caret_x(key, visual_line.min(ranges.len() - 1), cursor);
+            let text_width =
+                self.layout_caret_x(key, visual_line.min(line_count.saturating_sub(1)), cursor);
             let line_padding_left = line_rect.map(|line| line.padding.left).unwrap_or(0.0);
             let caret_right = (content_x1 - 1.0).max(content_x0);
             let caret_x = (content_x0 + line_padding_left + text_width - self.boxes[idx].scroll.x)

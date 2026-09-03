@@ -3693,7 +3693,9 @@ impl IMUI {
             // `display_string`) — never displayed directly (the host's real
             // content is its row/span/image children, painted by the child
             // walk below), only used for `data-raw-end`/`data-mae-id`.
-            let value = self.boxes[idx].string.clone().unwrap_or_default();
+            // Borrowed, not cloned: `dom` is its own `&mut`, so nothing here
+            // needs `&mut self` while the note's text is in hand.
+            let value = self.boxes[idx].string.as_deref().unwrap_or_default();
             let host = dom.paint_richtext_host(
                 dom_key,
                 mount_point,
@@ -3728,9 +3730,12 @@ impl IMUI {
             // rendering. The parent's full text (also incl. IME preedit) is
             // in `string` instead (`text_edit.rs`'s `textarea_impl`).
             let value = if flags.contains(UIBoxFlags::MULTILINE) {
-                self.boxes[idx].string.clone().unwrap_or_default()
+                self.boxes[idx].string.as_deref().unwrap_or_default()
             } else {
-                self.boxes[idx].display_string.clone().unwrap_or_default()
+                self.boxes[idx]
+                    .display_string
+                    .as_deref()
+                    .unwrap_or_default()
             };
             dom.paint_text_input(
                 dom_key,

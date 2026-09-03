@@ -774,24 +774,29 @@ impl IMUI {
         line_style: TextAreaLineStyle,
         md_mode: MarkdownMode,
     ) {
-        let hash = u64_hash_from_string(0, text);
-        let char_len = char_count(text);
+        let byte_len = text.len();
         let width_key = wrap_width.max(0.0).round() as u32;
         let font_key = (base_font * 4.0).round() as u32;
         let reveal_line_start = self.markdown_reveal_line_start(key, text, line_style, md_mode);
+        // Ordered cheapest-first and short-circuited: the length and the four
+        // scalar keys settle almost every mismatch, so the fingerprint (the
+        // only part that reads the whole note) is reached just when everything
+        // else says the layout should still be good.
         if let Some(layout) = self.editor_layouts.get(&key) {
-            if layout.hash == hash
-                && layout.char_len == char_len
+            if layout.byte_len == byte_len
                 && layout.width_key == width_key
                 && layout.font_key == font_key
                 && layout.line_style == line_style
                 && layout.md_mode == md_mode
                 && layout.reveal_line_start == reveal_line_start
                 && layout.images_rev == self.images_rev
+                && layout.hash == text_fingerprint(text)
             {
                 return;
             }
         }
+        let hash = text_fingerprint(text);
+        let char_len = char_count(text);
         let layout = self.build_editor_layout_revealing_line(
             text,
             wrap_width,
@@ -829,6 +834,7 @@ impl IMUI {
             key,
             EditorLayout {
                 hash,
+                byte_len,
                 char_len,
                 width_key,
                 font_key,
@@ -869,6 +875,29 @@ impl IMUI {
     /// Refresh the cached layout for an already-built editor box (used by the geometry
     /// helpers that run after `textarea_impl`). Reuses the previously recorded line
     /// style / markdown mode; rebuilds only if `text`, width or font changed.
+    /// Run `f` with box `idx`'s text without copying it. The `String` is moved
+    /// out for the duration and put back after: every one of these call sites
+    /// needs `&mut self` as well (to resolve the layout, measure text, or
+    /// paint), which rules out simply borrowing the field in place, and a
+    /// whole note is far too big to clone several times a frame just to read.
+    pub(super) fn with_box_text<R>(
+        &mut self,
+        idx: usize,
+        f: impl FnOnce(&mut Self, &str) -> R,
+    ) -> R {
+        let text = self.boxes[idx].string.take();
+        let out = f(self, text.as_deref().unwrap_or_default());
+        self.boxes[idx].string = text;
+        out
+    }
+
+    /// Char length of the text area's content, from the cached layout — the
+    /// layout is rebuilt exactly when the text changes, so this is the same
+    /// answer `char_count` would walk the whole note for.
+    pub(super) fn textarea_char_len(&self, key: UiKey) -> Option<usize> {
+        self.editor_layouts.get(&key).map(|layout| layout.char_len)
+    }
+
     pub(super) fn ensure_layout_for_box(&mut self, idx: usize, text: &str) -> UiKey {
         let key = self.boxes[idx].key;
         let wrap_width = self.textarea_wrap_width(idx);
@@ -882,17 +911,26 @@ impl IMUI {
         key
     }
 
-    /// Raw-char ranges `(start, end)` for each visual line, from the cached layout.
-    pub(super) fn layout_ranges(&self, key: UiKey) -> Vec<(usize, usize)> {
+    /// Number of visual lines in the cached layout. An editor with no layout
+    /// yet reads as a single empty line, which is what the callers' clamping
+    /// arithmetic expects.
+    pub(super) fn layout_line_count(&self, key: UiKey) -> usize {
         self.editor_layouts
             .get(&key)
-            .map(|l| {
-                l.lines
-                    .iter()
-                    .map(|line| (line.raw_start, line.raw_end))
-                    .collect()
-            })
-            .unwrap_or_else(|| vec![(0, 0)])
+            .map(|layout| layout.lines.len())
+            .unwrap_or(1)
+    }
+
+    /// Raw-char range `(start, end)` of one visual line, straight out of the
+    /// cached layout. This and `layout_line_count` replace a `layout_ranges`
+    /// that collected every line's range into a fresh `Vec` — the length of
+    /// the note, several times a frame — to answer questions about one line.
+    pub(super) fn layout_line_range(&self, key: UiKey, line_idx: usize) -> (usize, usize) {
+        self.editor_layouts
+            .get(&key)
+            .and_then(|layout| layout.lines.get(line_idx))
+            .map(|line| (line.raw_start, line.raw_end))
+            .unwrap_or((0, 0))
     }
 
     /// Pixel x (relative to the line's content origin) of a raw cursor on a visual line.
@@ -945,6 +983,23 @@ impl IMUI {
             .map(|image| image.width)
     }
 
+    /// Nothing in here is proportional to the size of the note.
+    ///
+    /// That is a deliberate property, not an accident, and it is easy to lose:
+    /// the obvious way to write each step below reads or copies the whole
+    /// buffer, and there are enough steps that it used to add up to most of a
+    /// frame. What holds it up is `read_text_into` filling the box's own
+    /// `string` in place rather than handing back a fresh one, `EditorLayout`
+    /// caching what would otherwise be recomputed from the text (its char
+    /// length, its per-line extents), `text_fingerprint` reading a word at a
+    /// time behind a byte-length guard, and `with_box_text` lending the text to
+    /// the paint and hit-test paths instead of cloning it for them. Row
+    /// emission is bounded by the viewport (`visible_line_window`) and box text
+    /// by `StringPool`.
+    ///
+    /// The one cost that does still scale is rebuilding the layout itself —
+    /// parsing, wrapping and shaping the note — which happens only when the
+    /// text, the wrap width, the font or the markdown mode actually changed.
     pub(super) fn textarea_impl<T: TextEditBuffer>(
         &mut self,
         id: &str,
@@ -998,7 +1053,14 @@ impl IMUI {
             self.boxes[handle.idx].padding = padding;
         }
         self.apply_click_to_focus(handle);
-        let mut text = buffer.text();
+        // The box's `string` is this editor's text, and it is where this
+        // frame's text has to end up — so it is also what we read into. Taken
+        // out for the duration (the borrow checker will not let it be held
+        // across the `&mut self` calls below) and put back at the end, it
+        // survives frame to frame, so a note is never copied and never
+        // reallocated just to be read again unchanged.
+        let mut text = self.boxes[handle.idx].string.take().unwrap_or_default();
+        buffer.read_text_into(&mut text);
         #[cfg(feature = "dom")]
         if flags.contains(UIBoxFlags::RICH_TEXT_HOST) {
             self.apply_pending_dom_selection(handle.key(), &text);
@@ -1044,8 +1106,10 @@ impl IMUI {
                 text.insert_str(caret_byte, &preedit);
             }
         }
-        self.boxes[handle.idx].string = Some(text.clone());
         self.ensure_editor_layout(key, &text, content_width, base_font, line_style, md_mode);
+        // Moved back, not copied; nothing between here and the `take` above
+        // reads the box's `string`.
+        self.boxes[handle.idx].string = Some(text);
 
         self.parent_stack.push(handle.idx);
         // Take ownership of the cached layout while emitting boxes to avoid cloning the
@@ -1304,12 +1368,12 @@ impl IMUI {
         self.parent_stack.pop();
     }
 
-    pub(super) fn visual_line_col_from_cursor_with_ranges(
-        &self,
-        ranges: &[(usize, usize)],
-        cursor: usize,
-    ) -> (usize, usize) {
-        for (line_idx, &(start, end)) in ranges.iter().enumerate() {
+    pub(super) fn visual_line_col_from_cursor(&self, key: UiKey, cursor: usize) -> (usize, usize) {
+        let Some(layout) = self.editor_layouts.get(&key) else {
+            return (0, 0);
+        };
+        for (line_idx, line) in layout.lines.iter().enumerate() {
+            let (start, end) = (line.raw_start, line.raw_end);
             if start == end && cursor == start {
                 return (line_idx, 0);
             }
@@ -1320,29 +1384,31 @@ impl IMUI {
                 return (line_idx, end - start);
             }
         }
-        if let Some(&(start, end)) = ranges.last() {
+        if let Some(line) = layout.lines.last() {
+            let (start, end) = (line.raw_start, line.raw_end);
             let col = cursor.saturating_sub(start);
             if end > start {
-                (ranges.len() - 1, col.min(end - start))
+                (layout.lines.len() - 1, col.min(end - start))
             } else {
-                (ranges.len() - 1, 0)
+                (layout.lines.len() - 1, 0)
             }
         } else {
             (0, 0)
         }
     }
 
-    pub(super) fn cursor_from_visual_line_col_with_ranges(
+    pub(super) fn cursor_from_visual_line_col(
         &self,
-        ranges: &[(usize, usize)],
+        key: UiKey,
         visual_line: usize,
         col: usize,
     ) -> usize {
-        if visual_line >= ranges.len() {
-            ranges.last().map(|&(_, end)| end).unwrap_or(0)
-        } else {
-            let (start, end) = ranges[visual_line];
-            (start + col).min(end)
+        let Some(layout) = self.editor_layouts.get(&key) else {
+            return 0;
+        };
+        match layout.lines.get(visual_line) {
+            Some(line) => (line.raw_start + col).min(line.raw_end),
+            None => layout.lines.last().map(|line| line.raw_end).unwrap_or(0),
         }
     }
 
@@ -1538,7 +1604,12 @@ impl IMUI {
     }
 
     pub(super) fn ensure_text_state(&mut self, key: UiKey, buffer: &str) {
-        let len = char_count(buffer);
+        // From the layout when there is one — the caller ensured it against
+        // this same text a moment ago, and clamping the caret every frame is
+        // not worth a walk of the whole note.
+        let len = self
+            .textarea_char_len(key)
+            .unwrap_or_else(|| char_count(buffer));
         let state = self.text_edit_states.entry(key).or_default();
         state.cursor = state.cursor.min(len);
         if let Some(selection) = state.selection.as_mut() {
@@ -1896,18 +1967,17 @@ impl IMUI {
             return;
         };
         self.ensure_layout_for_box(idx, buffer);
-        let ranges = self.layout_ranges(key);
-        let (visual_line, col) = self.visual_line_col_from_cursor_with_ranges(&ranges, cursor);
+        let (visual_line, col) = self.visual_line_col_from_cursor(key, cursor);
         let state = self.text_edit_states.entry(key).or_default();
         let desired_col = state.desired_column.unwrap_or(col);
         state.desired_column = Some(desired_col);
-        let line_count = ranges.len().max(1);
+        let line_count = self.layout_line_count(key).max(1);
         let next_line = (visual_line as isize + delta).clamp(0, line_count as isize - 1) as usize;
         let next_cursor = if self.layout_line_image_width(key, next_line).is_some() {
             // Landing on an image via up/down goes to its beginning (atomic).
-            ranges[next_line].0
+            self.layout_line_range(key, next_line).0
         } else {
-            self.cursor_from_visual_line_col_with_ranges(&ranges, next_line, desired_col)
+            self.cursor_from_visual_line_col(key, next_line, desired_col)
         };
         self.move_text_cursor(key, buffer, next_cursor, extend_selection);
         if let Some(state) = self.text_edit_states.get_mut(&key) {
@@ -2053,18 +2123,19 @@ impl IMUI {
             self.drive_image_resize();
             return;
         }
-        let buffer = self.boxes[idx].string.clone().unwrap_or_default();
-        if pressed {
-            let cursor = self.cursor_from_textarea_point(idx, &buffer, signal.left_press_pos);
-            let click_count =
-                self.register_text_click(key, signal.left_press_pos.unwrap_or_default());
-            self.apply_text_click_selection(key, &buffer, cursor, click_count);
-            self.reset_caret_blink(key);
-        } else if dragging {
-            let cursor = self.cursor_from_textarea_point(idx, &buffer, self.mouse);
-            self.set_text_cursor(key, cursor, true);
-            self.reset_caret_blink(key);
-        }
+        self.with_box_text(idx, |ui, buffer| {
+            if pressed {
+                let cursor = ui.cursor_from_textarea_point(idx, buffer, signal.left_press_pos);
+                let click_count =
+                    ui.register_text_click(key, signal.left_press_pos.unwrap_or_default());
+                ui.apply_text_click_selection(key, buffer, cursor, click_count);
+                ui.reset_caret_blink(key);
+            } else if dragging {
+                let cursor = ui.cursor_from_textarea_point(idx, buffer, ui.mouse);
+                ui.set_text_cursor(key, cursor, true);
+                ui.reset_caret_blink(key);
+            }
+        });
     }
 
     /// Post-layout pass: resolve textarea click/drag selection for every text area in
@@ -2177,8 +2248,7 @@ impl IMUI {
         let style = self.boxes[idx].style;
         let visual_line = self.textarea_visual_line_from_point(idx, point);
         let key = self.ensure_layout_for_box(idx, buffer);
-        let ranges = self.layout_ranges(key);
-        let visual_line = visual_line.min(ranges.len().saturating_sub(1));
+        let visual_line = visual_line.min(self.layout_line_count(key).saturating_sub(1));
         let line_padding_left = self
             .textarea_line_rect(idx, visual_line)
             .map(|line| line.padding.left)
@@ -2261,13 +2331,16 @@ impl IMUI {
         let rect = self.boxes[idx].rect;
         let padding = self.boxes[idx].padding;
         let margin = self.boxes[idx].style.margin;
-        let text = self.boxes[idx].string.clone().unwrap_or_default();
+        // Resolve the layout up front so the caret can be clamped against the
+        // char length it already knows, instead of walking the note for one.
+        self.with_box_text(idx, |ui, text| ui.ensure_layout_for_box(idx, text));
+        let text_len = self.textarea_char_len(key).unwrap_or(0);
         let cursor = self
             .text_edit_states
             .get(&key)
             .map(|state| state.cursor)
-            .unwrap_or_else(|| char_count(&text))
-            .min(char_count(&text));
+            .unwrap_or(text_len)
+            .min(text_len);
 
         // Only follow the caret when it actually moves (typing, arrows, clicks). If the
         // caret is unchanged, leave scrolling alone so the user can freely scroll above
@@ -2279,13 +2352,12 @@ impl IMUI {
             state.scroll_follow_cursor = Some(cursor);
         }
 
-        self.ensure_layout_for_box(idx, &text);
-        let ranges = self.layout_ranges(key);
-        if ranges.is_empty() {
+        let line_count = self.layout_line_count(key);
+        if line_count == 0 {
             return;
         }
-        let (visual_line, _) = self.visual_line_col_from_cursor_with_ranges(&ranges, cursor);
-        let visual_line = visual_line.min(ranges.len() - 1);
+        let (visual_line, _) = self.visual_line_col_from_cursor(key, cursor);
+        let visual_line = visual_line.min(line_count - 1);
 
         let content_x0 = rect.x0 + padding.left + margin;
         let content_x1 = rect.x1 - padding.right - margin;

@@ -2247,3 +2247,87 @@ fn a_display_string_containing_hashes_is_not_truncated_by_the_key_split() {
     assert_eq!(ui.boxes[row].display_string.as_deref(), Some("## Heading"));
     assert_eq!(ui.boxes[row].debug_label.as_deref(), Some("## Heading"));
 }
+
+#[test]
+fn text_fingerprint_notices_a_single_byte_change_anywhere() {
+    // The layout cache trusts this to tell "the note changed" from "the note
+    // did not"; a miss shows stale text on screen. Checked across the word
+    // boundaries the chunked read works in, and in the sub-word tail.
+    let base: String = std::iter::repeat_n("the quick brown fox. ", 400).collect();
+    let baseline = text_fingerprint(&base);
+    for len in [0usize, 1, 7, 8, 9, 15, 16, 31, 100] {
+        let truncated = &base[..len];
+        assert_ne!(
+            text_fingerprint(truncated),
+            baseline,
+            "a note truncated to {len} bytes must not look unchanged"
+        );
+    }
+    for pos in [0usize, 1, 7, 8, 9, 63, 64, 4000, base.len() - 1] {
+        let mut edited = base.clone();
+        // ASCII throughout, so a byte swap is a char swap.
+        unsafe { edited.as_bytes_mut()[pos] ^= 0x20 };
+        assert_ne!(
+            text_fingerprint(&edited),
+            baseline,
+            "a one-byte change at {pos} must not look unchanged"
+        );
+    }
+}
+
+#[test]
+fn a_text_areas_buffer_is_not_reallocated_between_frames() {
+    // The editor reads the note into the box's own `string` in place. If that
+    // buffer is handed back to the pool (or replaced) on the way through
+    // `reset_for_frame`, every frame re-allocates and re-copies the whole
+    // note — the thing this arrangement exists to prevent.
+    let mut ui = IMUI::new_for_test(400.0, 300.0);
+    let mut text = "alpha\nbeta\ngamma\n".repeat(50);
+    let opts = TextAreaOptions::new().scroll_y(true);
+
+    ui.begin_frame();
+    let first = ui.textarea_with_options("###editor", &mut text, opts.clone());
+    ui.end_frame();
+    let before = ui.boxes[first.idx].string.as_ref().expect("text").as_ptr();
+
+    ui.begin_frame();
+    let again = ui.textarea_with_options("###editor", &mut text, opts);
+    ui.end_frame();
+    let after = ui.boxes[again.idx].string.as_ref().expect("text").as_ptr();
+
+    assert_eq!(ui.boxes[again.idx].string.as_deref(), Some(text.as_str()));
+    assert_eq!(after, before, "the note was copied into a fresh allocation");
+}
+
+#[test]
+fn an_unchanged_note_is_not_relaid_out() {
+    // The whole point of the cheap validity check: same text, same everything,
+    // so the cached lines must be the very ones from last frame.
+    let mut ui = IMUI::new_for_test(400.0, 300.0);
+    let mut text = "alpha\nbeta\ngamma\n".repeat(50);
+    let opts = TextAreaOptions::new().scroll_y(true);
+
+    // Two frames to settle: the first has no rect yet, so the wrap width — and
+    // with it the layout — genuinely changes on the second.
+    let mut key = UiKey::default();
+    for _ in 0..2 {
+        ui.begin_frame();
+        key = ui
+            .textarea_with_options("###editor", &mut text, opts.clone())
+            .key();
+        ui.end_frame();
+    }
+    let before = ui.editor_layouts[&key].lines.as_ptr();
+
+    ui.begin_frame();
+    ui.textarea_with_options("###editor", &mut text, opts.clone());
+    ui.end_frame();
+    assert_eq!(ui.editor_layouts[&key].lines.as_ptr(), before);
+
+    // ...and that it really is checking, not just never rebuilding.
+    text.push_str("delta\n");
+    ui.begin_frame();
+    ui.textarea_with_options("###editor", &mut text, opts);
+    ui.end_frame();
+    assert_ne!(ui.editor_layouts[&key].lines.as_ptr(), before);
+}

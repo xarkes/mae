@@ -1016,7 +1016,14 @@ struct LayoutBlock {
 /// content, wrap width, font, line style, or markdown mode actually changes — never
 /// per frame for unchanged text.
 struct EditorLayout {
+    /// `text_fingerprint` of the text this was built from, guarded by
+    /// `byte_len` — together, "is the note still what it was?".
     hash: u64,
+    byte_len: usize,
+    /// Char length of that text. Cached because the draw, hit-test and
+    /// caret-follow paths all need it and `char_count` is a full UTF-8 walk;
+    /// the layout is rebuilt exactly when the text changes, so it cannot go
+    /// stale.
     char_len: usize,
     width_key: u32,
     font_key: u32,
@@ -1891,11 +1898,29 @@ pub trait TextEditBuffer {
     fn text(&self) -> String;
     fn insert_text(&mut self, index: usize, text: &str);
     fn delete_range(&mut self, range: (usize, usize));
+
+    /// Read the buffer's text into `out`, replacing whatever it held.
+    ///
+    /// A text area calls this once a frame, and `out` is the buffer it already
+    /// keeps for this editor — so for a large note the difference between this
+    /// and [`text`](Self::text) is a whole-note allocation per frame, forever,
+    /// for text that almost never changed. The default goes through `text` and
+    /// so still pays for one; override it if the text can be handed over
+    /// without materializing a fresh `String`.
+    fn read_text_into(&self, out: &mut String) {
+        out.clear();
+        out.push_str(&self.text());
+    }
 }
 
 impl TextEditBuffer for String {
     fn text(&self) -> String {
         self.clone()
+    }
+
+    fn read_text_into(&self, out: &mut String) {
+        out.clear();
+        out.push_str(self);
     }
 
     fn insert_text(&mut self, index: usize, text: &str) {
@@ -2205,6 +2230,12 @@ impl UIBox {
         } else {
             None
         };
+        // A text input's `string` is not derived from its label — it is the
+        // editor's whole buffer contents, owned by `textarea_impl`, which
+        // reads the next frame's text straight into it. Resetting it to the
+        // (always empty) label part would throw that allocation away every
+        // frame and force the note to be copied back in.
+        let keep_string = flags.accepts_text_input();
         // Lifted out before the reset below drops them, refilled after it.
         let mut debug_label = self.debug_label.take();
         let mut own_key_id = self.key_id.take();
@@ -2225,7 +2256,9 @@ impl UIBox {
         *self = Self::new(key, flags, theme);
         pool.assign(&mut debug_label, string);
         pool.assign(&mut own_key_id, key_id);
-        pool.assign(&mut own_string, string);
+        if !keep_string {
+            pool.assign(&mut own_string, string);
+        }
         pool.assign(&mut display_string, string);
         children.clear();
         self.debug_label = debug_label;
@@ -2847,6 +2880,40 @@ fn text_line_range(text: &str, cursor: usize) -> (usize, usize) {
     }
     let cursor = cursor.min(len);
     (line_home(text, cursor), line_end(text, cursor))
+}
+
+/// Content fingerprint for an editor's text, used only to notice that it
+/// changed since a layout was built from it.
+///
+/// Deliberately not [`u64_hash_from_string`], which the widget keys use: that
+/// is a byte-at-a-time DJB2, fine for a label but ~50us on a 180 KB note — and
+/// the editor asks this question several times a frame (once per
+/// `ensure_layout_for_box`, from paint, hit-testing and caret-follow as well as
+/// the build). This reads a `u64` at a time instead, so the same note costs a
+/// few microseconds. Paired with the byte length in `EditorLayout`, which is
+/// checked first and for free.
+fn text_fingerprint(text: &str) -> u64 {
+    // Multiply-rotate mixing (the shape FxHash uses): each word is folded in
+    // with a multiply, so a change anywhere propagates through every word
+    // after it. A fingerprint, not a checksum — nothing here is adversarial,
+    // it is the same document being typed into.
+    const K: u64 = 0x517c_c1b7_2722_0a95;
+    let bytes = text.as_bytes();
+    let mut hash = bytes.len() as u64;
+    let mut chunks = bytes.chunks_exact(8);
+    for chunk in &mut chunks {
+        let word = u64::from_le_bytes(chunk.try_into().expect("chunks_exact(8) yields 8 bytes"));
+        hash = (hash.rotate_left(5) ^ word).wrapping_mul(K);
+    }
+    // The trailing <8 bytes, right-aligned in a word so their position counts.
+    let mut tail = 0u64;
+    for &byte in chunks.remainder() {
+        tail = (tail << 8) | byte as u64;
+    }
+    hash = (hash.rotate_left(5) ^ tail).wrapping_mul(K);
+    // Final avalanche, so a one-byte change at the very end still spreads.
+    hash ^= hash >> 32;
+    hash.wrapping_mul(K)
 }
 
 pub fn u64_hash_from_string(seed: u64, string: &str) -> u64 {
