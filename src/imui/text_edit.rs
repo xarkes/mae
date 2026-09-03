@@ -1079,9 +1079,14 @@ impl IMUI {
             let height = layout.line_top(window.start, gap) - gap;
             self.emit_line_spacer("###textarea_lead_spacer", height, spacer_width);
         }
+        // Lifted off `self` so the emit loop can borrow it while still handing
+        // `emit_layout_line` a `&mut self`; put back below, so the buffers
+        // survive to the next frame.
+        let mut buf = std::mem::take(&mut self.line_scratch);
         for line_idx in window.clone() {
-            self.emit_layout_line(&layout.lines[line_idx], line_idx);
+            self.emit_layout_line(&layout.lines[line_idx], line_idx, &mut buf);
         }
+        self.line_scratch = buf;
         if window.end < line_count {
             let height = layout.line_top(line_count, gap) - gap - layout.line_top(window.end, gap);
             self.emit_line_spacer("###textarea_trail_spacer", height, spacer_width);
@@ -1188,10 +1193,15 @@ impl IMUI {
     /// caret/selection geometry comes from the cached `cum_x`, vertical from
     /// `textarea_line_rect` — neither reads the row box back, so a line stays
     /// addressable while it is scrolled out of the emitted window.
-    pub(super) fn emit_layout_line(&mut self, line: &LayoutLine, idx: usize) {
+    pub(super) fn emit_layout_line(
+        &mut self,
+        line: &LayoutLine,
+        idx: usize,
+        buf: &mut LineScratch,
+    ) {
         if let Some(image) = &line.image {
-            let row_id = format!("###textarea_line_{idx}");
-            let row = self.alloc_box(Some(&row_id), UIBoxFlags::NONE);
+            buf.write_id(format_args!("###textarea_line_{idx}"));
+            let row = self.alloc_box_parts(None, Some(&buf.id), UIBoxFlags::NONE);
             self.boxes[row.idx].child_layout_axis = Axis::X;
             self.boxes[row.idx].pref_size = [
                 UISize::ChildrenSum,
@@ -1202,12 +1212,12 @@ impl IMUI {
             self.boxes[row.idx].richtext_span = Some((line.raw_start, line.raw_end));
 
             self.parent_stack.push(row.idx);
-            let img_id = format!("{}###textarea_img_{idx}", image.key);
-            let img_box = self.alloc_box(
-                Some(&img_id),
+            buf.write_id(format_args!("###textarea_img_{idx}"));
+            let img_box = self.alloc_box_parts(
+                Some(&image.key),
+                Some(&buf.id),
                 UIBoxFlags::DRAW_IMAGE | UIBoxFlags::MOUSE_CLICKABLE,
             );
-            self.set_display_string(img_box.idx, image.key.clone());
             self.boxes[img_box.idx].pref_size =
                 [UISize::Pixels(image.width), UISize::Pixels(image.height)];
             self.boxes[img_box.idx].style.margin = 0.0;
@@ -1224,14 +1234,18 @@ impl IMUI {
         // never sees (see `LayoutSpan`), so including it here would put
         // U+200Bs into this row's display string — its `data-mae-id` on the
         // DOM backend, and the text a testkit snapshot reports for it.
-        let display: String = line
-            .spans
-            .iter()
-            .filter(|s| !s.hidden)
-            .map(|s| s.text.as_str())
-            .collect();
-        let line_id = format!("{display}###textarea_line_{idx}");
-        let row = self.alloc_box(Some(&line_id), UIBoxFlags::NONE);
+        buf.display.clear();
+        for span in line.spans.iter().filter(|span| !span.hidden) {
+            buf.display.push_str(&span.text);
+        }
+        // Display text and id go in separately. Passing them joined would copy
+        // the line's whole text into a throwaway `String` for `alloc_box` to
+        // slice back apart — and slice it *wrongly* whenever the line itself
+        // contains a `##` (a markdown heading in source mode), which the
+        // `set_display_string` below then had to repair, invalidating the
+        // line's text measurement every frame in the process.
+        buf.write_id(format_args!("###textarea_line_{idx}"));
+        let row = self.alloc_box_parts(Some(&buf.display), Some(&buf.id), UIBoxFlags::NONE);
         self.boxes[row.idx].child_layout_axis = Axis::X;
         self.boxes[row.idx].pref_size = [
             UISize::ChildrenSum,
@@ -1242,7 +1256,6 @@ impl IMUI {
         self.boxes[row.idx].style.margin = 0.0;
         self.boxes[row.idx].style.font_size = line.font_size;
         self.boxes[row.idx].richtext_span = Some((line.raw_start, line.raw_end));
-        self.set_display_string(row.idx, display);
 
         self.parent_stack.push(row.idx);
         if line.spans.is_empty() {
@@ -1270,9 +1283,9 @@ impl IMUI {
                         continue;
                     }
                 }
-                let seg_id = format!("{}###textarea_seg_{idx}_{span_idx}", span.text);
-                let seg = self.alloc_box(Some(&seg_id), UIBoxFlags::DRAW_TEXT);
-                self.set_display_string(seg.idx, span.text.clone());
+                buf.write_id(format_args!("###textarea_seg_{idx}_{span_idx}"));
+                let seg =
+                    self.alloc_box_parts(Some(&span.text), Some(&buf.id), UIBoxFlags::DRAW_TEXT);
                 self.boxes[seg.idx].pref_size =
                     [UISize::TextContent(0.0), UISize::TextContent(0.0)];
                 // Zero margin so glyph x positions match the cached cum_x exactly.

@@ -232,7 +232,7 @@ impl IMUI {
                             Some(&format!("###toast_close_{}", r.id)),
                             UIBoxFlags::CLICKABLE | UIBoxFlags::DRAW_TEXT,
                         );
-                        ui.set_display_string(close.idx(), ICON_CLOSE.to_string());
+                        ui.set_display_string(close.idx(), ICON_CLOSE);
                         ui.boxes[close.idx()].style.font_icon = true;
                         ui.font_size(close, 18.0);
                         ui.text_center(close, true);

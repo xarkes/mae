@@ -1073,6 +1073,28 @@ impl EditorLayout {
     }
 }
 
+/// Reusable buffers for the two strings `emit_layout_line` names each of its
+/// boxes by. Lives on `IMUI` so it survives between frames: a note's rows and
+/// spans would otherwise be the last per-box allocation left in the build.
+#[derive(Default)]
+pub(crate) struct LineScratch {
+    id: String,
+    display: String,
+}
+
+impl LineScratch {
+    /// Format a box id into the shared buffer, to be read straight back out
+    /// of `self.id`. Two steps rather than one returning `&str`, so the caller
+    /// can still borrow `display` alongside it.
+    fn write_id(&mut self, args: std::fmt::Arguments) {
+        use std::fmt::Write;
+        self.id.clear();
+        self.id
+            .write_fmt(args)
+            .expect("writing to a String is infallible");
+    }
+}
+
 /// Where one visual line's row sits on screen, derived from `EditorLayout`
 /// alone so it is available for lines outside the emitted window too.
 #[derive(Clone, Copy)]
@@ -2031,22 +2053,81 @@ pub struct UIBox {
     richtext_span: Option<(usize, usize)>,
 }
 
+/// Largest buffer worth keeping in [`StringPool`]. A text area's `string` is
+/// the whole note, and holding one of those in reserve to hand to a label
+/// would trade the allocations away for far more memory than it saves.
+const MAX_POOLED_STRING: usize = 1024;
+/// Cap on buffers held in reserve, so a UI that shrinks a lot does not leave
+/// the pool sitting on the peak's worth of them forever. Sized well above any
+/// real frame's box count: the pool has to absorb *every* buffer a frame
+/// releases, or the surplus is dropped and re-allocated next frame — which is
+/// the churn this exists to remove.
+const MAX_POOLED_STRINGS: usize = 8192;
+
+/// Recycled text buffers for [`UIBox`]es. An immediate-mode rebuild tears down
+/// and re-creates every box each frame, and an anonymous widget (`ui.label`,
+/// `ui.icon_label`) has no key to be retained by at all — so without this,
+/// every piece of text on screen costs a fresh allocation per frame to say
+/// what it already said. Buffers come back here when a box is released and go
+/// straight out again to the next box that needs one.
+#[derive(Default)]
+pub(crate) struct StringPool {
+    spare: Vec<String>,
+}
+
+impl StringPool {
+    /// Overwrite `slot` with `value`, taking a buffer from the pool when the
+    /// slot has none and handing its buffer back when `value` is `None`.
+    /// Returns whether the text actually changed.
+    fn assign(&mut self, slot: &mut Option<String>, value: Option<&str>) -> bool {
+        match (slot.as_mut(), value) {
+            (Some(existing), Some(value)) => {
+                if existing == value {
+                    return false;
+                }
+                existing.clear();
+                existing.push_str(value);
+                true
+            }
+            (None, None) => false,
+            (Some(_), None) => {
+                self.release(slot);
+                true
+            }
+            (None, Some(value)) => {
+                let mut buf = self.spare.pop().unwrap_or_default();
+                buf.clear();
+                buf.push_str(value);
+                *slot = Some(buf);
+                true
+            }
+        }
+    }
+
+    /// Take `slot`'s buffer back for reuse, leaving it `None`.
+    fn release(&mut self, slot: &mut Option<String>) {
+        if let Some(buf) = slot.take()
+            && buf.capacity() <= MAX_POOLED_STRING
+            && self.spare.len() < MAX_POOLED_STRINGS
+        {
+            self.spare.push(buf);
+        }
+    }
+}
+
 impl UIBox {
-    fn new(
-        key: UiKey,
-        flags: UIBoxFlags,
-        string: Option<String>,
-        key_id: Option<String>,
-        theme: &UITheme,
-    ) -> Self {
+    /// A pristine box with no text: `string`/`display_string`/`debug_label`/
+    /// `key_id` are filled in afterwards through the [`StringPool`], which is
+    /// what keeps a rebuild from allocating for them.
+    fn new(key: UiKey, flags: UIBoxFlags, theme: &UITheme) -> Self {
         Self {
             key,
             parent: None,
             children: Vec::new(),
-            key_id,
-            debug_label: string.clone(),
-            string: string.clone(),
-            display_string: string,
+            key_id: None,
+            debug_label: None,
+            string: None,
+            display_string: None,
             flags,
             pref_size: [UISize::ChildrenSum, UISize::ChildrenSum],
             min_size: Size::default(),
@@ -2096,13 +2177,19 @@ impl UIBox {
         self.rect
     }
 
+    /// Recycle this box for a new frame. Everything is reset to `new`'s
+    /// defaults except the handful of fields below, which are carried over —
+    /// and except the four `String`s and the `children` `Vec`, whose *buffers*
+    /// are kept and written over in place. Those five allocations per box per
+    /// frame were the bulk of what an immediate-mode rebuild spent its time on.
     fn reset_for_frame(
         &mut self,
         key: UiKey,
         flags: UIBoxFlags,
-        string: Option<String>,
-        key_id: Option<String>,
+        string: Option<&str>,
+        key_id: Option<&str>,
         theme: &UITheme,
+        pool: &mut StringPool,
     ) {
         let rect = self.rect;
         let computed_size = self.computed_size;
@@ -2111,13 +2198,19 @@ impl UIBox {
         let scroll_target = self.scroll_target;
         let scroll_max = self.scroll_max;
         let content_size = self.content_size;
-        let keep_text = self.display_string == string;
+        let keep_text = self.display_string.as_deref() == string;
         let measured_text = if keep_text { self.measured_text } else { None };
         let wrapped = if keep_text {
             std::mem::take(&mut self.wrapped)
         } else {
             None
         };
+        // Lifted out before the reset below drops them, refilled after it.
+        let mut debug_label = self.debug_label.take();
+        let mut own_key_id = self.key_id.take();
+        let mut own_string = self.string.take();
+        let mut display_string = self.display_string.take();
+        let mut children = std::mem::take(&mut self.children);
         let bg_color_animated = self.bg_color_animated;
         let border_color_animated = self.border_color_animated;
         let hot_t = self.hot_t;
@@ -2129,8 +2222,17 @@ impl UIBox {
         let first_touched_frame = self.first_touched_frame;
         let last_touched_frame = self.last_touched_frame;
 
-        *self = Self::new(key, flags, string, key_id, theme);
-        self.debug_label = self.display_string.clone();
+        *self = Self::new(key, flags, theme);
+        pool.assign(&mut debug_label, string);
+        pool.assign(&mut own_key_id, key_id);
+        pool.assign(&mut own_string, string);
+        pool.assign(&mut display_string, string);
+        children.clear();
+        self.debug_label = debug_label;
+        self.key_id = own_key_id;
+        self.string = own_string;
+        self.display_string = display_string;
+        self.children = children;
         self.rect = rect;
         self.computed_size = computed_size;
         self.previous_clip_rect = previous_clip_rect;
@@ -2450,6 +2552,11 @@ pub struct IMUI {
     cursor: OSCursor,
     text_edit_states: HashMap<UiKey, TextEditState>,
     editor_layouts: HashMap<UiKey, EditorLayout>,
+    /// Scratch buffers `emit_layout_line` borrows for the frame (see
+    /// `LineScratch`); empty between text areas.
+    line_scratch: LineScratch,
+    /// Recycled text buffers for the box tree (see `StringPool`).
+    string_pool: StringPool,
     /// Per-textarea undo/redo history, keyed like [`Self::text_edit_states`].
     undo_states: HashMap<UiKey, UndoHistory>,
     markdown_mode: MarkdownMode,
@@ -2750,19 +2857,19 @@ pub fn u64_hash_from_string(seed: u64, string: &str) -> u64 {
     hash
 }
 
-fn hash_part_from_key_string(string: &str) -> String {
+fn hash_part_from_key_string(string: &str) -> &str {
     if let Some(idx) = string.find("###") {
-        string[idx..].to_string()
+        &string[idx..]
     } else {
-        string.to_string()
+        string
     }
 }
 
-fn display_part_from_key_string(string: &str) -> String {
+fn display_part_from_key_string(string: &str) -> &str {
     if let Some(idx) = string.find("##") {
-        string[..idx].to_string()
+        &string[..idx]
     } else {
-        string.to_string()
+        string
     }
 }
 

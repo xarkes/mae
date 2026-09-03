@@ -122,6 +122,8 @@ impl IMUI {
             cursor: OSCursor::Arrow,
             text_edit_states: HashMap::new(),
             editor_layouts: HashMap::new(),
+            line_scratch: LineScratch::default(),
+            string_pool: StringPool::default(),
             undo_states: HashMap::new(),
             markdown_mode: MarkdownMode::Source,
             clipboard: String::new(),

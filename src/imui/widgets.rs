@@ -68,7 +68,7 @@ impl IMUI {
 
     pub fn label(&mut self, label: &str) -> UIBoxHandle {
         let handle = self.alloc_box(None, UIBoxFlags::DRAW_TEXT);
-        self.set_display_string(handle.idx, label.to_string());
+        self.set_display_string(handle.idx, label);
         self.boxes[handle.idx].pref_size = [UISize::TextContent(0.0), UISize::TextContent(0.0)];
         handle
     }
@@ -79,7 +79,7 @@ impl IMUI {
     /// the default fills the parent. Explicit `\n` in the text also break lines.
     pub fn wrapping_label(&mut self, label: &str) -> UIBoxHandle {
         let handle = self.alloc_box(None, UIBoxFlags::DRAW_TEXT | UIBoxFlags::TEXT_WRAP);
-        self.set_display_string(handle.idx, label.to_string());
+        self.set_display_string(handle.idx, label);
         self.boxes[handle.idx].pref_size = [UISize::ParentPct(1.0), UISize::TextContent(0.0)];
         handle
     }
@@ -90,7 +90,7 @@ impl IMUI {
     /// (no resize grip) — for the inline editor images see the textarea.
     pub fn image(&mut self, id: &str, key: &str) -> UIBoxHandle {
         let handle = self.alloc_box(Some(id), UIBoxFlags::DRAW_IMAGE);
-        self.set_display_string(handle.idx, key.to_string());
+        self.set_display_string(handle.idx, key);
         self.boxes[handle.idx].pref_size = [UISize::Fill, UISize::Fill];
         handle
     }
@@ -99,7 +99,7 @@ impl IMUI {
     /// `text_color` builders to size and tint it.
     pub fn icon_label(&mut self, glyph: &str) -> UIBoxHandle {
         let handle = self.alloc_box(None, UIBoxFlags::DRAW_TEXT);
-        self.set_display_string(handle.idx, glyph.to_string());
+        self.set_display_string(handle.idx, glyph);
         self.boxes[handle.idx].style.font_icon = true;
         self.boxes[handle.idx].pref_size = [UISize::TextContent(0.0), UISize::TextContent(0.0)];
         handle
@@ -563,35 +563,61 @@ impl IMUI {
         &mut self,
         key: UiKey,
         flags: UIBoxFlags,
-        display_string: Option<String>,
-        key_id: Option<String>,
+        display_string: Option<&str>,
+        key_id: Option<&str>,
     ) -> usize {
-        if let Some(idx) = self.free_boxes.pop() {
-            self.boxes[idx] = UIBox::new(key, flags, display_string, key_id, &self.theme);
+        let idx = if let Some(idx) = self.free_boxes.pop() {
+            self.boxes[idx] = UIBox::new(key, flags, &self.theme);
             idx
         } else {
             let idx = self.boxes.len();
-            self.boxes
-                .push(UIBox::new(key, flags, display_string, key_id, &self.theme));
+            self.boxes.push(UIBox::new(key, flags, &self.theme));
             idx
-        }
+        };
+        // The text comes from the pool, not the allocator: this path is where
+        // every *anonymous* widget lands (`ui.label` has no key to be retained
+        // by, so it is released and rebuilt every single frame).
+        let box_ = &mut self.boxes[idx];
+        let pool = &mut self.string_pool;
+        pool.assign(&mut box_.debug_label, display_string);
+        pool.assign(&mut box_.key_id, key_id);
+        pool.assign(&mut box_.string, display_string);
+        pool.assign(&mut box_.display_string, display_string);
+        idx
     }
 
+    /// `label` is the usual `"Display###stable_id"` form, split here into its
+    /// two halves. Both halves are borrowed out of it, so this costs nothing
+    /// beyond `alloc_box_parts` itself.
     pub(super) fn alloc_box(&mut self, label: Option<&str>, flags: UIBoxFlags) -> UIBoxHandle {
+        self.alloc_box_parts(
+            label.map(display_part_from_key_string),
+            label.map(hash_part_from_key_string),
+            flags,
+        )
+    }
+
+    /// `alloc_box` for callers that already hold the display text and the
+    /// stable id separately — the text editor's per-line and per-span boxes,
+    /// which would otherwise `format!` the two into one string (copying the
+    /// line's whole text) purely for `alloc_box` to slice them back apart.
+    pub(super) fn alloc_box_parts(
+        &mut self,
+        display: Option<&str>,
+        id: Option<&str>,
+        flags: UIBoxFlags,
+    ) -> UIBoxHandle {
         let parent_idx = self.parent_stack.last().copied();
         let seed = parent_idx.map(|idx| self.boxes[idx].key.0).unwrap_or(0);
         let box_is_overlay = parent_idx.is_some_and(|idx| {
             idx == self.overlay_root || self.box_has_ancestor(idx, self.overlay_root)
         });
-        let key_string = label.map(hash_part_from_key_string);
+        let key_string = id;
         let mut key = key_string
-            .as_ref()
             .filter(|s| !s.is_empty())
             .map(|s| UiKey(u64_hash_from_string(seed, s)))
             .unwrap_or_default();
-        let display_string = label
-            .map(display_part_from_key_string)
-            .filter(|s| !s.is_empty());
+        let display_string = display.filter(|s| !s.is_empty());
         let mut existing_idx = self.box_from_key(key);
         if let Some(idx) = existing_idx {
             if self.boxes[idx].last_touched_frame == self.build_index {
@@ -602,7 +628,14 @@ impl IMUI {
 
         let signal = self.signal_from_key_and_flags(key, flags, existing_idx, box_is_overlay);
         let idx = if let Some(idx) = existing_idx {
-            self.boxes[idx].reset_for_frame(key, flags, display_string, key_string, &self.theme);
+            self.boxes[idx].reset_for_frame(
+                key,
+                flags,
+                display_string,
+                key_string,
+                &self.theme,
+                &mut self.string_pool,
+            );
             idx
         } else {
             self.allocate_box_storage(key, flags, display_string, key_string)
@@ -638,7 +671,16 @@ impl IMUI {
     }
 
     pub(super) fn release_box(&mut self, idx: usize) {
-        self.boxes[idx] = UIBox::new(UiKey::default(), UIBoxFlags::NONE, None, None, &self.theme);
+        // Reclaim the text buffers before the box goes: the slot is about to be
+        // handed to a different widget, and `allocate_box_storage` will want
+        // buffers for it.
+        let box_ = &mut self.boxes[idx];
+        let pool = &mut self.string_pool;
+        pool.release(&mut box_.debug_label);
+        pool.release(&mut box_.key_id);
+        pool.release(&mut box_.string);
+        pool.release(&mut box_.display_string);
+        self.boxes[idx] = UIBox::new(UiKey::default(), UIBoxFlags::NONE, &self.theme);
         self.free_boxes.push(idx);
     }
 

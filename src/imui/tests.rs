@@ -2154,3 +2154,96 @@ fn overlay_box_wins_hovering_even_when_declared_before_normal_box() {
     assert!(!ui.boxes[base.idx()].signal.hovering());
     assert!(ui.boxes[overlay_button.idx()].signal.hovering());
 }
+
+/// Heap address of a box's text, to tell a reused buffer from a fresh one.
+fn text_buffer_ptr(ui: &IMUI, idx: usize) -> *const u8 {
+    ui.boxes[idx]
+        .display_string
+        .as_ref()
+        .expect("box has text")
+        .as_ptr()
+}
+
+#[test]
+fn a_retained_box_reuses_its_text_buffer_between_frames() {
+    let mut ui = IMUI::new_for_test(200.0, 100.0);
+    ui.begin_frame();
+    let first = ui.button("Save###save_btn", None);
+    let before = text_buffer_ptr(&ui, first.idx);
+    ui.end_frame();
+
+    ui.begin_frame();
+    let again = ui.button("Save###save_btn", None);
+    let after = text_buffer_ptr(&ui, again.idx);
+    ui.end_frame();
+
+    assert_eq!(again.idx, first.idx, "the keyed box should be retained");
+    assert_eq!(
+        after, before,
+        "a rebuild must write over the box's existing text buffer, not hand \
+         it a freshly allocated one"
+    );
+}
+
+#[test]
+fn an_anonymous_boxs_text_buffer_comes_back_from_the_pool() {
+    // `ui.label` has no `###id`, so its box is transient: released at the end
+    // of every frame and built afresh in the next. The text buffer must come
+    // back through `StringPool` rather than the allocator.
+    let mut ui = IMUI::new_for_test(200.0, 100.0);
+    ui.begin_frame();
+    let first = ui.label("Ready");
+    // Read inside the frame: the box is gone by the time `end_frame` returns.
+    let before = text_buffer_ptr(&ui, first.idx);
+    ui.end_frame();
+
+    ui.begin_frame();
+    let again = ui.label("Ready");
+    let after = text_buffer_ptr(&ui, again.idx);
+    ui.end_frame();
+
+    assert_eq!(
+        after, before,
+        "the released box's buffer should have been recycled"
+    );
+}
+
+#[test]
+fn changing_a_boxs_text_keeps_the_same_buffer() {
+    let mut ui = IMUI::new_for_test(200.0, 100.0);
+    ui.begin_frame();
+    let first = ui.button("Save###save_btn", None);
+    let before = text_buffer_ptr(&ui, first.idx);
+    ui.end_frame();
+
+    ui.begin_frame();
+    let again = ui.button("Send###save_btn", None);
+    let after = text_buffer_ptr(&ui, again.idx);
+    ui.end_frame();
+
+    assert_eq!(ui.boxes[again.idx].display_string.as_deref(), Some("Send"));
+    assert_eq!(after, before);
+}
+
+#[test]
+fn a_display_string_containing_hashes_is_not_truncated_by_the_key_split() {
+    // A markdown heading in source mode is a line whose *text* starts with
+    // `##`. It reaches `alloc_box_parts` as display and id separately, so
+    // there is no `Display###id` string for the split to cut in the wrong
+    // place — which it used to, leaving the row addressable only by its
+    // `string` and re-measuring its text every frame.
+    let mut ui = IMUI::new_for_test(400.0, 200.0);
+    ui.set_markdown_mode(MarkdownMode::Source);
+    let mut text = "## Heading\nbody".to_string();
+    ui.begin_frame();
+    let edit = ui.markdown_textarea_with_options(
+        "###editor",
+        &mut text,
+        TextAreaOptions::new().scroll_y(true),
+    );
+    ui.end_frame();
+
+    let row = ui.boxes[edit.idx].children[0];
+    assert_eq!(ui.boxes[row].display_string.as_deref(), Some("## Heading"));
+    assert_eq!(ui.boxes[row].debug_label.as_deref(), Some("## Heading"));
+}

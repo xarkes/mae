@@ -1250,12 +1250,18 @@ impl IMUI {
         }
     }
 
-    pub(super) fn set_display_string(&mut self, idx: usize, display: String) {
-        if self.boxes[idx].display_string.as_deref() != Some(display.as_str()) {
+    /// Set a box's text after `alloc_box` has already run — the anonymous and
+    /// separately-labelled boxes (`label`, `icon`, the text editor's rows and
+    /// spans). Writes into the buffers the box already holds rather than
+    /// handing it two fresh `String`s.
+    pub(super) fn set_display_string(&mut self, idx: usize, display: &str) {
+        let box_ = &mut self.boxes[idx];
+        let pool = &mut self.string_pool;
+        let changed = pool.assign(&mut box_.display_string, Some(display));
+        pool.assign(&mut box_.string, Some(display));
+        if changed {
             self.invalidate_text_measure(idx);
         }
-        self.boxes[idx].string = Some(display.clone());
-        self.boxes[idx].display_string = Some(display);
     }
 }
 
