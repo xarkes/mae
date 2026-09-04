@@ -7,9 +7,6 @@ edition = "2024"
 default = ["opengl", "cpu"]
 opengl = ["dep:gl"]
 cpu = []
-# DOM render backend (wasm32 web target): reconciles the box tree into real
-# DOM elements instead of GL draw calls. See src/imui/paint_dom.rs.
-dom = []
 testkit = []
 png_capture = []
 # `testkit::cdp::CdpDriver`: drives a real page in a locally installed
@@ -34,8 +31,8 @@ log = "0.4"
 # Enable the `testkit` feature automatically for `cargo test`. A self dev-dependency
 # turns the feature on (via feature unification) for unit + integration tests, so the
 # `#![cfg(feature = "testkit")]` integration tests actually run without extra flags.
-# `default-features = false` here matters for `cargo test --no-default-features
-# --features dom --target wasm32-unknown-unknown`: without it, this edge would pull
+# `default-features = false` here matters for wasm32 builds: without it, this
+# edge would pull
 # `opengl`/`cpu` back in via feature unification regardless of the outer command's
 # flags (a dependency edge's own feature request isn't affected by the top-level
 # package's `--no-default-features`), which doesn't compile for wasm32 at all.

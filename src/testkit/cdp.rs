@@ -948,6 +948,13 @@ impl UiDriver for CdpDriver {
         // (see `os/linux.rs`); CDP wants CSS pixels, positive scrolling
         // down.
         let delta_y = f64::from(-delta) * 16.0;
+        // Establish the pointer location first. Chrome associates a wheel
+        // gesture with the current mouse target; coordinates on a standalone
+        // mouseWheel packet are insufficient in headless mode.
+        self.conn.send(
+            "Input.dispatchMouseEvent",
+            json!({"type": "mouseMoved", "x": x, "y": y, "buttons": 0}),
+        );
         self.conn.send(
             "Input.dispatchMouseEvent",
             json!({

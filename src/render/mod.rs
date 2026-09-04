@@ -283,11 +283,8 @@ impl Renderer {
             backends = vec![backend.unwrap()];
         }
         for backend in backends {
-            // Explicit annotation: with neither `opengl` nor `cpu` enabled (the DOM
-            // backend's build — see `imui/lifecycle.rs::new_dom`, which never calls
-            // `Renderer::new` at all), `Backend` is uninhabited and this match has no
-            // arms, leaving the compiler nothing to infer the type from even though
-            // the loop body is unreachable.
+            // Keep the result type explicit because feature combinations can
+            // make `Backend` uninhabited.
             let ctx: Result<Box<dyn RenderBackend>, RendererError> = match backend {
                 #[cfg(feature = "opengl")]
                 Backend::OpenGL => opengl::GLContext::new(win),

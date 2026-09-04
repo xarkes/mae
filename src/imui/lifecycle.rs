@@ -14,74 +14,16 @@ impl IMUI {
         Self::new_body(win)
     }
 
-    #[cfg(all(target_arch = "wasm32", feature = "dom"))]
-    pub fn new_dom(container_id: &str) -> Self {
-        // Built before `Window`/`IMUI` exist so the container-level input
-        // listeners (`os/wasm.rs`) can wake a tick from the moment they're
-        // attached — `with_drawer` below would otherwise create its own
-        // fresh (unconnected) pair, since it has no way to know about these
-        // yet. `ui.external_repaint`/`ui.tick_scheduler` are overwritten
-        // with these same handles right after, so every `RepaintWaker`
-        // handed out from here on (including `ui.repaint_waker()` later)
-        // shares this one scheduling slot — the single chokepoint `wake()`
-        // relies on (see `RepaintWaker`'s doc comment).
-        let external_repaint = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let tick_scheduler: super::TickScheduler = std::rc::Rc::new(std::cell::RefCell::new(None));
-        let waker = RepaintWaker {
-            flag: external_repaint.clone(),
-            scheduler: tick_scheduler.clone(),
-        };
-
-        let window = os::Window::new_in_container(container_id, waker.clone());
-        let size = Size::from(window.get_size());
-        let container = window.container_element().clone();
-        let mut ui = Self::with_drawer(None, size);
-        ui.external_repaint = external_repaint;
-        ui.tick_scheduler = tick_scheduler;
-        ui.refresh_rate_hz = window.refresh_rate_hz();
-        ui.wasm_window = Some(window);
-        // Hosted `<input>`/`<textarea>` elements report edits via `input`/
-        // `compositionend` listeners attached directly to them (see
-        // `paint_dom.rs::attach_input_listeners`) — deliberately not through
-        // the container-level OSEvent bridge (`os/wasm.rs` skips forwarding
-        // keydown/keyup for those elements so the browser owns typing/IME).
-        // Without this waker nothing would ever tell `run_dom`'s tick a
-        // rebuild is needed to consume the resulting `pending_edits` entry.
-        ui.dom = Some(super::paint_dom::DomReconciler::new(&container, waker));
-        ui
-    }
-
     pub(super) fn new_body(window: os::Window) -> Self {
         let renderer = render::Renderer::new(window);
         let drawer = Drawer::new(renderer);
         Self::with_drawer(Some(drawer), Size::default())
     }
 
-    /// The active OS window, whichever of the GPU (`drawer`) or DOM
-    /// (`wasm_window`) path owns it. All platforms funnel through here so the
-    /// DOM backend needs no changes to the shared dispatch logic below.
-    #[cfg(feature = "dom")]
-    pub(super) fn os_window(&self) -> Option<&os::Window> {
-        self.wasm_window
-            .as_ref()
-            .or_else(|| self.drawer.as_ref().map(|d| &d.renderer.win))
-    }
-
-    #[cfg(feature = "dom")]
-    pub(super) fn os_window_mut(&mut self) -> Option<&mut os::Window> {
-        if self.wasm_window.is_some() {
-            self.wasm_window.as_mut()
-        } else {
-            self.drawer.as_mut().map(|d| &mut d.renderer.win)
-        }
-    }
-
-    #[cfg(not(feature = "dom"))]
     pub(super) fn os_window(&self) -> Option<&os::Window> {
         self.drawer.as_ref().map(|d| &d.renderer.win)
     }
 
-    #[cfg(not(feature = "dom"))]
     pub(super) fn os_window_mut(&mut self) -> Option<&mut os::Window> {
         self.drawer.as_mut().map(|d| &mut d.renderer.win)
     }
@@ -162,12 +104,8 @@ impl IMUI {
             toasts: Vec::new(),
             next_toast_id: 0,
             theme,
-            #[cfg(feature = "dom")]
-            wasm_window: None,
             #[cfg(target_arch = "wasm32")]
             tick_scheduler: std::rc::Rc::new(std::cell::RefCell::new(None)),
-            #[cfg(feature = "dom")]
-            dom: None,
         };
         if let Some(drawer) = ui.drawer.as_mut() {
             drawer.renderer.vsync(ui.vsync_enabled);
@@ -247,130 +185,6 @@ impl IMUI {
     /// Consumes `self`, since the frame-to-frame state now lives in an
     /// `Rc<RefCell<_>>` shared with the recursively-rescheduled callback.
     ///
-    /// Unlike `eventloop_with_shutdown` (which polls forever, sleeping 16ms
-    /// between idle iterations), this does **not** keep a tick scheduled
-    /// once there's nothing to do — an idle tab would otherwise run this
-    /// tick's `pull_consume_events`/size-poll/etc. 60 times a second,
-    /// forever, for no reason (see `AGENTS.md` on per-frame cost). Instead,
-    /// the loop stops rescheduling itself once a tick finds no ongoing
-    /// reason to continue, and relies entirely on `RepaintWaker::wake()` —
-    /// installed into `IMUI::tick_scheduler` below — to schedule the next
-    /// one whenever something actually happens (a container-level input
-    /// listener in `os/wasm.rs`, a DOM pointer/edit listener in
-    /// `paint_dom.rs`, or any other caller of a `RepaintWaker`). A tick
-    /// re-schedules itself directly only while there's a *known* reason to
-    /// keep going without waiting for an external wake: `render_continuously`
-    /// mode, a pending post-resize redraw, or `repaint_requested` still being
-    /// set after `build_ui_func`/`end_frame` ran (an in-progress animation —
-    /// e.g. `animate_scroll_offsets`/`animate_visual_state` — or a live
-    /// scrollbar/text drag asking for another frame).
-    #[cfg(all(target_arch = "wasm32", feature = "dom"))]
-    pub fn run_dom(self, mut build_ui_func: impl FnMut(&mut IMUI) + 'static) {
-        use std::cell::{Cell, RefCell};
-        use std::rc::Rc;
-        use wasm_bindgen::JsCast;
-        use wasm_bindgen::prelude::*;
-
-        fn request_animation_frame(f: &Closure<dyn FnMut()>) {
-            web_sys::window()
-                .expect("no global `window`")
-                .request_animation_frame(f.as_ref().unchecked_ref())
-                .expect("requestAnimationFrame failed");
-        }
-
-        let ui = Rc::new(RefCell::new(self));
-        let tick_slot: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
-
-        // `true` while a tick is already scheduled but hasn't run yet, so a
-        // burst of `wake()` calls before the next tick fires (e.g. several
-        // DOM listeners in the same JS task) schedules exactly one frame,
-        // not one per call — `requestAnimationFrame` doesn't dedupe on its
-        // own. Starts `true`: the unconditional kickoff below counts as the
-        // first scheduled tick.
-        let scheduled = Rc::new(Cell::new(true));
-        let schedule: Rc<dyn Fn()> = {
-            let tick_slot = tick_slot.clone();
-            let scheduled = scheduled.clone();
-            Rc::new(move || {
-                if scheduled.replace(true) {
-                    return;
-                }
-                request_animation_frame(tick_slot.borrow().as_ref().unwrap());
-            })
-        };
-
-        // The single chokepoint every `RepaintWaker::wake()` call drives —
-        // see its doc comment and `IMUI::tick_scheduler`.
-        {
-            let schedule = schedule.clone();
-            *ui.borrow().tick_scheduler.borrow_mut() = Some(Box::new(move || schedule()));
-        }
-
-        let tick = Closure::<dyn FnMut()>::new(move || {
-            scheduled.set(false);
-            let mut ui_ref = ui.borrow_mut();
-            ui_ref.pull_consume_events();
-            if ui_ref
-                .external_repaint
-                .swap(false, std::sync::atomic::Ordering::Acquire)
-            {
-                ui_ref.repaint_requested = true;
-            }
-            // A batch containing only MouseMove doesn't need a rebuild: hover/active
-            // visual feedback for DRAW_HOT_EFFECTS boxes is delegated to CSS
-            // `:hover`/`:active` (see `paint_dom.rs`), which the browser applies on
-            // its own without any wasm involvement. `pull_consume_events` above
-            // already updated `self.mouse`/hot-key-relevant state regardless, so a
-            // later real event still hit-tests against a current position. Native
-            // (`eventloop_with_shutdown`) can't take this shortcut — it has no CSS
-            // layer, so hover there must keep rebuilding every mousemove to stay
-            // visible at all. While a button is held, still rebuild unconditionally:
-            // drags (scrollbar/resize handle/text selection) need live tracking that
-            // CSS can't provide.
-            let has_actionable_event = ui_ref.events.iter().any(|e| e.ty != OSEventType::MouseMove);
-            if has_actionable_event || ui_ref.left_mouse_down || ui_ref.right_mouse_down {
-                ui_ref.repaint_requested = true;
-            }
-            // Mirrors the resize-detection poll in `eventloop_with_shutdown`: the
-            // ResizeObserver in os/wasm.rs already queues a `Resize` OSEvent (which
-            // wakes this tick via the container listeners' own `waker.wake()` calls
-            // now, not by this loop being perpetually scheduled), but `self.size`
-            // itself — and the root box's layout — is only updated by an explicit
-            // `self.resize()` call, same as every other platform.
-            let current_size = ui_ref.os_window_mut().map(|w| w.get_size());
-            if let Some(size) = current_size {
-                if size.0 != ui_ref.size.width || size.1 != ui_ref.size.height {
-                    ui_ref.resize();
-                    ui_ref.repaint_requested = true;
-                    ui_ref.pending_resize_redraws = 2;
-                }
-            }
-            if ui_ref.quit_requested {
-                return;
-            }
-            let force_redraw = ui_ref.pending_resize_redraws > 0;
-            if ui_ref.render_continuously || ui_ref.repaint_requested || force_redraw {
-                ui_ref.pending_resize_redraws = ui_ref.pending_resize_redraws.saturating_sub(1);
-                ui_ref.repaint_requested = false;
-                ui_ref.begin_frame();
-                build_ui_func(&mut ui_ref);
-                ui_ref.end_frame();
-                ui_ref.update_fps();
-            }
-            let keep_ticking = !ui_ref.quit_requested
-                && (ui_ref.render_continuously
-                    || ui_ref.pending_resize_redraws > 0
-                    || ui_ref.repaint_requested);
-            drop(ui_ref);
-            if keep_ticking {
-                schedule();
-            }
-        });
-
-        *tick_slot.borrow_mut() = Some(tick);
-        request_animation_frame(tick_slot.borrow().as_ref().unwrap());
-    }
-
     pub fn request_quit(&mut self) {
         self.quit_requested = true;
         self.request_repaint();
@@ -438,10 +252,6 @@ impl IMUI {
         self.resolve_cursor();
         self.animate_visual_state();
         self.draw_ui_all();
-        #[cfg(feature = "dom")]
-        if self.dom.is_some() {
-            self.draw_ui_dom();
-        }
         self.update_previous_clip_rects();
 
         if let Some(drawer) = self.drawer.as_mut() {
@@ -618,32 +428,6 @@ impl IMUI {
         self.repaint_requested = true;
     }
 
-    /// Does the browser own the easing of visual state (hover/press/focus
-    /// tints, a floating pane appearing, scroll offsets)?
-    ///
-    /// True on the DOM backend, where those are CSS transitions on real
-    /// elements. Rust then writes each *target* value straight out and never
-    /// interpolates toward it, which is the difference between a popover fade
-    /// costing one rebuild and costing one per frame for its whole duration:
-    /// [`animate_visual_state`](Self::animate_visual_state) and
-    /// [`animate_scroll_offsets`](Self::animate_scroll_offsets) ask for
-    /// another frame for as long as anything is still moving, and `run_dom`
-    /// keeps ticking while they do. With the browser easing instead, the loop
-    /// goes idle the frame after the state changed and the animation still
-    /// runs — off the main thread, at the display's own rate.
-    ///
-    /// Native has no such layer: there the interpolation *is* the animation.
-    pub(crate) fn css_drives_animation(&self) -> bool {
-        #[cfg(feature = "dom")]
-        {
-            self.dom.is_some()
-        }
-        #[cfg(not(feature = "dom"))]
-        {
-            false
-        }
-    }
-
     /// Whether another frame has been asked for, clearing the request — exactly
     /// what [`IMUI::eventloop`] does before it builds.
     ///
@@ -687,10 +471,6 @@ impl IMUI {
                     b: bg.b,
                     a: bg.a,
                 });
-            }
-            #[cfg(feature = "dom")]
-            if let Some(dom) = self.dom.as_ref() {
-                dom.set_container_background(bg);
             }
         }
         if changed {

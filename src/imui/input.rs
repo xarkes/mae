@@ -1,26 +1,7 @@
 use super::*;
 
-/// A `MOUSE_CLICKABLE` box's native browser-derived hover/press/click state
-/// since it was last consumed, when the DOM backend's own per-element
-/// listeners are the source of truth for that box instead of this file's
-/// `point_in_rect` geometry check — see `imui/paint_dom.rs`'s
-/// `attach_interactive_listeners` (the writer) and `IMUI::dom_pointer_state`
-/// (the reader, called from `signal_from_key_and_flags` below). Defined
-/// here (not in `paint_dom.rs`) so it exists as a type regardless of the
-/// `dom` feature — only the *implementation* that populates it is
-/// `#[cfg(feature = "dom")]`-gated.
-#[derive(Default)]
-pub(super) struct DomPointerState {
-    pub hovering: bool,
-    pub left_pressed: bool,
-    pub left_released: bool,
-    pub left_clicked: bool,
-    pub right_clicked: bool,
-}
-
 impl IMUI {
     pub fn pull_consume_events(&mut self) {
-        self.adopt_dom_scrolls();
         if let Some(win) = self.os_window_mut() {
             self.events = win.get_events();
         }
@@ -108,40 +89,8 @@ impl IMUI {
         }
     }
 
-    /// Take up whatever the browser has scrolled since the last frame, so
-    /// mae's own `scroll`/`scroll_target` describe where the content really
-    /// is — see `paint_dom.rs`'s `attach_scroll_listener`. Called before the
-    /// build, so this frame lays out against it.
-    ///
-    /// Both are set, not just `scroll`: `scroll_target` is what Rust *wants*,
-    /// and leaving it behind would have the next frame yank the list back to
-    /// where the user just scrolled away from.
-    pub(super) fn adopt_dom_scrolls(&mut self) {
-        #[cfg(feature = "dom")]
-        {
-            let Some(dom) = self.dom.as_ref() else {
-                return;
-            };
-            let scrolls = dom.take_pending_scrolls();
-            for (key, (x, y)) in scrolls {
-                let Some(idx) = self.box_from_key(key) else {
-                    continue;
-                };
-                self.boxes[idx].scroll = Point::new(x, y);
-                self.boxes[idx].scroll_target = Point::new(x, y);
-            }
-        }
-    }
-
     pub(super) fn capture_scrollbar_hit_areas(&mut self) {
         self.scrollbar_hit_areas.clear();
-        // The browser draws and drags the scrollbar on this backend (see
-        // `paint_dom.rs`), so there is no Rust-side thumb to reserve the
-        // pointer for — and reserving it anyway would blank out a strip down
-        // the right edge of every scrollable box for every other widget.
-        if self.css_drives_animation() {
-            return;
-        }
         for frame_pos in 0..self.frame_boxes.len() {
             let idx = self.frame_boxes[frame_pos];
             let key = self.boxes[idx].key;
@@ -352,22 +301,7 @@ impl IMUI {
             })
             .unwrap_or_else(|| RectCoords::from_size(-10000.0, -10000.0, 0.0, 0.0));
 
-        // DOM builds with an active reconciler let the browser's own
-        // per-element hit-test decide a MOUSE_CLICKABLE box's hover/press/
-        // click (see `imui/paint_dom.rs`'s `attach_interactive_listeners`)
-        // instead of this function's geometry check below — `None` for
-        // every non-clickable box, and for every box under testkit/native
-        // (no DOM reconciler exists there), which fall back to geometry
-        // exactly as before this existed.
-        #[cfg(feature = "dom")]
-        let dom_pointer = self.dom_pointer_state(key, flags);
-        #[cfg(not(feature = "dom"))]
-        let dom_pointer: Option<DomPointerState> = None;
-
-        let mouse_over = dom_pointer
-            .as_ref()
-            .map(|d| d.hovering)
-            .unwrap_or_else(|| point_in_rect(&rect, self.mouse));
+        let mouse_over = point_in_rect(&rect, self.mouse);
         let hover_allowed = self
             .mouse
             .is_none_or(|pos| self.pointer_pos_allowed_for_key(pos, key, box_is_overlay));
@@ -377,46 +311,6 @@ impl IMUI {
             self.apply_scrollbar_events(idx, key, flags);
         }
 
-        if let Some(dom) = &dom_pointer {
-            // Delivering any of these means the app is about to react to it
-            // *during this build* — and whatever state it changes was
-            // already rendered from its old value earlier in this same
-            // frame, so the result only becomes visible on the next one.
-            // On the DOM backend nothing else guarantees that next frame
-            // happens: `run_dom` only keeps ticking while something asks it
-            // to, and these signals arrive through `dom_pointer_edges`
-            // rather than the `OSEvent` queue its `has_actionable_event`
-            // check looks at. Without this, a click's effect could sit
-            // invisible until some unrelated event happened to drive
-            // another frame — a toggle button appearing to ignore every
-            // other click, a floating pane staying on screen after its
-            // close button had already closed it. Self-limiting: the next
-            // frame consumes no edge, so asks for no further repaint.
-            if dom.left_pressed || dom.left_released || dom.left_clicked || dom.right_clicked {
-                self.repaint_requested = true;
-            }
-            // The browser already resolved *which* element this is for by
-            // dispatching directly to it — no `in_bounds`/`event_allowed`
-            // geometry check needed, unlike the queued-event path below.
-            if dom.left_pressed {
-                self.hot_key = Some(key);
-                self.set_active_key(MouseButton::Left, Some(key));
-                self.drag_start_mouse = self.mouse;
-                signal.flags |= UISignal::LEFT_PRESSED;
-                signal.left_press_pos = self.mouse;
-            }
-            if dom.left_released {
-                self.set_active_key(MouseButton::Left, None);
-                signal.flags |= UISignal::LEFT_RELEASED;
-            }
-            if dom.left_clicked {
-                signal.flags |= UISignal::LEFT_CLICKED | UISignal::COMMIT;
-            }
-            if dom.right_clicked {
-                signal.flags |= UISignal::RIGHT_CLICKED;
-            }
-        }
-
         let mut ev_idx = 0;
         while ev_idx < self.events.len() {
             let ev = self.events[ev_idx];
@@ -424,7 +318,7 @@ impl IMUI {
             let mut taken = false;
             let event_allowed = self.pointer_event_allowed_for_key(ev, key, box_is_overlay);
 
-            if flags.is_mouse_clickable() && dom_pointer.is_none() {
+            if flags.is_mouse_clickable() {
                 if let Some(button) = mouse_button_from_key(ev.key) {
                     match ev.ty {
                         OSEventType::Press if in_bounds && event_allowed => {

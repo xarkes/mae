@@ -74,10 +74,6 @@ impl IMUI {
         placeholder: &str,
     ) -> UIBoxHandle {
         let handle = self.alloc_box(Some(id), UIBoxFlags::LINE_EDIT);
-        #[cfg(feature = "dom")]
-        self.apply_pending_dom_edit(handle.key(), buffer);
-        #[cfg(feature = "dom")]
-        self.apply_pending_dom_focus(handle.key());
         self.boxes[handle.idx].pref_size = [UISize::ParentPct(1.0), UISize::Pixels(32.0)];
         self.boxes[handle.idx].padding = Padding::all(7.0);
         self.boxes[handle.idx].style.bg_color = self.theme.input_bg;
@@ -215,13 +211,7 @@ impl IMUI {
         self.provide_image_entry(name, width, height, rgba.to_vec(), None);
     }
 
-    /// Provide an inline image keyed by `name` as already-encoded bytes (e.g.
-    /// straight from a blob store, PNG/JPEG unchanged) plus their MIME type,
-    /// instead of decoded RGBA. For the DOM backend, which hands these bytes
-    /// straight to a `<img src="blob:...">` and lets the browser decode them
-    /// — no pixel decode ever happens on the Rust side, and no GPU texture is
-    /// ever uploaded for it (`image_texture_for_paint` never applies).
-    #[cfg(feature = "dom")]
+    #[cfg(target_arch = "wasm32")]
     pub fn provide_image_encoded(
         &mut self,
         name: impl Into<String>,
@@ -271,17 +261,6 @@ impl IMUI {
     /// Take any image bytes pasted into a multiline editor this frame. The host
     /// uploads it to the active note's space and inserts a `./blob/<name>` link.
     pub fn take_pasted_image(&mut self) -> Option<Vec<u8>> {
-        // On the DOM backend the bytes come from the browser's own `paste`
-        // event instead of `os::clipboard_get_image` (which has no
-        // synchronous equivalent there) — see `attach_richtext_listeners`.
-        // Checked first only when nothing is already staged natively, so
-        // neither source can shadow the other.
-        #[cfg(feature = "dom")]
-        if self.pasted_image.is_none()
-            && let Some(bytes) = self.dom.as_ref().and_then(|dom| dom.take_pasted_image())
-        {
-            return Some(bytes);
-        }
         self.pasted_image.take()
     }
 
@@ -372,26 +351,6 @@ impl IMUI {
     /// Intrinsic pixel size of a provided image, if available.
     pub fn image_size(&self, name: &str) -> Option<(u32, u32)> {
         self.images.get(name).map(|e| (e.width, e.height))
-    }
-
-    /// Read-only access to a registered image's bytes, for the DOM backend to
-    /// build a `<img>` src from (see `paint_dom.rs::paint_image`). Unlike
-    /// `image_texture_for_paint` (the native/GPU upload path), this never
-    /// consumes `pending` — safe because `draw_ui_dom` never calls that path
-    /// at all (no GPU texture is ever uploaded when there's no `Drawer`), so
-    /// nothing else touches these bytes while the DOM backend is active.
-    /// `mime` is `Some` when `bytes` are already-encoded (PNG/JPEG/…, from
-    /// `provide_image_encoded`) — pass straight to a `Blob`, no re-encode —
-    /// and `None` when they're raw RGBA8 (from `provide_image`), which the
-    /// caller must PNG-encode itself before blobbing.
-    #[cfg(feature = "dom")]
-    pub(crate) fn image_dom_bytes(
-        &self,
-        name: &str,
-    ) -> Option<(u32, u32, Option<&'static str>, &[u8])> {
-        let entry = self.images.get(name)?;
-        let bytes = entry.pending.as_deref()?;
-        Some((entry.width, entry.height, entry.encoded_mime, bytes))
     }
 
     /// Drain the image link names referenced this frame but not yet provided.
@@ -1027,15 +986,7 @@ impl IMUI {
         if !options.wrap_x {
             flags |= UIBoxFlags::NO_WRAP_X;
         }
-        if line_style == TextAreaLineStyle::Markdown && self.markdown_mode == MarkdownMode::Rendered
-        {
-            flags |= UIBoxFlags::RICH_TEXT_HOST;
-        }
         let handle = self.alloc_box(Some(id), flags);
-        #[cfg(feature = "dom")]
-        self.apply_pending_dom_edit(handle.key(), buffer);
-        #[cfg(feature = "dom")]
-        self.apply_pending_dom_focus(handle.key());
         self.boxes[handle.idx].child_layout_axis = Axis::Y;
         self.boxes[handle.idx].pref_size = [UISize::ParentPct(1.0), UISize::ParentPct(1.0)];
         self.boxes[handle.idx].padding = Padding::all(10.0);
@@ -1061,10 +1012,6 @@ impl IMUI {
         // reallocated just to be read again unchanged.
         let mut text = self.boxes[handle.idx].string.take().unwrap_or_default();
         buffer.read_text_into(&mut text);
-        #[cfg(feature = "dom")]
-        if flags.contains(UIBoxFlags::RICH_TEXT_HOST) {
-            self.apply_pending_dom_selection(handle.key(), &text);
-        }
 
         let content_width = if options.wrap_x {
             (self.boxes[handle.idx].rect.x1
@@ -1172,15 +1119,6 @@ impl IMUI {
     /// window that serves it land in the same frame.
     fn visible_line_window(&self, idx: usize, layout: &EditorLayout) -> Range<usize> {
         let line_count = layout.lines.len();
-        // The DOM rich-text host mounts these rows as the contenteditable's
-        // own content, so a line that isn't emitted isn't merely unpainted —
-        // it isn't in the document, and a selection (Ctrl+A most obviously)
-        // could not reach past the window. Native first; virtualizing the DOM
-        // backend needs its own selection story.
-        #[cfg(feature = "dom")]
-        if self.dom.is_some() {
-            return 0..line_count;
-        }
         // Nothing to virtualize against without a viewport to clip to.
         if !self.boxes[idx].flags.scrolls_y() {
             return 0..line_count;
@@ -1323,29 +1261,15 @@ impl IMUI {
 
         self.parent_stack.push(row.idx);
         if line.spans.is_empty() {
-            // Keep the line's height even when there is nothing to draw. Also
-            // the only DOM node a rich-text host can land a caret on for a
-            // wholly-empty line (no span children to serve as a text anchor)
-            // — see `paint_dom.rs`'s richtext caret placement.
+            // Keep the line's height even when there is nothing to draw.
             let spacer = self.alloc_box(None, UIBoxFlags::NONE);
             self.boxes[spacer.idx].pref_size = [UISize::Pixels(0.0), UISize::Pixels(line.height)];
             self.boxes[spacer.idx].style.margin = 0.0;
             self.boxes[spacer.idx].richtext_span = Some((line.raw_start, line.raw_end));
         } else {
             for (span_idx, span) in line.spans.iter().enumerate() {
-                // A hidden span (see `LayoutSpan`'s doc comment) is a
-                // navigability anchor for the DOM rich-text host only —
-                // native never draws hidden markers and doesn't need a box
-                // for them at all, so skip it there for the exact same
-                // (zero) box count as before this mechanism existed.
                 if span.hidden {
-                    #[cfg(feature = "dom")]
-                    let dom_backend = self.dom.is_some();
-                    #[cfg(not(feature = "dom"))]
-                    let dom_backend = false;
-                    if !dom_backend {
-                        continue;
-                    }
+                    continue;
                 }
                 buf.write_id(format_args!("###textarea_seg_{idx}_{span_idx}"));
                 let seg =
@@ -2141,28 +2065,11 @@ impl IMUI {
     /// Post-layout pass: resolve textarea click/drag selection for every text area in
     /// the frame, using final geometry.
     ///
-    /// On the DOM backend, skips a `RICH_TEXT_HOST`: this geometry (`cum_x`,
-    /// from Rust's own text shaping) has no reason to match the *browser's*
-    /// text layout there — the hosted `<div contenteditable>` renders its own
-    /// glyphs, and its click/drag-to-select is handled by the browser
-    /// natively (see `paint_dom.rs`'s `pending_selection`/`sync_richtext_
-    /// caret`). Applying this anyway wouldn't merely be redundant: it would
-    /// compute a possibly-wrong cursor from mismatched pixel math and then,
-    /// on the next repaint, forcibly override the browser's own — already
-    /// correct — caret with it. Native rendering has no such mismatch (it's
-    /// the one measuring the glyphs *and* the one drawing them), so a
-    /// `RICH_TEXT_HOST` there keeps using this same geometry as any other
-    /// textarea — this is not a `RICH_TEXT_HOST`-vs-not distinction on
-    /// native, only on the DOM backend specifically.
     pub(super) fn apply_textarea_mouse_selections(&mut self) {
         for frame_pos in 0..self.frame_boxes.len() {
             let idx = self.frame_boxes[frame_pos];
             let flags = self.boxes[idx].flags;
             if !flags.contains(UIBoxFlags::MULTILINE) {
-                continue;
-            }
-            #[cfg(feature = "dom")]
-            if flags.contains(UIBoxFlags::RICH_TEXT_HOST) && self.dom.is_some() {
                 continue;
             }
             self.apply_textarea_mouse_selection_for(idx);

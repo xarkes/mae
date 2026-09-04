@@ -13,8 +13,6 @@ mod input;
 mod layout;
 mod lifecycle;
 mod paint;
-#[cfg(feature = "dom")]
-mod paint_dom;
 mod scroll;
 #[cfg(test)]
 mod tests;
@@ -670,16 +668,6 @@ impl UIBoxFlags {
     /// count (layout solves width before height, so the width is known). See
     /// [`IMUI::wrapping_label`].
     pub const TEXT_WRAP: Self = Self(1 << 26);
-
-    /// A `MULTILINE` box in `TextAreaLineStyle::Markdown` +
-    /// `MarkdownMode::Rendered` (set by `textarea_impl`). DOM-backend-only:
-    /// tells `paint_dom.rs` to host this box as a `contenteditable` `<div>`
-    /// that paints its real rich-span children (bold/headers/hidden markers/
-    /// inline images), instead of a plain `<textarea>` showing raw text —
-    /// see `paint_dom.rs`'s `paint_richtext_host`. Native ignores this flag
-    /// entirely (`paint.rs` always renders a `MULTILINE` box's children the
-    /// same way regardless).
-    pub const RICH_TEXT_HOST: Self = Self(1 << 27);
 
     pub const CLICKABLE: Self = Self(Self::MOUSE_CLICKABLE.0 | Self::KEYBOARD_CLICKABLE.0);
     pub const SCROLL: Self = Self(Self::SCROLL_X.0 | Self::SCROLL_Y.0);
@@ -1972,19 +1960,12 @@ struct ImageEntry {
     width: u32,
     height: u32,
     /// GPU texture id once uploaded (0 until then). Always 0 for an
-    /// `encoded_mime` entry — the DOM backend never uploads a GPU texture.
     tex_id: u32,
-    /// Awaiting upload during paint (native) or a DOM `<img>` Blob (web);
-    /// taken once uploaded natively. Interpreted per `encoded_mime` below.
+    /// Awaiting upload during paint.
     pending: Option<Vec<u8>>,
-    /// `None`: `pending` is raw RGBA8, as native decode produces (see
-    /// [`IMUI::provide_image`]). `Some(mime)`: `pending` is already-encoded
-    /// image bytes (PNG/JPEG/…) in this MIME type, as the DOM backend
-    /// receives it (see [`IMUI::provide_image_encoded`]) — the browser
-    /// decodes those bytes itself via a `<img src="blob:...">`, so they're
-    /// never turned into pixels on the Rust side at all. Only ever read by
-    /// the DOM paint path (`image_dom_bytes`); native never sets or reads it.
-    #[cfg_attr(not(feature = "dom"), allow(dead_code))]
+    /// MIME type for encoded bytes supplied on wasm32. The deferred browser
+    /// integration is retained for future work; the active renderer is native.
+    #[allow(dead_code)]
     encoded_mime: Option<&'static str>,
 }
 
@@ -2019,7 +2000,7 @@ pub struct UIBox {
     /// as dead — it is still cheaper to always retain than to cfg the field
     /// through every constructor.
     #[cfg_attr(
-        not(any(feature = "testkit", feature = "dom")),
+        not(feature = "testkit"),
         allow(
             dead_code,
             reason = "read only by the testkit snapshot and the DOM backend"
@@ -2070,11 +2051,8 @@ pub struct UIBox {
     visible: bool,
     first_touched_frame: u64,
     last_touched_frame: u64,
-    /// `(raw_start, raw_end)` for a row/span/image child of a `RICH_TEXT_HOST`
-    /// textarea (set by `emit_layout_line`), `None` for every other box. The
-    /// DOM backend stamps these as `data-raw-start`/`data-raw-end` attributes
-    /// so a browser Selection/Range can be translated back to a raw buffer
-    /// offset (see `paint_dom.rs`'s rich-text host); native ignores it.
+    /// `(raw_start, raw_end)` for a row/span/image child of a rendered
+    /// textarea (set by `emit_layout_line`), `None` for every other box.
     richtext_span: Option<(usize, usize)>,
 }
 
@@ -2493,11 +2471,7 @@ pub struct RemoteCaret {
     pub label: String,
 }
 
-/// Shared slot holding whatever the active `run_dom` loop needs to actually
-/// schedule its next `requestAnimationFrame` tick — set once `run_dom` starts
-/// (empty before that, since a `wake()` before the loop exists has nothing
-/// useful to do). Boxed `Fn()` rather than a generic so `RepaintWaker` stays a
-/// plain, unparameterized type usable from `os/wasm.rs`'s listener closures.
+/// Shared wasm scheduler slot used by browser event integration.
 #[cfg(target_arch = "wasm32")]
 pub(super) type TickScheduler = std::rc::Rc<std::cell::RefCell<Option<Box<dyn Fn()>>>>;
 
@@ -2505,26 +2479,11 @@ pub(super) type TickScheduler = std::rc::Rc<std::cell::RefCell<Option<Box<dyn Fn
 /// engine receives a remote update while the app is idle). On native
 /// platforms this is a Send + Sync flag honored on the next loop iteration
 /// (`eventloop_with_shutdown` polls it every pass, including cross-thread).
-/// On wasm32, `run_dom` ticks only in direct response to a real trigger rather
-/// than polling forever (see its doc comment): every path that can make new work available — DOM
-/// pointer/edit listeners (`paint_dom.rs`), the container-level input
-/// listeners (`os/wasm.rs`), and any other holder of a `RepaintWaker` — goes
-/// through this same type, and both its methods drive the exact same
-/// underlying [`TickScheduler`], so there is exactly one place responsible
-/// for actually scheduling a tick.
+/// On wasm32, browser event integration can use this handle to wake the app.
 ///
 /// The two methods differ only in whether they *force* the next tick to
 /// rebuild:
-/// - [`wake`](Self::wake) also sets the cross-thread repaint flag, so the
-///   next tick rebuilds unconditionally — right for a discrete, already-
-///   meaningful event (a DOM click/edit, a background update) that should
-///   always produce a new frame.
-/// - [`schedule_tick`](Self::schedule_tick) only ensures a tick runs soon,
-///   leaving whether it *rebuilds* to `run_dom`'s own per-event-type check
-///   (`has_actionable_event`) — right for raw input where a pure mousemove
-///   with no button held shouldn't force a rebuild (hover feedback there is
-///   CSS-driven; see `os/wasm.rs`), but the queue still needs draining soon
-///   rather than sitting unprocessed until something else happens to wake.
+/// `wake` requests a repaint; `schedule_tick` only schedules browser work.
 #[derive(Clone)]
 pub struct RepaintWaker {
     flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -2662,19 +2621,11 @@ pub struct IMUI {
 
     pub theme: UITheme,
 
-    /// Browser window/event bridge for the DOM render path, used when there is
-    /// no `Drawer` (no GPU backend at all — see `imui/lifecycle.rs::new_dom`).
-    #[cfg(feature = "dom")]
-    wasm_window: Option<os::Window>,
     /// Backing slot for every `RepaintWaker` handed out on wasm32 (see
     /// [`TickScheduler`]) — shared, not per-waker, so all of them drive the
     /// exact same scheduling decision.
     #[cfg(target_arch = "wasm32")]
     tick_scheduler: TickScheduler,
-    /// DOM reconciler for the web target (`imui/paint_dom.rs`); paints by
-    /// walking `boxes` directly instead of going through `Drawer`.
-    #[cfg(feature = "dom")]
-    dom: Option<paint_dom::DomReconciler>,
 }
 
 trait RectAxis {

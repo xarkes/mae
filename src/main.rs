@@ -11,7 +11,7 @@ use mae::{
 // equivalent concept for the DOM backend, and `Backend` is an uninhabited
 // type in a `--no-default-features --features dom` build, so this import
 // (and the dropdown code that uses it) only exists for the other targets.
-#[cfg(not(all(target_arch = "wasm32", feature = "dom")))]
+#[cfg(not(target_arch = "wasm32"))]
 use mae::render::Backend;
 
 // Material icon codepoints (same font/convention as src/imui/toast.rs).
@@ -51,15 +51,7 @@ fn main() {
         env!("CARGO_PKG_VERSION")
     );
 
-    #[cfg(all(target_arch = "wasm32", feature = "dom"))]
-    console_error_panic_hook::set_once();
-
-    // Same `IMUI`, same widget code below either way — only how the window/
-    // event source is created and how the frame loop is driven differ (see
-    // `imui/lifecycle.rs`: `new_dom`/`run_dom` vs `new`/`eventloop`).
-    #[cfg(all(target_arch = "wasm32", feature = "dom"))]
-    let mut ui = IMUI::new_dom("mae-root");
-    #[cfg(not(all(target_arch = "wasm32", feature = "dom")))]
+    // The same IMUI and widget code are used for the demo and tests.
     let mut ui = IMUI::new(920, 620, "Mae demo");
 
     let mut input = String::from("Edit me");
@@ -88,9 +80,7 @@ fn main() {
     //
     // Deliberately a *different* string from `short_text` above, same shape
     // (two same-length lines) otherwise: `tests/testkit_driver.rs`'s
-    // `UiDriver::click`/`exists` select an element by its *current text*
-    // (there's no separate "select by stable id" on the DOM backend — see
-    // `paint_dom.rs`'s `data-mae-id` handling), so two widgets sharing one
+    // `UiDriver::click`/`exists` select an element by its current text, so two
     // seed is a real, easy-to-hit test bug: the query matches whichever
     // element happens to come first in DOM order, silently exercising the
     // wrong widget. This is exactly what happened here — every CDP test
@@ -120,14 +110,11 @@ fn main() {
     let mut lazy_rendering = !ui.render_continuously();
     let mut vsync_enabled = ui.vsync_enabled();
     let mut refresh_cap_enabled = ui.cap_fps_to_refresh_rate();
-    #[cfg(not(all(target_arch = "wasm32", feature = "dom")))]
+    #[cfg(not(target_arch = "wasm32"))]
     let mut renderer_menu_open = false;
     let mut theme_kind = ThemeKind::Dark;
 
-    // `move`: `run_dom` needs the closure to be `'static` (it's kept alive by a
-    // recursively-rescheduled `requestAnimationFrame` callback, well past this
-    // stack frame); `eventloop`'s blocking loop doesn't need that but is happy
-    // with a `move` closure too, so one closure serves both entry points below.
+    // Keep the closure self-contained for the blocking event loop.
     let build = move |ui: &mut IMUI| {
         ui.set_theme(UITheme::for_kind(theme_kind));
         ui.set_markdown_mode(if markdown_rendered {
@@ -209,7 +196,7 @@ fn main() {
                     // backend (`ui.renderer_backend()` is uncallable in that build —
                     // `Backend` has zero variants with neither `opengl` nor `cpu`
                     // compiled in), so this dropdown only exists on the other targets.
-                    #[cfg(not(all(target_arch = "wasm32", feature = "dom")))]
+                    #[cfg(not(target_arch = "wasm32"))]
                     {
                         let current_backend = ui.renderer_backend();
                         let control_h = ui.theme().control_h;
@@ -324,9 +311,6 @@ fn main() {
         app_style::app_root(ui, root);
     };
 
-    #[cfg(all(target_arch = "wasm32", feature = "dom"))]
-    ui.run_dom(build);
-    #[cfg(not(all(target_arch = "wasm32", feature = "dom")))]
     ui.eventloop(build);
 }
 
@@ -573,10 +557,8 @@ fn widget_section(
 
         // Rendered-markdown textarea (`MarkdownMode::Rendered` by default,
         // toggled below) — in that mode the DOM backend hosts this as a
-        // `RICH_TEXT_HOST` `<div contenteditable>` instead of a plain
-        // `<textarea>` (see `paint_dom.rs`). Exercises that path for
-        // `tests/testkit_driver.rs`'s CDP-driven scenarios the same way
-        // `###demo_textarea` above exercises the plain one.
+        // rendered markdown editor, exercised by the CDP scenarios as well as
+        // the native test harness.
         let markdown_mode_label = if *markdown_rendered {
             "Markdown: Rendered###markdown_mode_toggle"
         } else {

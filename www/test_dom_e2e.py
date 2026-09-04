@@ -319,7 +319,7 @@ def main():
     mouse_move(c, 5, 5)
     time.sleep(0.15)
 
-    # --- scrolling: real wheel input moves content, and a scrollbar thumb renders ---
+    # --- scrolling: real wheel input moves content and the browser owns the scrollbar ---
     row0_pos = find_center(c, "Row 0")
     if row0_pos:
         # CDP's `Input.dispatchMouseEvent` type "mouseWheel" does not reliably
@@ -361,14 +361,16 @@ def main():
         f"got {scrolled_out!r}",
     )
 
-    thumb_count = c.eval(
+    native_scrollbars = c.eval(
         """
-        Array.from(document.getElementById('mae-root').querySelectorAll('div,button')).filter(d =>
-            d.style.borderRadius === '999px'
-        ).length
+        Array.from(document.getElementById('mae-root').querySelectorAll('*')).some(el => {
+            const cs = getComputedStyle(el);
+            return (cs.overflowY === 'auto' || cs.overflowX === 'auto') &&
+                (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth);
+        })
         """
     )
-    check("at least one scrollbar thumb is rendered", (thumb_count or 0) >= 1, f"got {thumb_count}")
+    check("scrollable boxes use native DOM overflow", native_scrollbars is True)
 
     # --- regression: the horizontal strip's scroll wrapper got `overflow:
     # hidden` and `width: 100%` from the same code path as the (correct)
@@ -528,56 +530,6 @@ def main():
         "a keystroke after a real click reaches the focused <input>",
         input_value_after_type == "Edit me!",
         f"got {input_value_after_type!r}",
-    )
-
-    # --- regression: scrollbar thumbs were positioned with `position:
-    # absolute` relative to `#mae-root` using Rust's raw layout-space rect,
-    # which no longer matches on-screen position once boxes are real CSS
-    # flow descendants instead of flat position:absolute siblings — thumbs
-    # rendered well outside their own scroll container. They now mount as a
-    # child of their scroll container, positioned relative to it. ---
-    containment = c.eval(
-        """
-        (() => {
-            // A scroll-delegate box is the only kind of node with this exact
-            // computed style combination (see paint_div's `None => { ...
-            // overflow: hidden; position: relative; }` branch) — no text
-            // lookup needed, and it works regardless of current scroll
-            // position.
-            const containers = Array.from(document.getElementById('mae-root').querySelectorAll('div')).filter(el => {
-                const cs = getComputedStyle(el);
-                return cs.overflow === 'hidden' && cs.position === 'relative';
-            });
-            return containers.map(el => {
-                const thumb = Array.from(el.children).find(c => c.style.borderRadius === '999px');
-                if (!thumb) return {hasThumb: false};
-                const cr = el.getBoundingClientRect();
-                const tr = thumb.getBoundingClientRect();
-                return {
-                    hasThumb: true,
-                    mountedInside: el.contains(thumb),
-                    contained: tr.top >= cr.top - 1 && tr.bottom <= cr.bottom + 1
-                        && tr.left >= cr.left - 1 && tr.right <= cr.right + 1,
-                };
-            });
-        })()
-        """
-    )
-    with_thumb = [c for c in (containment or []) if c["hasThumb"]]
-    check(
-        "at least one scroll container's thumb was found for the containment check",
-        len(with_thumb) >= 1,
-        f"got {containment!r}",
-    )
-    check(
-        "every scrollbar thumb mounts inside its own scroll container",
-        all(c["mountedInside"] for c in with_thumb),
-        f"got {containment!r}",
-    )
-    check(
-        "every scrollbar thumb stays within its container's on-screen bounds",
-        all(c["contained"] for c in with_thumb),
-        f"got {containment!r}",
     )
 
     # --- regression: `style_differs` didn't track text color, so a theme
