@@ -353,11 +353,19 @@ mod tests {
     }
 
     fn uuid_like() -> u128 {
+        use std::sync::atomic::{AtomicU64, Ordering};
         use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now()
+        // A timestamp alone does not make these unique. The tests calling
+        // `temp_tree` run in parallel, and the clock is coarser than the gap
+        // between their calls — several land on the same value, share one
+        // directory, and then see each other's trees. The counter is what
+        // actually separates them.
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos())
-            .unwrap_or(0)
+            .unwrap_or(0);
+        (nanos << 32) | u128::from(SEQ.fetch_add(1, Ordering::Relaxed))
     }
 
     #[test]
