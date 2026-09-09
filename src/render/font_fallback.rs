@@ -98,6 +98,29 @@ fn collection_index_for(bytes: &[u8], c: char) -> u32 {
     }
 }
 
+/// Decode a fontconfig `index` into a plain face index within the font file.
+///
+/// fontconfig reports the index in FreeType's packed form: the low 16 bits are the
+/// face index within a collection (.ttc), while bits 16..30 hold a *named instance*
+/// of a variable font (1-based; 0 = no instance). Distros ship variable fonts and
+/// enumerate each named instance as its own pattern, so a match routinely comes back
+/// as e.g. 0x4_0000 — face 0, instance 4, not face 262144. read-fonts takes a plain
+/// collection index and rejects anything past the end of the file
+/// (`InvalidCollectionIndex`), which is *every* index with instance bits set on a
+/// single-face variable font.
+///
+/// The instance's variation coordinates are dropped along with the high bits, so such
+/// a font renders at the variable font's default weight/width rather than the matched
+/// instance's — mae has no variation plumbing yet, and a slightly-off weight beats no
+/// glyph at all.
+///
+/// Not `cfg`-gated to Linux (only its caller is) so the decoding stays covered by the
+/// test below on every host.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn face_index_from_fontconfig(index: i32) -> u32 {
+    (index.max(0) as u32) & 0xFFFF
+}
+
 #[cfg(target_os = "macos")]
 mod macos {
     use super::{LoadedFont, collection_index_for};
@@ -440,14 +463,41 @@ mod linux {
 
             let mut index: c_int = 0;
             FcPatternGetInteger(matched, c"index".as_ptr(), 0, &mut index);
+            let face_index = super::face_index_from_fontconfig(index);
 
             FcPatternDestroy(matched);
 
             Some(LoadedFont {
                 key: path,
-                index: index.max(0) as u32,
+                index: face_index,
                 bytes: None,
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::face_index_from_fontconfig;
+
+    #[test]
+    fn plain_face_indices_pass_through() {
+        assert_eq!(face_index_from_fontconfig(0), 0);
+        assert_eq!(face_index_from_fontconfig(3), 3);
+    }
+
+    #[test]
+    fn named_instance_bits_are_stripped() {
+        // The crash case: a single-face variable font matched at its 4th named
+        // instance came back as 0x4_0000 and read-fonts rejected it as
+        // `InvalidCollectionIndex(262144)`.
+        assert_eq!(face_index_from_fontconfig(0x4_0000), 0);
+        // Instance bits on top of a real collection face index keep the face.
+        assert_eq!(face_index_from_fontconfig(0x2_0005), 5);
+    }
+
+    #[test]
+    fn negative_index_clamps_to_zero() {
+        assert_eq!(face_index_from_fontconfig(-1), 0);
     }
 }

@@ -414,20 +414,25 @@ struct Face {
 
 impl Face {
     fn new(font_bytes: &[u8]) -> Self {
-        Self::new_with_index(font_bytes, 0)
+        Self::new_with_index(font_bytes, 0).expect("harfrust failed to parse font")
     }
 
-    fn new_with_index(font_bytes: &[u8], index: u32) -> Self {
+    /// `None` when the bytes aren't a font harfrust can parse, or `index` is past the
+    /// end of the collection. Only the primary face (`new`) treats that as fatal —
+    /// nothing renders without it. A fallback located by the OS is best-effort: the
+    /// file may be a format we don't read (bitmap/Type1) or plain broken, and drawing
+    /// that codepoint as `.notdef` beats taking the whole app down.
+    fn new_with_index(font_bytes: &[u8], index: u32) -> Option<Self> {
         let bytes = font_bytes.to_vec();
-        let font = FontRef::from_index(&bytes, index).expect("harfrust failed to parse font");
+        let font = FontRef::from_index(&bytes, index).ok()?;
         let shaper_data = ShaperData::new(&font);
         let upem = shaper_data.shaper(&font).build().units_per_em() as f32;
-        Self {
+        Some(Self {
             bytes,
             index,
             shaper_data,
             upem,
-        }
+        })
     }
 
     /// A skrifa view of this face (for rasterization, coverage, and metrics).
@@ -993,7 +998,7 @@ impl FontCache {
             Some(bytes) => bytes,
             None => std::fs::read(&key.0).ok()?,
         };
-        let face = Face::new_with_index(&bytes, loaded.index);
+        let face = Face::new_with_index(&bytes, loaded.index)?;
         if !face.covers(c) {
             return None;
         }
